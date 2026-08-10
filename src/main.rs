@@ -5,7 +5,7 @@ mod platform;
 mod state;
 mod templating;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::colors::*;
 use crate::config::Config;
@@ -15,15 +15,19 @@ use crate::state::State;
 
 /// Recipe-based project scaffolder CLI for Debian and Termux.
 #[derive(Parser)]
-#[command(name = "fa", version = env!("CARGO_PKG_VERSION"), about, long_about = None)]
+#[command(name = "fa", about, long_about = None, disable_version_flag = true)]
 struct Cli {
+    /// Print version
+    #[arg(short = 'V', long)]
+    version: bool,
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     /// Scaffold a new project from a recipe into a directory.
+    #[command(alias = "n")]
     New {
         /// Recipe name or alias (e.g. astro)
         recipe: String,
@@ -60,6 +64,17 @@ enum Commands {
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
+    if cli.version {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
+    let Some(command) = cli.command else {
+        Cli::command().print_help()?;
+        println!();
+        return Ok(());
+    };
+
     let (config, source) = Config::load()?;
     let is_external = source != "Embedded default configuration";
     if is_external {
@@ -68,7 +83,7 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    match cli.command {
+    match command {
         Commands::New {
             recipe,
             name,

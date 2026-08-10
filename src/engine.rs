@@ -237,17 +237,9 @@ fn platform_matches(label: &str) -> anyhow::Result<bool> {
 }
 
 /// Formats a single-line list entry for `fa list` / `fa search`.
+/// Name (bold) followed by a dimmed description to keep the line readable.
 pub fn format_list_line(recipe_key: &str, recipe: &Recipe) -> String {
-    let mut parts = Vec::new();
-    parts.push(recipe_key.to_string());
-    if !recipe.variants.is_empty() {
-        parts.push(format!("({})", recipe.variants.join(" / ")));
-    }
-    if let Some(lang) = &recipe.language {
-        parts.push(lang.clone());
-    }
-    parts.push("[apply]".to_string());
-    parts.join(" · ")
+    format!("{BOLD_BLUE}{recipe_key}{RESET} · {DIM_GRAY}{}{RESET}", recipe.description)
 }
 
 /// Returns a human-readable "supported" marker for a recipe on the current platform.
@@ -294,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn format_list_line_should_render_concise_single_line() {
+    fn format_list_line_should_render_name_and_description() {
         let recipe = Recipe {
             name: "Astro".to_string(),
             description: "test".to_string(),
@@ -310,8 +302,9 @@ mod tests {
         };
         let line = format_list_line("astro", &recipe);
         assert!(line.contains("astro"));
-        assert!(line.contains("pnpm / bun"));
-        assert!(line.contains("web · typescript"));
-        assert!(line.contains("[apply]"));
+        assert!(line.contains("test"));
+        assert!(!line.contains("[apply]"));
+        assert!(!line.contains("pnpm / bun"));
+        assert!(!line.contains("web · typescript"));
     }
 }
