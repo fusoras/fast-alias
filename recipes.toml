@@ -1,0 +1,31 @@
+[recipes.astro]
+name = "Astro"
+description = "Astro site with lightningcss, stylelint, supersvg, prettier and oxlint"
+language = "web · typescript"
+variants = ["pnpm"]
+
+[recipes.astro.create]
+command = "pnpm create astro@latest {{name}} --template basics --install --git"
+
+[recipes.astro.pm]
+install = { pnpm = "pnpm add" }
+dev_install = { pnpm = "pnpm add -D" }
+
+[recipes.astro.tooling]
+linter = { tool = "oxlint", script = "lint" }
+formatter = { tool = "prettier", script = "format" }
+check = { tool = "@astrojs/check", script = "check" }
+
+[recipes.astro.files]
+".prettierrc" = { from = "templates/astro/.prettierrc" }
+".prettierignore" = { from = "templates/astro/.prettierignore" }
+".stylelintrc.json" = { from = "templates/astro/.stylelintrc.json" }
+".gitignore" = { from = "templates/astro/.gitignore" }
+"tsconfig.json" = { from = "templates/astro/tsconfig.json" }
+"pnpm-workspace.yaml" = { from = "templates/astro/pnpm-workspace.yaml" }
+"astro.config.mjs" = { from = "templates/astro/astro.config.mjs" }
+".oxlintrc.json" = { from = "templates/astro/.oxlintrc.json" }
+
+[[recipes.astro.steps]]
+command = "pnpm i -D lightningcss stylelint stylelint-config-standard stylelint-config-html vite-plugin-supersvg prettier prettier-plugin-astro oxlint"
+description = "Install initial dev-dependencies"

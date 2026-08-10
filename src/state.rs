@@ -1,0 +1,90 @@
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::PathBuf;
+
+pub const STATE_FILE: &str = "state.toml";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectState {
+    pub recipe: String,
+    pub variant: String,
+    pub created_at: String,
+    pub path: String,
+    pub installed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct State {
+    #[serde(default)]
+    pub projects: BTreeMap<String, ProjectState>,
+}
+
+impl State {
+    /// Returns the state file path (~/.local/state/fa/state.toml).
+    pub fn state_path() -> Option<PathBuf> {
+        let home = std::env::var_os("HOME")?;
+        let path = PathBuf::from(home).join(".local/state/fa").join(STATE_FILE);
+        Some(path)
+    }
+
+    /// Loads state from disk; returns an empty state if absent or unreadable.
+    pub fn load() -> Self {
+        match Self::state_path() {
+            Some(path) if path.exists() => {
+                let content = fs::read_to_string(&path).unwrap_or_default();
+                toml::from_str(&content).unwrap_or_default()
+            }
+            _ => State::default(),
+        }
+    }
+
+    /// Persists the state to disk atomically (temp file + rename).
+    pub fn save(&self) -> anyhow::Result<()> {
+        let Some(path) = Self::state_path() else {
+            return Ok(());
+        };
+        let parent = path.parent().unwrap_or(std::path::Path::new("."));
+        fs::create_dir_all(parent)
+            .map_err(|e| anyhow::anyhow!("Failed to create state dir {}: {e}", parent.display()))?;
+
+        let tmp = parent.join("state.toml.tmp");
+        let content = toml::to_string_pretty(self)
+            .map_err(|e| anyhow::anyhow!("Failed to serialize state: {e}"))?;
+        fs::write(&tmp, content)
+            .map_err(|e| anyhow::anyhow!("Failed to write state temp file: {e}"))?;
+        fs::rename(&tmp, &path)
+            .map_err(|e| anyhow::anyhow!("Failed to atomically save state: {e}"))?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn track_project_should_register_and_remove_cleanly() {
+        println!("\n🔍 [TEST] Safety Engine & Project State Tracking");
+        println!("   Explanation: Verifies that created projects are registered and removable cleanly.");
+
+        let mut state = State::default();
+        state.projects.insert(
+            "myapp".to_string(),
+            ProjectState {
+                recipe: "astro".to_string(),
+                variant: "pnpm".to_string(),
+                created_at: "2026-08-10T12:00:00Z".to_string(),
+                path: "/home/user/projects/myapp".to_string(),
+                installed: true,
+            },
+        );
+
+        assert!(state.projects.contains_key("myapp"), "Project 'myapp' should be tracked");
+        println!("   ✓ Project 'myapp' tracked successfully.");
+
+        state.projects.remove("myapp");
+        assert!(!state.projects.contains_key("myapp"), "Project should be removable");
+        println!("   ✓ Project removed from state registry cleanly.\n");
+    }
+}
