@@ -47,6 +47,8 @@ pub struct Step {
     pub command: String,
     pub description: Option<String>,
     pub platform: Option<String>,
+    #[serde(default)]
+    pub install: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

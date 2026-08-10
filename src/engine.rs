@@ -117,6 +117,15 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> anyhow::Result<()> {
             } else {
                 println!("Scaffolding base via: {rendered}");
                 run_shell(&rendered)?;
+                // Scaffold CLIs (create-astro, cargo new, ...) generate a
+                // subdirectory named after the project; run the rest of the
+                // flow (files + steps) inside it.
+                std::env::set_current_dir(&opts.project_name).map_err(|e| {
+                    anyhow::anyhow!(
+                        "Scaffold did not produce directory '{}': {e}",
+                        opts.project_name
+                    )
+                })?;
             }
         }
 
@@ -153,16 +162,7 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> anyhow::Result<()> {
         println!("  {BOLD_GREEN}✓{RESET} {dest}");
     }
 
-    // 3. Install dependencies (skip if --no-install or no pm install dev_install)
-    if !opts.no_install && !opts.dry_run
-        && let Some(pm) = &recipe.pm
-            && let Some(dev_install) = &pm.dev_install
-                && let Some(cmd_template) = dev_install.get(&variant) {
-                    println!("\nInstalling dependencies...");
-                    run_shell(cmd_template)?;
-                }
-
-    // 4. Steps
+    // 3. Steps
     if !recipe.steps.is_empty() {
         println!("\nSteps:");
         for step in &recipe.steps {
@@ -170,6 +170,10 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> anyhow::Result<()> {
                 && platform != "all" && !platform_matches(platform)? {
                     continue;
                 }
+            if step.install && opts.no_install {
+                println!("  {BOLD_YELLOW}[SKIP]{RESET} {} (--no-install)", step.description.as_deref().unwrap_or(&step.command));
+                continue;
+            }
             let rendered = substitute(&step.command, &vars);
             if opts.dry_run {
                 println!("  {DIM}[Dry-Run]{RESET} Would run: {rendered}");
