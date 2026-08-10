@@ -266,8 +266,95 @@ export default defineConfig({
 }
 ```
 
-### 5.9 `oxlint.json` ⏳ PENDING
-User will provide this file during the implementation phase (large content, kept out of context now).
+### 5.9 `.oxlintrc.json`
+```json
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "unicorn", "oxc", "node"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "unicorn/prefer-query-selector": "error",
+    "unicorn/prefer-dom-node-text-content": "error",
+    "unicorn/prefer-dom-node-append": "error",
+    "unicorn/prefer-dom-node-remove": "error",
+    "unicorn/prefer-dom-node-dataset": "error",
+    "unicorn/prefer-classlist-toggle": "error",
+    "unicorn/prefer-single-call": "error",
+    "unicorn/prefer-add-event-listener": "error",
+    "prefer-const": "error",
+    "no-var": "error",
+    "prefer-template": "error",
+    "object-shorthand": "error",
+    "prefer-destructuring": "error",
+    "prefer-exponentiation-operator": "error",
+    "promise/catch-or-return": "error",
+    "unicorn/prefer-module": "error",
+    "typescript/no-var-requires": "error",
+    "unicorn/prefer-ternary": "error",
+    "unicorn/no-static-only-class": "error",
+    "unicorn/prefer-global-this": "error",
+    "eqeqeq": ["error", "always", { "null": "ignore" }],
+    "new-cap": [{ "newIsCap": true, "capIsNew": false, "properties": true }],
+    "no-array-constructor": "error",
+    "no-caller": "error",
+    "no-case-declarations": "error",
+    "no-cond-assign": "error",
+    "no-debugger": "error",
+    "no-extend-native": "error",
+    "no-fallthrough": "error",
+    "no-global-assign": "error",
+    "no-iterator": "error",
+    "no-labels": ["error", { "allowLoop": false, "allowSwitch": false }],
+    "no-lone-blocks": "error",
+    "no-loss-of-precision": "error",
+    "no-misleading-character-class": "error",
+    "no-prototype-builtins": "error",
+    "no-useless-catch": "error",
+    "no-new": "error",
+    "no-new-func": "error",
+    "no-object-constructor": "error",
+    "no-new-wrappers": "error",
+    "no-proto": "error",
+    "no-redeclare": "error",
+    "no-self-assign": ["error", { "props": true }],
+    "no-self-compare": "error",
+    "no-sequences": "error",
+    "no-shadow-restricted-names": "error",
+    "no-template-curly-in-string": "error",
+    "no-unmodified-loop-condition": "error",
+    "no-unneeded-ternary": ["error", { "defaultAssignment": false }],
+    "no-unsafe-finally": "error",
+    "no-unsafe-negation": "error",
+    "no-unused-vars": [
+      "error",
+      { "args": "none", "caughtErrors": "none", "ignoreRestSiblings": true, "vars": "all" }
+    ],
+    "no-use-before-define": ["error", { "functions": false, "classes": false, "variables": false }],
+    "no-useless-call": "error",
+    "no-useless-computed-key": "error",
+    "no-useless-constructor": "error",
+    "no-useless-rename": "error",
+    "no-useless-return": "error",
+    "no-void": "error",
+    "no-with": "error",
+    "symbol-description": "error",
+    "unicode-bom": ["error", "never"],
+    "use-isnan": ["error", { "enforceForSwitchCase": true, "enforceForIndexOf": true }],
+    "valid-typeof": ["error", { "requireStringLiterals": true }],
+    "yoda": ["error", "never"],
+    "promise/param-names": "error",
+    "node/handle-callback-err": ["error", "^(err|error)$"],
+    "node/no-exports-assign": "error",
+    "node/no-new-require": "error",
+    "node/no-path-concat": "error"
+  },
+  "env": {
+    "builtin": true
+  }
+}
+```
 
 ## 6. File-to-source mapping
 
@@ -281,7 +368,7 @@ User will provide this file during the implementation phase (large content, kept
 | `pnpm-workspace.yaml` | `templates/astro/pnpm-workspace.yaml` | `from` |
 | `astro.config.mjs` | `templates/astro/astro.config.mjs` | `from` |
 | `package.json` | create-astro output | **merge scripts** |
-| `oxlint.json` | `templates/astro/oxlint.json` | `from` (⏳ pending) |
+| `.oxlintrc.json` | `templates/astro/.oxlintrc.json` | `from` |
 
 ## 7. Testing plan
 
