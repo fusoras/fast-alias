@@ -2,13 +2,15 @@
 
 Rules and constraints to prevent credential leaks, arbitrary code execution (RCE) via untrusted configuration files, and unverified binary downloads.
 
-- **No Secrets or Credentials in `templates/`**:
-  - Never commit API keys, tokens, private SSH keys (`id_*`), certificates (`*.pem`, `*.key`), `.env` files, or history files inside `templates/<recipe-name>/` subdirectories.
-  - Recipe template files embedded via `include_str!` or `include_bytes!` are compiled directly into the release executable. Any committed secret is permanently baked into public binary releases.
+- **No Secrets or Credentials in `~/.config/fa/templates/`**:
+  - Never commit or copy API keys, tokens, private SSH keys (`id_*`), certificates (`*.pem`, `*.key`), `.env` files, or history files into `~/.config/fa/templates/<recipe-name>/` subdirectories.
+  - Config and templates live on disk in the user's config directory; any secret placed there persists on disk.
 - **Environment Token Protection**:
   - Never log, display, or persist runtime tokens (e.g. `GITHUB_TOKEN`, `NPM_TOKEN`, API keys) in stdout, stderr, debug logs, or state files.
-- **Untrusted Configuration Warning**:
-  - When loading `recipes.toml` (or `recipes.d/*.toml`) from a local path (`./recipes.toml` or `~/.config/fa/recipes.toml`) instead of the embedded default configuration, print a clear `[WARNING]` alert before processing custom installers or executing recipe `[[steps]]` commands.
+- **Untrusted Configuration Trust Gate**:
+  - Commands in recipes execute arbitrary shell. Ask for an explicit one-time `[TRUST]` confirmation before running recipe `[[steps]]`/`create` commands (`fa new`) and command aliases (`fa alias`). Persist the decision by config path in `~/.local/state/fa/state.toml` and never re-prompt for the same path; trusting the primary `recipes.toml` covers all `recipes.d/*.toml` modular files. Auto-trust the provisioned example config.
+- **Non-Interactive Prompt Handling**:
+  - When a subcommand runs without an interactive terminal, auto-feed `y` to stdin so approval prompts (e.g. pnpm `minimumReleaseAge` continuation) do not abort the install.
 - **Integrity & Checksum Governance**:
   - Release binaries, self-update assets, and any downloaded template must be fetched strictly over HTTPS from verified GitHub Release assets or pinned URLs.
 - **Code Execution from Recipes**:

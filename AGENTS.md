@@ -4,7 +4,7 @@ Recipe-based project scaffolder CLI that bootstraps projects, installs dependenc
 
 ## Project Facts
 - Binary crate `fa` v0.1.0-beta.1, edition 2024 (`Cargo.toml`). Written in Rust with no heavy external dependencies.
-- **Recipe Player Model**: `fa` is a "recipe player" — recipes are declared in TOML files (`recipes.toml` + `recipes.d/*.toml`). Adding a language/toolchain = adding a `.toml`, never touching code. Astro is only the first recipe.
+- **Recipe Player Model**: `fa` is a "recipe player" — recipes are declared in TOML files (`~/.config/fa/recipes.toml` + `~/.config/fa/recipes.d/*.toml`) in the user's personal config directory. Adding a language/toolchain = adding a `.toml`, never touching code.
 - **Command Renaming Note**: Executable binary command is `fa` (from `fast-alias`) for CLI user convenience.
 - Target platforms: **Debian** and **Termux** (via the `project-dots` release pattern: `install.sh` + GitHub Releases + cross-compiled musl).
 - Entrypoint: `src/main.rs` (future).
@@ -40,17 +40,21 @@ For detailed architecture, roadmap, CLI reference, recipe schema, unit testing, 
 - Present user-facing commands using the compiled binary (`fa <command>`) rather than `cargo run --`.
 - **Recipe Player Principle**: The engine must stay "dumb" — all stack/toolchain complexity lives in the TOML recipes, never hardcoded in the binary. No recipe-specific logic in code.
 - **Security Governance & Secret Leak Prevention**:
-  - NEVER commit API keys, private keys (`id_*`), certificates (`*.key`, `*.pem`), or `.env` files within `templates/<recipe-name>/` or project directories.
-  - Template files in `templates/` are embedded directly into the compiled executable release binary (`include_str!`/`include_bytes!`). Any committed secret will be permanently exposed in public release binaries.
+  - NEVER commit API keys, private keys (`id_*`), certificates (`*.key`, `*.pem`), or `.env` files within project directories. Templates and recipes live in `~/.config/fa/` on disk — no config is embedded in the release binary.
   - Never log runtime tokens (e.g. `GITHUB_TOKEN`) in stdout, stderr, or `state.toml`.
-  - Print a clear `[WARNING]` alert when loading external `./recipes.toml` configurations before running recipe `[[steps]]` commands or custom installers.
+  - Ask for a one-time `[TRUST]` confirmation before running recipe `[[steps]]`/`create` commands (`fa new`) or command aliases (`fa alias`), since they execute arbitrary shell. Persist the decision by config path in `~/.local/state/fa/state.toml`; never re-prompt for the same path ("one covers all": trusting the primary `recipes.toml` covers `recipes.d/*.toml`). Auto-trust the provisioned example config.
+  - When a subcommand runs without an interactive terminal, auto-feed `y` to stdin so approval prompts (e.g. pnpm `minimumReleaseAge` continuation) do not abort the install.
 - **Recipe & Template Naming Convention**:
-  - Recipe names and template subdirectories under `templates/` must NEVER be generic (e.g., avoid `app`, `web`, `cli`, `template`, `starter`).
-  - Names must be simple but distinctive, combining the stack/tool type with its specific variant, toolchain, or flavor (e.g., `astro-pnpm`, `ts-lib`, `rust-cli`).
+  - Recipe names and template subdirectories under `~/.config/fa/templates/` must NEVER be generic (e.g., avoid `app`, `web`, `cli`, `template`, `starter`).
+  - Names must be simple but distinctive, combining the stack/tool type with its specific variant, toolchain, or flavor (e.g., `next-ts`, `ts-lib`, `rust-cli`).
   - This prevents naming collisions when multiple distinct configurations exist for the same tool or stack.
 - **Explicit Alias Governance**:
   - Aliases for recipes or commands must ONLY be created when explicitly defined by the user.
   - Never generate, infer, or automatically append unrequested aliases. Always consult or ask the user before defining aliases.
+- **Recipe Inline Content Size Limit**:
+  - `inline` file content in `recipes.toml`/`recipes.d/*.toml` MUST NOT exceed 40 lines.
+  - Longer files MUST move to `~/.config/fa/templates/<recipe-name>/` via `{ from = ... }` (read from disk at runtime, no Rust edits).
+  - Special cases beyond 40 lines inline require explicit user approval — ask before proceeding. See `.agents/rules/recipes-content.md` and @docs/recipes.md.
 - **Git Strategy & Branch Restrictions**:
   - Never use `git checkout`. Use modern git commands (`git switch`, `git restore`).
   - User Git Aliases: `git s` -> `git switch`, `git b` -> `git branch`.
