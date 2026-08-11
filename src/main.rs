@@ -18,7 +18,7 @@ use crate::state::State;/// Recipe-based project scaffolder CLI for Debian and T
 #[command(name = "fa", about, long_about = None, disable_version_flag = true)]
 struct Cli {
     /// Print version
-    #[arg(short = 'V', long)]
+    #[arg(short = 'v', long)]
     version: bool,
     #[command(subcommand)]
     command: Option<Commands>,
