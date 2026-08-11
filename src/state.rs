@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -18,6 +18,10 @@ pub struct ProjectState {
 pub struct State {
     #[serde(default)]
     pub projects: BTreeMap<String, ProjectState>,
+    /// Config files whose shell commands the user has explicitly trusted.
+    /// Persisted by path; once trusted, `fa` never asks again for that path.
+    #[serde(default)]
+    pub trusted: BTreeSet<String>,
 }
 
 impl State {
@@ -27,6 +31,17 @@ impl State {
         let path = PathBuf::from(home).join(".local/state/fa").join(STATE_FILE);
         Some(path)
     }
+
+    /// True if the given config file path has already been trusted by the user.
+    pub fn is_trusted(&self, path: &str) -> bool {
+        self.trusted.contains(path)
+    }
+
+    /// Marks a config file path as trusted.
+    pub fn trust(&mut self, path: &str) {
+        self.trusted.insert(path.to_string());
+    }
+
 
     /// Loads state from disk; returns an empty state if absent or unreadable.
     pub fn load() -> Self {
@@ -72,7 +87,7 @@ mod tests {
         state.projects.insert(
             "myapp".to_string(),
             ProjectState {
-                recipe: "astro".to_string(),
+                recipe: "demo".to_string(),
                 variant: "pnpm".to_string(),
                 created_at: "2026-08-10T12:00:00Z".to_string(),
                 path: "/home/user/projects/myapp".to_string(),
@@ -86,5 +101,20 @@ mod tests {
         state.projects.remove("myapp");
         assert!(!state.projects.contains_key("myapp"), "Project should be removable");
         println!("   ✓ Project removed from state registry cleanly.\n");
+    }
+
+    #[test]
+    fn trust_should_register_path_and_respect_is_trusted() {
+        println!("\n🔍 [TEST] Config Trust Tracking");
+        println!("   Explanation: Verifies a config path is trusted after one explicit confirmation.");
+
+        let mut state = State::default();
+        let path = "/home/user/.config/fa/recipes.toml";
+        assert!(!state.is_trusted(path), "Should start untrusted");
+
+        state.trust(path);
+        assert!(state.is_trusted(path), "Path should be trusted after trust()");
+        assert!(!state.is_trusted("/other/recipes.toml"), "Other paths must stay untrusted");
+        println!("   ✓ Trust persisted for exactly the confirmed path.\n");
     }
 }
