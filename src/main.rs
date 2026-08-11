@@ -2,6 +2,7 @@ mod colors;
 mod config;
 mod engine;
 mod platform;
+mod spinner;
 mod state;
 mod templating;
 

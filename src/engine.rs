@@ -210,8 +210,14 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                 if opts.dry_run {
                     println!("  {DIM}[Dry-Run]{RESET} Would run: {rendered}");
                 } else {
-                    println!("  {BOLD_GREEN}✓{RESET} {}", step.description.as_deref().unwrap_or(&step.command));
-                    run_shell(&rendered)?;
+                    let label = step.description.as_deref().unwrap_or(&step.command);
+                    if step.install {
+                        run_shell_quiet_with_spinner(&rendered, label)?;
+                        println!("  {BOLD_GREEN}✓{RESET} {label}");
+                    } else {
+                        println!("  {BOLD_GREEN}✓{RESET} {label}");
+                        run_shell(&rendered)?;
+                    }
                 }
             }
         }
@@ -322,6 +328,15 @@ fn template_rel(spec: &str) -> Option<String> {
     spec.strip_prefix("templates/").map(|s| s.to_string())
 }
 
+/// Controls how a spawned command's output is presented to the user.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum OutputMode {
+    /// Stream stdout/stderr straight to the terminal.
+    Inherit,
+    /// Capture output; on failure only a short excerpt is shown.
+    Captured,
+}
+
 /// Executes a shell command, forwarding stdout/stderr.
 ///
 /// When the command runs without an interactive terminal (stdin is not a TTY),
@@ -330,19 +345,66 @@ fn template_rel(spec: &str) -> Option<String> {
 /// install. In an interactive terminal the user answers prompts normally.
 pub fn run_shell(command: &str) -> anyhow::Result<()> {
     use std::io::IsTerminal;
-    run_shell_inner(command, !std::io::stdin().is_terminal())
+    run_shell_inner(command, !std::io::stdin().is_terminal(), OutputMode::Inherit, None)
 }
 
-fn run_shell_inner(command: &str, auto_answer: bool) -> anyhow::Result<()> {
+/// Executes a shell command while showing an animated spinner with `label` on
+/// stderr, so long-running installs don't look frozen. The spinner stops (and
+/// its line is erased) before any error excerpt is printed.
+pub fn run_shell_quiet_with_spinner(command: &str, label: &str) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+    run_shell_inner(command, !std::io::stdin().is_terminal(), OutputMode::Captured, Some(label))
+}
+
+/// Number of captured output lines shown when a quiet command fails.
+const ERROR_EXCERPT_LINES: usize = 8;
+
+/// Prints the first lines of a failed quiet command's output (errors usually
+/// land first on stderr), collapsing long dependency logs to a short excerpt.
+fn print_error_excerpt(stdout: &[u8], stderr: &[u8]) {
+    let stderr_text = String::from_utf8_lossy(stderr);
+    let stdout_text = String::from_utf8_lossy(stdout);
+    let lines: Vec<&str> = stderr_text
+        .lines()
+        .chain(stdout_text.lines())
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .collect();
+    if lines.is_empty() {
+        println!("  {DIM}(no error output){RESET}");
+        return;
+    }
+    println!(
+        "  {BOLD_YELLOW}Failed command output (first {} lines):{RESET}",
+        ERROR_EXCERPT_LINES.min(lines.len())
+    );
+    for line in lines.iter().take(ERROR_EXCERPT_LINES) {
+        println!("  {DIM}{line}{RESET}");
+    }
+    let hidden = lines.len().saturating_sub(ERROR_EXCERPT_LINES);
+    if hidden > 0 {
+        println!("  {DIM}… {hidden} more lines hidden. Run the command manually for full output.{RESET}");
+    }
+}
+
+fn run_shell_inner(
+    command: &str,
+    auto_answer: bool,
+    mode: OutputMode,
+    label: Option<&str>,
+) -> anyhow::Result<()> {
     use std::io::Write;
     use std::process::Stdio;
+
+    let captured = mode == OutputMode::Captured;
+    let spinner = if captured { crate::spinner::Spinner::start(label) } else { None };
 
     let mut child = Command::new("sh")
         .arg("-c")
         .arg(command)
         .stdin(if auto_answer { Stdio::piped() } else { Stdio::inherit() })
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stdout(if captured { Stdio::piped() } else { Stdio::inherit() })
+        .stderr(if captured { Stdio::piped() } else { Stdio::inherit() })
         .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to execute '{command}': {e}"))?;
 
@@ -359,11 +421,25 @@ fn run_shell_inner(command: &str, auto_answer: bool) -> anyhow::Result<()> {
             });
         }
 
+    if captured {
+        let output = child
+            .wait_with_output()
+            .map_err(|e| anyhow::anyhow!("Failed to execute '{command}': {e}"))?;
+        if let Some(spinner) = spinner {
+            spinner.stop();
+        }
+        if !output.status.success() {
+            print_error_excerpt(&output.stdout, &output.stderr);
+            anyhow::bail!("Command failed with exit code {}: {command}", output.status.code().unwrap_or(-1));
+        }
+        return Ok(());
+    }
+
     let status = child
         .wait()
         .map_err(|e| anyhow::anyhow!("Failed to execute '{command}': {e}"))?;
     if !status.success() {
-        anyhow::bail!("Command failed with exit status {status}: {command}");
+        anyhow::bail!("Command failed with exit code {}: {command}", status.code().unwrap_or(-1));
     }
     Ok(())
 }
@@ -648,6 +724,8 @@ mod tests {
         let result = run_shell_inner(
             "read -r ans && [ \"$ans\" = y ]",
             true,
+            OutputMode::Inherit,
+            None,
         );
         assert!(result.is_ok(), "Auto-answered prompt should succeed: {result:?}");
         println!("   ✓ Confirmation prompt auto-answered with `y`.\n");
@@ -656,11 +734,36 @@ mod tests {
     #[test]
     fn run_shell_should_report_failing_command() {
         println!("\n🔍 [TEST] Shell — failing command surfaces the exit status");
-        let result = run_shell_inner("exit 3", true);
+        let result = run_shell_inner("exit 3", true, OutputMode::Inherit, None);
         assert!(result.is_err(), "Non-zero exit must surface as an error");
         let msg = format!("{result:?}");
         assert!(msg.contains("3"), "Error should mention the exit status: {msg}");
         println!("   ✓ Failing command reported with exit status.\n");
+    }
+
+    #[test]
+    fn run_shell_quiet_should_capture_output_and_still_report_failure() {
+        println!("\n🔍 [TEST] Shell — quiet mode captures output and still reports failures");
+        // Quiet mode must succeed on success and surface a failure the same way.
+        let ok = run_shell_inner("echo hidden", true, OutputMode::Captured, None);
+        assert!(ok.is_ok(), "Quiet success must not fail: {ok:?}");
+        let err = run_shell_inner("exit 4", true, OutputMode::Captured, None);
+        assert!(err.is_err(), "Quiet failure must surface as an error");
+        let msg = format!("{err:?}");
+        assert!(msg.contains("4"), "Quiet error should mention the exit status: {msg}");
+        println!("   ✓ Quiet mode captured output and surfaced the failure.\n");
+    }
+
+    #[test]
+    fn run_shell_quiet_with_spinner_should_succeed_and_surface_failures() {
+        println!("\n🔍 [TEST] Shell — spinner variant succeeds on success and reports failures");
+        let ok = run_shell_quiet_with_spinner("echo hidden", "Installing");
+        assert!(ok.is_ok(), "Spinner success must not fail: {ok:?}");
+        let err = run_shell_quiet_with_spinner("exit 5", "Installing");
+        assert!(err.is_err(), "Spinner failure must surface as an error");
+        let msg = format!("{err:?}");
+        assert!(msg.contains("5"), "Error should mention the exit status: {msg}");
+        println!("   ✓ Spinner variant succeeded and surfaced the failure.\n");
     }
 
     #[test]
