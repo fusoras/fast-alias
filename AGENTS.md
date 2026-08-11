@@ -66,3 +66,9 @@ For detailed architecture, roadmap, CLI reference, recipe schema, unit testing, 
   - **User Defines Versions Exclusively**: The user exclusively determines, authorizes, and defines version numbers (e.g. `v0.1.0-beta.1`) and release triggers. The assistant MAY ONLY suggest version numbers when asked, and MUST NEVER increment or change version numbers independently.
   - Do NOT increment or bump the version number for intermediate local commits or small feature/bugfix edits.
   - **Bump Trigger**: Version updates (`Cargo.toml`, `Cargo.lock`, `install.sh`, `AGENTS.md`) are executed ONLY when the user explicitly defines the target version and instructs to bump/publish.
+- **Strict Test Sensitivity & Mandatory Failure Verification (Red-Before-Green Rule)**:
+  - NEVER accept a new or modified unit test that passes on the first attempt without proving it can fail.
+  - Every new/updated test MUST be tested against broken implementation logic (mutation testing or pre-implementation failure) to verify it actively detects code breakage (RED state).
+  - Only after confirming the test fails properly on broken code may the production logic be implemented or restored so the test passes cleanly (GREEN state).
+  - Tests that pass on the first try without demonstrating failure sensitivity must be treated as potentially tautological/weak and audited immediately.
+  - **Mandatory Output Evidence**: When creating or modifying unit tests (even unprompted), the AI assistant MUST include a dedicated response section titled `## Test Failure Verification (RED State)` displaying the actual terminal failure log output obtained on broken code before presenting the final passing implementation.

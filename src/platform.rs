@@ -81,4 +81,25 @@ mod tests {
         assert!(!command_exists("non_existent_binary_xyz_123"), "Non-existent command should return false");
         println!("   ✓ Non-existent command correctly identified as missing.\n");
     }
+
+    #[test]
+    fn platform_detection_and_labels() {
+        println!("\n🔍 [TEST] Platform Detection & Labeling");
+        let detected = Platform::detect();
+        let label = detected.as_label();
+        assert!(!label.is_empty(), "Platform label must not be empty");
+
+        assert_eq!(Platform::Debian.as_label(), "Debian");
+        assert_eq!(Platform::Termux.as_label(), "Termux");
+        assert_eq!(
+            Platform::Unsupported("CustomOS".to_string()).as_label(),
+            "Unsupported (CustomOS)"
+        );
+    }
+
+    #[test]
+    fn detect_arch_should_return_non_empty() {
+        let arch = detect_arch();
+        assert!(!arch.is_empty(), "Architecture detection must return a non-empty string");
+    }
 }

@@ -16,10 +16,9 @@ name = "Example"
 description = "Example recipe — replace it with your own"
 language = "shell"
 
-[recipes.example.commands.example]
-command = "echo 'Hello from fa!'"
-description = "Example alias"
-aliases = []
+# General-purpose aliases, grouped by category. Run them with `fa run <alias>`.
+[aliases.demo]
+hello = { command = "echo 'Hello from fa!'", description = "Example alias" }
 "##;
 
 /// File generation specification. Each entry is one of:
@@ -74,7 +73,7 @@ pub struct Variable {
     pub default: Option<String>,
 }
 
-/// Executable command exposed by a recipe, invoked via `fa alias <name>`.
+/// Executable command declared in the alias catalog, invoked via `fa run <name>`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Command {
     pub command: String,
@@ -101,11 +100,9 @@ pub struct Recipe {
     #[serde(default)]
     pub variables: BTreeMap<String, Variable>,
     #[serde(default)]
-    pub commands: BTreeMap<String, Command>,
-    #[serde(default)]
     pub steps: Vec<Step>,
     /// Optional message printed after a successful `fa new`, reminding the
-    /// user of manual follow-ups (e.g. "edit src/config.ts").
+    /// user of manual follow-ups (e.g. "edit 'src/config.ts'").
     #[serde(default)]
     pub final_message: Option<String>,
 }
@@ -114,6 +111,11 @@ pub struct Recipe {
 pub struct Config {
     #[serde(default)]
     pub recipes: BTreeMap<String, Recipe>,
+    /// General-purpose executable commands, organized by category. Each entry
+    /// maps a category name (e.g. `git`, `sistema`) to its commands, so aliases
+    /// live independently of scaffolding recipes.
+    #[serde(default)]
+    pub aliases: BTreeMap<String, BTreeMap<String, Command>>,
 }
 
 impl Config {
@@ -211,6 +213,14 @@ impl Config {
                 config.recipes.insert(recipe_name, recipe);
             }
 
+            for (category, commands) in sub_config.aliases {
+                config
+                    .aliases
+                    .entry(category)
+                    .or_default()
+                    .extend(commands);
+            }
+
             loaded_files.push(path);
         }
 
@@ -268,31 +278,24 @@ impl Config {
         recipe.variants.first().cloned().unwrap_or_default()
     }
 
-    /// Resolves an input query (canonical command ID or any defined alias) to the
-    /// canonical command key. Searches across all recipes' command tables.
-    pub fn resolve_command_key(&self, query: &str) -> Option<String> {
-        for recipe in self.recipes.values() {
-            if let Some(key) = recipe.commands.keys().find(|k| k.eq_ignore_ascii_case(query)) {
-                return Some(key.clone());
-            }
-            if let Some(key) = recipe.commands.iter().find_map(|(k, cmd)| {
-                cmd.aliases
-                    .iter()
-                    .any(|alias| alias.eq_ignore_ascii_case(query))
-                    .then_some(k)
-            }) {
-                return Some(key.clone());
+    /// Resolves an input query to its full command definition, returning
+    /// `(category, command_key, &Command)`.
+    pub fn resolve_command(&self, query: &str) -> Option<(String, String, &Command)> {
+        for (category, commands) in &self.aliases {
+            if let Some((key, command)) = find_command(commands, query) {
+                return Some((category.clone(), key.clone(), command));
             }
         }
         None
     }
 
-    /// Returns (recipe_key, command_key, &Command) for every command in the catalog.
+    /// Returns (category, command_key, &Command) for every command in the
+    /// alias catalog.
     pub fn all_commands(&self) -> Vec<(&str, &String, &Command)> {
         let mut out = Vec::new();
-        for (recipe_key, recipe) in &self.recipes {
-            for (command_key, command) in &recipe.commands {
-                out.push((recipe_key.as_str(), command_key, command));
+        for (category, commands) in &self.aliases {
+            for (command_key, command) in commands {
+                out.push((category.as_str(), command_key, command));
             }
         }
         out
@@ -302,6 +305,22 @@ impl Config {
 /// Helper to resolve the user's home directory from environment.
 pub fn dirs_home_dir() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
+}
+
+/// Finds a command by its canonical key or any alias (case-insensitive).
+fn find_command<'a>(
+    commands: &'a BTreeMap<String, Command>,
+    query: &str,
+) -> Option<(&'a String, &'a Command)> {
+    if let Some(key) = commands.keys().find(|k| k.eq_ignore_ascii_case(query)) {
+        return commands.get_key_value(key);
+    }
+    commands.iter().find_map(|(k, cmd)| {
+        cmd.aliases
+            .iter()
+            .any(|alias| alias.eq_ignore_ascii_case(query))
+            .then_some((k, cmd))
+    })
 }
 
 #[cfg(test)]
@@ -317,15 +336,9 @@ description = "A demo recipe"
 language = "web · typescript"
 variants = ["pnpm", "bun"]
 
-[recipes.demo.commands.deploy]
-command = "node --run build"
-description = "Build and deploy"
-aliases = ["fpages", "cfp"]
-
-[recipes.demo.commands.check]
-command = "node --run check"
-description = "Run checks"
-aliases = []
+[aliases.deploy]
+deploy = { command = "node --run build", description = "Build and deploy", aliases = ["fpages", "cfp"] }
+check = { command = "node --run check", description = "Run checks" }
 "#;
 
     #[test]
@@ -343,10 +356,10 @@ aliases = []
         println!("   ✓ Recipe 'example' verified in catalog.\n");
 
         assert!(
-            cfg.recipes["example"].commands.contains_key("example"),
-            "Example recipe should declare an 'example' command"
+            cfg.aliases["demo"].contains_key("hello"),
+            "Example config should declare a 'hello' alias"
         );
-        println!("   ✓ Command 'example' verified in catalog.\n");
+        println!("   ✓ Alias 'hello' verified in catalog.\n");
     }
 
     #[test]
@@ -362,14 +375,54 @@ aliases = []
         let config: Config = toml::from_str(SAMPLE_CONFIG).expect("Should parse sample config");
 
         assert_eq!(
-            config.resolve_command_key("deploy"),
+            config.resolve_command("deploy").map(|(_, key, _)| key),
             Some("deploy".to_string())
         );
         assert_eq!(
-            config.resolve_command_key("fpages"),
+            config.resolve_command("fpages").map(|(_, key, _)| key),
             Some("deploy".to_string())
         );
-        assert_eq!(config.resolve_command_key("nonexistent"), None);
+        assert!(config.resolve_command("nonexistent").is_none());
+    }
+
+    #[test]
+    fn alias_categories_should_resolve_across_sections() {
+        let config: Config = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "A demo recipe"
+
+[aliases.git]
+status = { command = "git status", description = "Repo state" }
+gco = { command = "git checkout {{branch}}", description = "Switch branch", aliases = ["co"] }
+
+[aliases.sistema]
+free = { command = "free -h", description = "Free memory" }
+"#,
+        )
+        .expect("Should parse config with alias categories");
+
+        assert_eq!(
+            config.resolve_command("gco").map(|(cat, key, _)| (cat, key)),
+            Some(("git".to_string(), "gco".to_string()))
+        );
+        assert_eq!(
+            config.resolve_command("co").map(|(cat, key, _)| (cat, key)),
+            Some(("git".to_string(), "gco".to_string()))
+        );
+        assert_eq!(
+            config.resolve_command("free").map(|(cat, key, _)| (cat, key)),
+            Some(("sistema".to_string(), "free".to_string()))
+        );
+        assert_eq!(
+            config.resolve_command("status").map(|(cat, key, _)| (cat, key)),
+            Some(("git".to_string(), "status".to_string()))
+        );
+        assert!(config.resolve_command("ghost").is_none());
+
+        let grouped = config.all_commands();
+        assert_eq!(grouped.len(), 3, "Both alias categories are listed");
     }
 
     #[test]
@@ -398,5 +451,12 @@ aliases = []
         let config: Config = toml::from_str(SAMPLE_CONFIG).expect("Should parse sample config");
         let demo = config.recipes.get("demo").expect("demo recipe should exist");
         assert_eq!(Config::default_variant(demo), "pnpm");
+    }
+
+    #[test]
+    fn invalid_toml_should_fail_gracefully() {
+        let broken_toml = "this is not = [valid toml content {{";
+        let parsed: Result<Config, _> = toml::from_str(broken_toml);
+        assert!(parsed.is_err(), "Invalid TOML must return deserialization error");
     }
 }

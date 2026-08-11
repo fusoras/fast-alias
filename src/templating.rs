@@ -131,4 +131,24 @@ mod tests {
         let out2 = substitute_shell("echo {{name}}", &vars);
         assert_eq!(out2, "echo 'myapp; rm -rf ~'");
     }
+
+    #[test]
+    fn resolve_all_with_defaults_and_interactive_resolver() {
+        let inputs = vec!["{{name}}".to_string(), "{{port}}".to_string()];
+        let mut vars = HashMap::new();
+        let mut defaults = HashMap::new();
+        defaults.insert("port".to_string(), "3000".to_string());
+
+        // Resolver returns "my-app" for name, and empty string "" for port (to trigger default fallback)
+        resolve_all(&inputs, &mut vars, &defaults, |key| {
+            if key == "name" {
+                "my-app".to_string()
+            } else {
+                "".to_string()
+            }
+        });
+
+        assert_eq!(vars.get("name"), Some(&"my-app".to_string()));
+        assert_eq!(vars.get("port"), Some(&"3000".to_string()), "Empty answer must fallback to default");
+    }
 }

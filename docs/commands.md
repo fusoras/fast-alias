@@ -7,16 +7,17 @@
 | Command | Purpose | Options |
 | ------- | ------- | ------- |
 | `fa new <recipe> <name>` | Scaffolds a new project from the recipe into directory `<name>` | `-v` / `--variant` (e.g. `pnpm`, `bun`, `npm`), `-d` / `--dry-run` to preview, `--no-install` to skip dependency installation |
-| `fa list` | Displays available recipes in a concise single-line format (routed through system `$PAGER` / `less` when on TTY) | `-sh` / `--show-hidden` to display unsupported recipes |
-| `fa search <query>` | Searches recipes by name, alias, language, or variant and prints matches in the same format as `list` | Query is matched case-insensitively |
+| `fa list` | Displays available recipes and grouped aliases in a concise single-line format (routed through system `$PAGER` / `less` when on TTY) | `-sh` / `--show-hidden` to display unsupported recipes |
+| `fa search <query>` | Searches recipes and aliases by name, alias, category, language, or variant and prints matches in the same format as `list` | Query is matched case-insensitively |
 | `fa show <recipe>` | Displays full recipe details: description, language, variants, tooling, files, and steps | Accepts recipe name or alias |
+| `fa run <alias> [args...]` | Runs a general-purpose alias from the `[aliases]` catalog (category-based) | `--dry-run` / `-d` to preview the resolved command; args fill `{{var}}` placeholders or pass through shell-quoted |
 | `fa doctor` | Detects platform, architecture, and installed package managers (pnpm/bun/npm) | — |
 | `fa sync` | Fetches the latest recipe catalog from the repository without recompiling | `-d` / `--dry-run` to preview |
 | `fa self-update` | Checks GitHub Releases and updates the application binary in-place | `-d` / `--dry-run` to preview version update without downloading |
 | `fa self-uninstall` | Safely removes `fa` binary executable and state/config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config, `-d` / `--dry-run` to preview |
 
 > [!NOTE]
-> **Short flags:** `fa -n <recipe> <name>` is shorthand for `fa new <recipe> <name>`, and `fa -a <command>` for `fa alias <command>`. Inside the `new` subcommand, dry-run is `-d` / `--dry-run` (not `-n`).
+> **Short flags:** `fa -n <recipe> <name>` is shorthand for `fa new <recipe> <name>`, and `fa -a <command>` for `fa run <command>` (and `fa alias <command>` still works as a synonym). Inside the `new` subcommand, dry-run is `-d` / `--dry-run` (not `-n`).
 | `fa --version` | Displays the current application version | `-v` |
 | `fa --help` | Displays the command-line help summary | `-h` |
 
@@ -83,10 +84,20 @@ fa list
 
 **Exact Output**:
 ```text
-my-recipe (pnpm / bun / npm) · web · typescript [apply]
-ts-lib (pnpm / bun) · typescript [apply]
-rust-cli · systems · rust [apply]
-python · scripting · python [apply]
+Recipes:
+  Usage: fa new <recipe> <name>
+
+  my-recipe (pnpm / bun / npm) · web · typescript [apply]
+  ts-lib (pnpm / bun) · typescript [apply]
+
+Aliases:
+  Usage: fa run <alias> [args...]
+
+  git:
+    gco · Cambiar de rama
+    status · Ver estado del repo
+  sistema:
+    free · Memoria disponible
 ```
 
 ### 4. Search Recipes
@@ -101,7 +112,25 @@ fa search rust
 my-recipe (pnpm / bun / npm) · web · typescript [apply]
 ```
 
-### 5. Show Recipe Details
+### 5. Run Alias (Categorized Commands)
+**Command**:
+```bash
+fa run gco main            # git checkout 'main'
+fa run rm a.txt b.txt      # git rm 'a.txt' 'b.txt' (passthrough)
+fa run free                # free -h
+fa run gco main --dry-run  # preview without executing
+fa -a free                 # short-flag shorthand
+```
+
+**Exact Output (Dry-Run)**:
+```text
+  [Dry-Run] Would run: git checkout 'main'
+  [Alias] git · gco
+```
+
+Aliases are grouped by their `[aliases]` category (e.g. `git`, `sistema`, `deploy`). `fa list` and `fa search` display them grouped accordingly.
+
+### 6. Show Recipe Details
 **Command**:
 ```bash
 fa show my-recipe
@@ -133,7 +162,7 @@ Steps:
   - git init (Initialize git repository)
 ```
 
-### 6. Doctor (Environment Detection)
+### 7. Doctor (Environment Detection)
 **Command**:
 ```bash
 fa doctor
@@ -153,7 +182,7 @@ Prerequisites:
   ✓ tar
 ```
 
-### 7. Self-Update Engine
+### 8. Self-Update Engine
 **Command**:
 ```bash
 fa self-update --dry-run
@@ -179,7 +208,7 @@ Latest release tag: v<newer-version>
 [Dry-Run] Would extract and replace executable at: /home/user/.local/bin/fa
 ```
 
-### 8. Self-Uninstall Engine
+### 9. Self-Uninstall Engine
 **Command**:
 ```bash
 fa self-uninstall --dry-run
@@ -201,7 +230,7 @@ Target Config Directory: /home/user/.config/fa
 [Dry-Run] Would remove state directory: /home/user/.local/state/fa
 ```
 
-### 9. System Bootstrap Installation Script
+### 10. System Bootstrap Installation Script
 **Command**:
 ```bash
 curl -sSL https://raw.githubusercontent.com/<user>/fast-alias/develop/install.sh | sh

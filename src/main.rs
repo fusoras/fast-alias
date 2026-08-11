@@ -28,6 +28,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Scaffold a new project from a recipe into a directory.
+    #[command(visible_aliases = ["-n"])]
     New {
         /// Recipe name or alias (e.g. my-recipe)
         recipe: String,
@@ -44,6 +45,7 @@ enum Commands {
         no_install: bool,
     },
     /// List available recipes.
+    #[command(visible_aliases = ["-l"])]
     List {
         /// Display unsupported recipes too
         #[arg(short = 's', long)]
@@ -58,11 +60,13 @@ enum Commands {
         recipe: String,
     },
     /// Run an executable command declared in the recipe catalog.
+    #[command(visible_aliases = ["run", "-a"])]
     Alias {
         /// Command name or alias (e.g. cloudflare-pages, fpages)
         name: String,
     },
     /// Detect the device environment (platform, arch, package managers).
+    #[command(visible_aliases = ["-d"])]
     Doctor,
 }
 
@@ -139,7 +143,22 @@ fn prompt_yes_no(question: &str, default: bool) -> bool {
 }
 
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse_from(rewrite_short_flags(std::env::args().collect()));
+    let args = rewrite_short_flags(std::env::args().collect());
+    let cli = match Cli::try_parse_from(args) {
+        Ok(cli) => cli,
+        Err(err) => {
+            if err.kind() == clap::error::ErrorKind::DisplayHelp {
+                let help_str = Cli::command().render_help().to_string();
+                println!("{}", format_help_with_inline_aliases(&help_str));
+                return Ok(());
+            }
+            if err.kind() == clap::error::ErrorKind::DisplayVersion {
+                println!("{}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+            err.exit();
+        }
+    };
 
     if cli.version {
         println!("{}", env!("CARGO_PKG_VERSION"));
@@ -147,8 +166,8 @@ fn main() -> anyhow::Result<()> {
     }
 
     let Some(command) = cli.command else {
-        Cli::command().print_help()?;
-        println!();
+        let help_str = Cli::command().render_help().to_string();
+        println!("{}", format_help_with_inline_aliases(&help_str));
         return Ok(());
     };
 
@@ -288,21 +307,16 @@ fn main() -> anyhow::Result<()> {
         Commands::Show { recipe } => {
             if let Some(key) = config.resolve_recipe_key(&recipe) {
                 show_recipe(&config, key);
-            } else if let Some(key) = config.resolve_command_key(&recipe) {
-                show_command(&config, &key);
+            } else if let Some((category, key, _)) = config.resolve_command(&recipe) {
+                show_command(&config, &category, &key);
             } else {
                 anyhow::bail!("Unknown recipe or command '{recipe}'. Run `fa list` to see available options.");
             }
         }
         Commands::Alias { name } => {
-            let key = config.resolve_command_key(&name).ok_or_else(|| {
+            let (_category, _key, cmd) = config.resolve_command(&name).ok_or_else(|| {
                 anyhow::anyhow!("Unknown command '{name}'. Run `fa list` to see available aliases.")
             })?;
-            let (_, _, cmd) = config
-                .all_commands()
-                .into_iter()
-                .find(|(_, ck, _)| *ck == &key)
-                .ok_or_else(|| anyhow::anyhow!("Command '{name}' not found"))?;
             ensure_trusted()?;
             run_shell(&cmd.command)?;
         }
@@ -314,14 +328,14 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn show_command(config: &Config, key: &str) {
-    let (recipe_key, _, cmd) = config
+fn show_command(config: &Config, category: &str, key: &str) {
+    let (_, _, cmd) = config
         .all_commands()
         .into_iter()
-        .find(|(_, ck, _)| ck.as_str() == key)
+        .find(|(cat, ck, _)| *cat == category && ck.as_str() == key)
         .expect("resolved command should exist");
     println!("{BOLD_CYAN}Command:{RESET} {key}");
-    println!("Recipe: {recipe_key}");
+    println!("Category: {category}");
     if let Some(desc) = &cmd.description {
         println!("Description: {desc}");
     }
@@ -433,6 +447,56 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
+/// Formats subcommand aliases inline in help text (e.g. `new, -n`, `alias, run, -a`).
+fn format_help_with_inline_aliases(input: &str) -> String {
+    let mut out = Vec::new();
+    let mut in_commands = false;
+
+    for line in input.lines() {
+        if line.trim() == "Commands:" {
+            in_commands = true;
+            out.push(line.to_string());
+            continue;
+        }
+        if in_commands && (line.trim() == "Options:" || line.trim().is_empty()) {
+            in_commands = false;
+        }
+
+        if in_commands && line.starts_with("  ") {
+            let trimmed = line.trim_start();
+            let mut parts = trimmed.split_whitespace();
+            if let Some(cmd_name) = parts.next() {
+                let rest = trimmed[cmd_name.len()..].trim_start();
+                let mut aliases = Vec::new();
+                let mut clean_rest = rest.to_string();
+
+                if let Some(alias_start) = rest.rfind(" [alias: ") {
+                    let alias_str = &rest[alias_start + 9..rest.len() - 1];
+                    aliases.push(alias_str.to_string());
+                    clean_rest = rest[..alias_start].trim_end().to_string();
+                } else if let Some(alias_start) = rest.rfind(" [aliases: ") {
+                    let alias_str = &rest[alias_start + 11..rest.len() - 1];
+                    aliases.extend(alias_str.split(", ").map(|s| s.to_string()));
+                    clean_rest = rest[..alias_start].trim_end().to_string();
+                }
+
+                let mut full_name = cmd_name.to_string();
+                if !aliases.is_empty() {
+                    full_name.push_str(", ");
+                    full_name.push_str(&aliases.join(", "));
+                }
+
+                out.push(format!("  {full_name:<16}{clean_rest}"));
+                continue;
+            }
+        }
+
+        out.push(line.to_string());
+    }
+
+    out.join("\n")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,5 +512,20 @@ mod tests {
     fn civil_from_days_epoch_should_be_1970_01_01() {
         let (y, m, d) = civil_from_days(0);
         assert_eq!((y, m, d), (1970, 1, 1));
+    }
+
+    #[test]
+    fn cli_help_should_include_visible_aliases_for_short_flags() {
+        let mut cmd = Cli::command();
+        let raw_help = cmd.render_help().to_string();
+        let formatted = format_help_with_inline_aliases(&raw_help);
+        assert!(
+            formatted.contains("new, -n"),
+            "Help output must display inline subcommand short aliases (new, -n): got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("alias, run, -a"),
+            "Help output must display inline subcommand aliases (alias, run, -a): got:\n{formatted}"
+        );
     }
 }

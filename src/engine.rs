@@ -478,7 +478,12 @@ fn platform_matches(label: &str) -> anyhow::Result<bool> {
 /// Formats a single-line list entry for `fa list` / `fa search`.
 /// Name (bold) followed by a dimmed description to keep the line readable.
 pub fn format_list_line(recipe_key: &str, recipe: &Recipe) -> String {
-    format!("{BOLD_BLUE}{recipe_key}{RESET} · {DIM_GRAY}{}{RESET}", recipe.description)
+    let mut name = recipe_key.to_string();
+    if !recipe.aliases.is_empty() {
+        name.push_str(", ");
+        name.push_str(&recipe.aliases.join(", "));
+    }
+    format!("{BOLD_BLUE}{name}{RESET} · {DIM_GRAY}{}{RESET}", recipe.description)
 }
 
 /// Formats a single-line list entry for an executable command.
@@ -560,7 +565,6 @@ mod tests {
             tooling: None,
             files: recipe_files,
             variables: Default::default(),
-            commands: Default::default(),
             steps: vec![],
             final_message: None,
         };
@@ -643,7 +647,6 @@ mod tests {
             tooling: None,
             files,
             variables: Default::default(),
-            commands: Default::default(),
             steps: vec![],
             final_message: None,
         };
@@ -788,14 +791,16 @@ mod tests {
     }
 
     #[test]
-    fn expand_home_utility_should_expand_tilde_paths() {
-        println!("\n🔍 [TEST] Expand Home Utility");
-        println!("   Explanation: Verifies path expansion from tilde paths to absolute user paths.");
-
+    fn expand_home_exact_path_and_non_tilde() {
+        println!("\n🔍 [TEST] Expand Home Utility — Exact Path & Non-Tilde Preservation");
         let home = std::env::var_os("HOME").map(|h| h.to_string_lossy().to_string()).unwrap();
+        let expected = std::path::PathBuf::from(&home).join("projects/app").to_string_lossy().to_string();
+
         let expanded = expand_home("~/projects/app");
-        assert!(expanded.starts_with(&home), "Should expand to user home, got: {expanded}");
-        println!("   ✓ Tilde expanded to: {expanded}\n");
+        assert_eq!(expanded, expected, "Tilde path must expand to exact $HOME/projects/app");
+
+        let absolute_non_tilde = expand_home("/usr/local/bin");
+        assert_eq!(absolute_non_tilde, "/usr/local/bin", "Non-tilde paths must remain unchanged");
     }
 
     #[test]
@@ -811,7 +816,6 @@ mod tests {
             tooling: None,
             files: Default::default(),
             variables: Default::default(),
-            commands: Default::default(),
             steps: vec![],
             final_message: None,
         };
@@ -821,6 +825,26 @@ mod tests {
         assert!(!line.contains("[apply]"));
         assert!(!line.contains("pnpm / bun"));
         assert!(!line.contains("web · typescript"));
+    }
+
+    #[test]
+    fn format_list_line_should_render_aliases_comma_separated() {
+        let recipe = Recipe {
+            name: "Demo".to_string(),
+            description: "test recipe".to_string(),
+            language: None,
+            aliases: vec!["d".to_string(), "dm".to_string()],
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables: Default::default(),
+            steps: vec![],
+            final_message: None,
+        };
+        let line = format_list_line("demo", &recipe);
+        assert!(line.contains("demo, d, dm"), "Recipe aliases must be formatted comma-separated alongside key: got '{line}'");
     }
 
     #[test]

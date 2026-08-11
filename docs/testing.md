@@ -12,6 +12,30 @@ cargo test -- --nocapture
 
 ---
 
+## Mandatory Test Failure & Sensitivity Protocol (Red-Before-Green Rule)
+
+> [!IMPORTANT]
+> **NUNCA aceptar un test que pase a la primera sin haberlo visto fallar primero.**
+
+Para evitar tests tautológicos, inútiles o falsos positivos (tests que aprueban incluso cuando el código de producción está roto), todo test nuevo o modificado DEBE cumplir estrictamente con el siguiente protocolo:
+
+1. **Fase 1 — Prueba de Fallo Obligatoria (RED / Mutation State):**
+   - Antes de dar por válido un test, la lógica del código de producción a evaluar debe alterarse deliberadamente (mutación sintáctica, cambio de condición, retorno de valores erróneos o estado incompleto).
+   - Se debe ejecutar `cargo test` y verificar empíricamente que el test **FALLA** con una aserción o pánico explicativo.
+   - Si el test pasa a la primera (`ok`) sobre código mutado o incompleto, el test se considera **inválido/tautológico** y debe reescribirse para ajustar sus aserciones a la lógica real del dominio.
+
+2. **Fase 2 — Implementación y Aprobación (GREEN State):**
+   - Una vez comprobada la sensibilidad al fallo del test, se restaura o implementa la lógica correcta del código de producción.
+   - Se vuelve a ejecutar `cargo test` para confirmar que el test pasa en verde de forma legítima.
+
+3. **Evidencia Transparente Obligatoria en el Chat:**
+   - Para que el usuario pueda auditar el cumplimiento de esta regla cuando la IA cree tests espontáneamente, la respuesta DEBE incluir una sección dedicada llamada `## Test Failure Verification (RED State)` mostrando la traza real del fallo en terminal antes de presentar el pase final en verde.
+
+4. **Herramienta de Verificación:**
+   - La suite puede auditarse creando un git worktree aislado (`git worktree add .worktrees/test-check develop`) para ejecutar pruebas de mutación sin alterar el árbol de trabajo principal.
+
+---
+
 ## Planned Unit Test Inventory & Scope
 
 | Test Name | Module | Primary Purpose & Verification |

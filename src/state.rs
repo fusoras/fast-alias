@@ -79,10 +79,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn track_project_should_register_and_remove_cleanly() {
-        println!("\n🔍 [TEST] Safety Engine & Project State Tracking");
-        println!("   Explanation: Verifies that created projects are registered and removable cleanly.");
-
+    fn state_persistence_save_and_load() {
+        println!("\n🔍 [TEST] State Serialization & Deserialization Persistence");
         let mut state = State::default();
         state.projects.insert(
             "myapp".to_string(),
@@ -94,13 +92,15 @@ mod tests {
                 installed: true,
             },
         );
+        state.trust("/home/user/.config/fa/recipes.toml");
 
-        assert!(state.projects.contains_key("myapp"), "Project 'myapp' should be tracked");
-        println!("   ✓ Project 'myapp' tracked successfully.");
+        let serialized = toml::to_string(&state).expect("State should serialize to TOML");
+        let restored: State = toml::from_str(&serialized).expect("State should deserialize from TOML");
 
-        state.projects.remove("myapp");
-        assert!(!state.projects.contains_key("myapp"), "Project should be removable");
-        println!("   ✓ Project removed from state registry cleanly.\n");
+        assert!(restored.projects.contains_key("myapp"), "Restored state must contain project");
+        assert_eq!(restored.projects["myapp"].recipe, "demo");
+        assert!(restored.is_trusted("/home/user/.config/fa/recipes.toml"), "Restored state must keep trust");
+        assert!(!restored.is_trusted("/untrusted/path"), "Untrusted path must stay untrusted");
     }
 
     #[test]
