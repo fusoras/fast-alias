@@ -6,7 +6,7 @@ use std::process::Command;
 
 use crate::colors::*;
 use crate::platform::Platform;
-use crate::templating::{resolve_all, substitute};
+use crate::templating::{resolve_all, substitute, substitute_shell};
 
 #[derive(Debug, Clone)]
 pub struct NewOptions {
@@ -15,6 +15,24 @@ pub struct NewOptions {
     pub variant: Option<String>,
     pub dry_run: bool,
     pub no_install: bool,
+}
+
+/// Result of a `fa new` run: whether the project should be registered in
+/// state.toml (and with which `installed` flag) plus the actual outcome.
+#[derive(Debug, Clone)]
+pub struct NewOutcome {
+    pub project_dir: String,
+    pub installed: bool,
+    /// Whether the project directory survived and should be tracked in state.
+    pub register: bool,
+}
+
+/// Full result of `run_new`: the outcome (for state tracking) and the
+/// success/error, so a kept-but-broken project still exits non-zero (like Astro).
+#[derive(Debug)]
+pub struct NewResult {
+    pub outcome: NewOutcome,
+    pub result: anyhow::Result<()>,
 }
 
 /// Expands a tilde-prefixed path (~/...) to an absolute user path.
@@ -26,29 +44,31 @@ pub fn expand_home(path: &str) -> String {
     path.to_string()
 }
 
-/// Resolves embedded template content for a recipe file. Returns None if the
-/// template does not exist in the embedded catalog.
-pub fn embedded_template(recipe: &str, file: &str) -> Option<&'static str> {
-    let key = format!("{recipe}/{file}");
-    match key.as_str() {
-        "astro/.prettierrc" => Some(include_str!("../templates/astro/.prettierrc")),
-        "astro/.prettierignore" => Some(include_str!("../templates/astro/.prettierignore")),
-        "astro/.stylelintrc.json" => Some(include_str!("../templates/astro/.stylelintrc.json")),
-        "astro/.gitignore" => Some(include_str!("../templates/astro/.gitignore")),
-        "astro/tsconfig.json" => Some(include_str!("../templates/astro/tsconfig.json")),
-        "astro/pnpm-workspace.yaml" => Some(include_str!("../templates/astro/pnpm-workspace.yaml")),
-        "astro/astro.config.mjs" => Some(include_str!("../templates/astro/astro.config.mjs")),
-        "astro/.oxlintrc.json" => Some(include_str!("../templates/astro/.oxlintrc.json")),
-        _ => None,
-    }
+// Reads a template file from the user templates directory
+// (`~/.config/fa/templates/<rel>`), keyed by its path relative to `templates/`
+// (e.g. `my-recipe/Layout.tsx`). Templates are user-provided files on disk, so
+// adding a template never requires editing Rust code.
+fn read_user_template(rel: &str) -> Option<String> {
+    let templates_dir = Config::get_user_templates_dir()?;
+    let path = templates_dir.join(rel);
+    fs::read_to_string(&path).ok()
 }
 
 /// Runs the full `fa new` flow: create → files → steps.
-pub fn run_new(config: &Config, opts: &NewOptions) -> anyhow::Result<()> {
-    let recipe = config
-        .recipes
-        .get(&opts.recipe_key)
-        .ok_or_else(|| anyhow::anyhow!("Recipe '{}' not found", opts.recipe_key))?;
+pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
+    let recipe = match config.recipes.get(&opts.recipe_key) {
+        Some(recipe) => recipe,
+        None => {
+            return NewResult {
+                outcome: NewOutcome {
+                    project_dir: opts.project_name.clone(),
+                    installed: false,
+                    register: false,
+                },
+                result: Err(anyhow::anyhow!("Recipe '{}' not found", opts.recipe_key)),
+            };
+        }
+    };
 
     let variant = opts
         .variant
@@ -109,116 +129,238 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> anyhow::Result<()> {
     }
 
     // 1. Create base
-    if let Some(create) = &recipe.create
-        && let Some(command) = &create.command {
-            let rendered = substitute(command, &vars);
-            if opts.dry_run {
-                println!("{DIM}[Dry-Run]{RESET} Would scaffold base via: {rendered}");
-            } else {
-                println!("Scaffolding base via: {rendered}");
-                run_shell(&rendered)?;
-                // Scaffold CLIs (create-astro, cargo new, ...) generate a
-                // subdirectory named after the project; run the rest of the
-                // flow (files + steps) inside it.
-                std::env::set_current_dir(&opts.project_name).map_err(|e| {
-                    anyhow::anyhow!(
-                        "Scaffold did not produce directory '{}': {e}",
-                        opts.project_name
-                    )
-                })?;
-            }
-        }
+    let original_cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
+    // Whether a project directory already existed before this run. A directory
+    // that existed beforehand is NEVER removed, even on internal failures.
+    let project_existed = Path::new(&opts.project_name).exists();
+    // Whether the base skeleton (create + files) completed. Failures before
+    // this point are internal (create/files); failures after are recoverable
+    // (steps), so the project is kept (Astro-style).
+    let mut scaffold_ok = false;
 
-    // 2. Write files
-    println!("\nWriting configuration files:");
-    for (dest, spec) in &recipe.files {
-        let dest_path = expand_home(dest);
-        let target = Path::new(&dest_path);
-
-        if opts.dry_run {
-            println!("  {DIM}[Dry-Run]{RESET} Would write file: {dest}");
-            continue;
-        }
-
-        if target.exists() && spec.skip_if_exists == Some(true) {
-            println!("  {BOLD_YELLOW}[SKIP]{RESET} {dest} (already exists)");
-            continue;
-        }
-
-        let content = resolve_file_content(recipe, spec, &vars);
-        let content = match content {
-            Some(c) => c,
-            None => {
-                anyhow::bail!("No content source for file '{dest}' (missing from/inline/template)")
-            }
-        };
-
-        if let Some(parent) = target.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| anyhow::anyhow!("Failed to create dir {}: {e}", parent.display()))?;
-        }
-        fs::write(target, content)
-            .map_err(|e| anyhow::anyhow!("Failed to write {dest}: {e}"))?;
-        println!("  {BOLD_GREEN}✓{RESET} {dest}");
-    }
-
-    // 3. Steps
-    if !recipe.steps.is_empty() {
-        println!("\nSteps:");
-        for step in &recipe.steps {
-            if let Some(platform) = &step.platform
-                && platform != "all" && !platform_matches(platform)? {
-                    continue;
+    let flow_result: anyhow::Result<()> = (|| {
+        if let Some(create) = &recipe.create
+            && let Some(command) = &create.command {
+                let rendered = substitute_shell(command, &vars);
+                if opts.dry_run {
+                    println!("{DIM}[Dry-Run]{RESET} Would scaffold base via: {rendered}");
+                } else {
+                    run_shell(&rendered)?;
+                    // Scaffold CLIs (create-tool, cargo new, ...) generate a
+                    // subdirectory named after the project; run the rest of the
+                    // flow (files + steps) inside it.
+                    std::env::set_current_dir(&opts.project_name).map_err(|e| {
+                        anyhow::anyhow!(
+                            "Scaffold did not produce directory '{}': {e}",
+                            opts.project_name
+                        )
+                    })?;
                 }
-            if step.install && opts.no_install {
-                println!("  {BOLD_YELLOW}[SKIP]{RESET} {} (--no-install)", step.description.as_deref().unwrap_or(&step.command));
+            }
+
+        // 2. Write files
+        println!("\nWriting configuration files:");
+        for (dest, spec) in &recipe.files {
+            let dest_path = expand_home(dest);
+            let target = Path::new(&dest_path);
+
+            if opts.dry_run {
+                println!("  {DIM}[Dry-Run]{RESET} Would write file: {dest}");
                 continue;
             }
-            let rendered = substitute(&step.command, &vars);
-            if opts.dry_run {
-                println!("  {DIM}[Dry-Run]{RESET} Would run: {rendered}");
-            } else {
-                println!("  {BOLD_GREEN}✓{RESET} {}", step.description.as_deref().unwrap_or(&step.command));
-                run_shell(&rendered)?;
+
+            if target.exists() && spec.skip_if_exists == Some(true) {
+                println!("  {BOLD_YELLOW}[SKIP]{RESET} {dest} (already exists)");
+                continue;
+            }
+
+            let content = resolve_file_content(spec, &vars);
+            let content = match content {
+                Some(c) => c,
+                None => {
+                    anyhow::bail!("No content source for file '{dest}' (missing from/inline/template)")
+                }
+            };
+
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| anyhow::anyhow!("Failed to create dir {}: {e}", parent.display()))?;
+            }
+            fs::write(target, content)
+                .map_err(|e| anyhow::anyhow!("Failed to write {dest}: {e}"))?;
+            println!("  {BOLD_GREEN}✓{RESET} {dest}");
+        }
+        // The skeleton (create + files) is complete; from here on, failures are
+        // recoverable (e.g. dependency installation) and must keep the project.
+        scaffold_ok = true;
+
+        // 3. Steps
+        if !recipe.steps.is_empty() {
+            println!("\nSteps:");
+            for step in &recipe.steps {
+                if let Some(platform) = &step.platform
+                    && platform != "all" && !platform_matches(platform)? {
+                        continue;
+                    }
+                if step.install && opts.no_install {
+                    println!("  {BOLD_YELLOW}[SKIP]{RESET} {} (--no-install)", step.description.as_deref().unwrap_or(&step.command));
+                    continue;
+                }
+                let rendered = substitute_shell(&step.command, &vars);
+                if opts.dry_run {
+                    println!("  {DIM}[Dry-Run]{RESET} Would run: {rendered}");
+                } else {
+                    println!("  {BOLD_GREEN}✓{RESET} {}", step.description.as_deref().unwrap_or(&step.command));
+                    run_shell(&rendered)?;
+                }
             }
         }
+        Ok(())
+    })();
+
+    if let Err(e) = flow_result {
+        // Always restore the original working directory.
+        let _ = std::env::set_current_dir(&original_cwd);
+
+        let project_path = Path::new(&opts.project_name);
+
+        if !opts.dry_run && !project_existed && !scaffold_ok {
+            // Internal failure before the skeleton completed AND the directory
+            // did not pre-exist: remove the incomplete project.
+            if project_path.exists() {
+                match fs::remove_dir_all(project_path) {
+                    Ok(()) => println!(
+                        "{BOLD_YELLOW}[ROLLBACK]{RESET} Removed incomplete project '{}'",
+                        opts.project_name
+                    ),
+                    Err(rm_err) => println!(
+                        "{BOLD_YELLOW}[WARN]{RESET} Could not remove incomplete project '{}': {rm_err}",
+                        opts.project_name
+                    ),
+                }
+            }
+            return NewResult {
+                outcome: NewOutcome {
+                    project_dir: opts.project_name.clone(),
+                    installed: false,
+                    register: false,
+                },
+                result: Err(e),
+            };
+        }
+
+        // Recoverable failure (steps) OR a pre-existing directory: keep the
+        // project and let the user finish installation manually (Astro-style).
+        if project_existed {
+            println!(
+                "{BOLD_YELLOW}[WARN]{RESET} Pre-existing directory '{}' was left untouched. Run the failed command manually inside it.",
+                opts.project_name
+            );
+        } else if !opts.dry_run {
+            println!(
+                "{BOLD_YELLOW}[WARN]{RESET} Dependencies could not be installed. Project kept at './{}'.",
+                opts.project_name
+            );
+            println!(
+                "Run `{DIM}cd {}{RESET} && {DIM}pnpm install{RESET}` to finish manually.",
+                opts.project_name
+            );
+        }
+
+        return NewResult {
+            outcome: NewOutcome {
+                project_dir: opts.project_name.clone(),
+                installed: false,
+                register: !opts.dry_run && !project_existed,
+            },
+            result: Err(e),
+        };
     }
 
     println!("\n{BOLD_GREEN}Project '{}' created successfully.{RESET}", opts.project_name);
-    if !opts.no_install {
-        println!("Run `{DIM}cd {}{RESET} && {DIM}{} dev{RESET}` to start developing.", opts.project_name, variant);
+    if let Some(msg) = &recipe.final_message {
+        println!("{BOLD_CYAN}[Note]{RESET} {msg}");
     }
-    Ok(())
+    if !opts.no_install {
+        println!("Run `{DIM}cd {}{RESET} && {DIM}node --run dev{RESET}` to start developing.", opts.project_name);
+    }
+    NewResult {
+        outcome: NewOutcome {
+            project_dir: opts.project_name.clone(),
+            installed: !opts.no_install,
+            register: !opts.dry_run,
+        },
+        result: Ok(()),
+    }
 }
 
 /// Resolves the content of a file spec (from / inline / template).
 fn resolve_file_content(
-    recipe: &Recipe,
     spec: &crate::config::FileSpec,
     vars: &HashMap<String, String>,
 ) -> Option<String> {
     if let Some(src) = &spec.from {
-        let file_name = src.rsplit('/').next()?;
-        return embedded_template(&recipe.name.to_lowercase(), file_name).map(|c| c.to_string());
+        let rel = template_rel(src)?;
+        return read_user_template(&rel);
     }
     if let Some(inline) = &spec.inline {
         return Some(inline.clone());
     }
     if let Some(tpl) = &spec.template {
-        let file_name = tpl.rsplit('/').next()?;
-        if let Some(content) = embedded_template(&recipe.name.to_lowercase(), file_name) {
-            return Some(substitute(content, vars));
+        let rel = template_rel(tpl)?;
+        if let Some(content) = read_user_template(&rel) {
+            return Some(substitute(&content, vars));
         }
     }
     None
 }
 
+/// Strips the `templates/` prefix from a `from`/`template` spec value so it can
+/// be used as a relative path into the user templates directory (e.g.
+/// `templates/my-recipe/Layout.tsx` → `my-recipe/Layout.tsx`).
+fn template_rel(spec: &str) -> Option<String> {
+    spec.strip_prefix("templates/").map(|s| s.to_string())
+}
+
 /// Executes a shell command, forwarding stdout/stderr.
-fn run_shell(command: &str) -> anyhow::Result<()> {
-    let status = Command::new("sh")
+///
+/// When the command runs without an interactive terminal (stdin is not a TTY),
+/// `fa` auto-feeds `y\n` to stdin so package managers that prompt for approval
+/// (e.g. pnpm's `minimumReleaseAge` continue prompt) do not hang or abort the
+/// install. In an interactive terminal the user answers prompts normally.
+pub fn run_shell(command: &str) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+    run_shell_inner(command, !std::io::stdin().is_terminal())
+}
+
+fn run_shell_inner(command: &str, auto_answer: bool) -> anyhow::Result<()> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("sh")
         .arg("-c")
         .arg(command)
-        .status()
+        .stdin(if auto_answer { Stdio::piped() } else { Stdio::inherit() })
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .map_err(|e| anyhow::anyhow!("Failed to execute '{command}': {e}"))?;
+
+    if auto_answer
+        && let Some(mut stdin) = child.stdin.take() {
+            // Feed `y` answers continuously until the child closes the pipe
+            // (i.e. it stops asking). Mirrors `yes | <command>`.
+            std::thread::spawn(move || loop {
+                if stdin.write_all(b"y\n").is_err() {
+                    break;
+                }
+                let _ = stdin.flush();
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            });
+        }
+
+    let status = child
+        .wait()
         .map_err(|e| anyhow::anyhow!("Failed to execute '{command}': {e}"))?;
     if !status.success() {
         anyhow::bail!("Command failed with exit status {status}: {command}");
@@ -240,6 +382,18 @@ fn platform_matches(label: &str) -> anyhow::Result<bool> {
 /// Name (bold) followed by a dimmed description to keep the line readable.
 pub fn format_list_line(recipe_key: &str, recipe: &Recipe) -> String {
     format!("{BOLD_BLUE}{recipe_key}{RESET} · {DIM_GRAY}{}{RESET}", recipe.description)
+}
+
+/// Formats a single-line list entry for an executable command.
+/// Canonical name with its aliases (comma-separated), then the description.
+pub fn format_command_line(command_key: &str, command: &crate::config::Command) -> String {
+    let mut name = command_key.to_string();
+    if !command.aliases.is_empty() {
+        name.push_str(", ");
+        name.push_str(&command.aliases.join(", "));
+    }
+    let description = command.description.as_deref().unwrap_or("");
+    format!("{BOLD_BLUE}{name}{RESET} · {DIM_GRAY}{description}{RESET}")
 }
 
 /// Returns a human-readable "supported" marker for a recipe on the current platform.
@@ -273,6 +427,241 @@ pub fn prompt_input(label: &str, default: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Step;
+    use std::collections::BTreeMap;
+    use std::sync::{Mutex, OnceLock};
+
+    /// Serializes cwd-mutating tests: `run_new` changes the process cwd, so the
+    /// rollback tests must never run concurrently with each other.
+    fn cwd_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    /// Builds a throwaway config with a single inline-files recipe.
+    fn test_config(files: &[(&str, &str)]) -> Config {
+        let mut recipe_files = BTreeMap::new();
+        for (dest, content) in files {
+            recipe_files.insert(
+                dest.to_string(),
+                crate::config::FileSpec {
+                    from: None,
+                    inline: Some(content.to_string()),
+                    template: None,
+                    skip_if_exists: None,
+                },
+            );
+        }
+        let recipe = Recipe {
+            name: "Test".to_string(),
+            description: "test".to_string(),
+            language: None,
+            aliases: vec![],
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: recipe_files,
+            variables: Default::default(),
+            commands: Default::default(),
+            steps: vec![],
+            final_message: None,
+        };
+        let mut config = Config::default();
+        config.recipes.insert("test".to_string(), recipe);
+        config
+    }
+
+    fn test_options(project: &str) -> NewOptions {
+        NewOptions {
+            recipe_key: "test".to_string(),
+            project_name: project.to_string(),
+            variant: None,
+            dry_run: false,
+            no_install: true,
+        }
+    }
+
+    fn test_options_with_install(project: &str) -> NewOptions {
+        NewOptions {
+            recipe_key: "test".to_string(),
+            project_name: project.to_string(),
+            variant: None,
+            dry_run: false,
+            no_install: false,
+        }
+    }
+
+    /// Runs a closure inside a fresh unique temp directory, then cleans it up.
+    /// Serialized against other cwd-mutating tests via `cwd_lock`.
+    fn with_temp_dir(label: &str, f: impl FnOnce(&Path)) {
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!(
+            "fa-test-{label}-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        std::env::set_current_dir(&dir).unwrap();
+        f(&dir);
+        std::env::set_current_dir(std::env::temp_dir()).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rollback_should_remove_project_on_internal_failure() {
+        println!("\n🔍 [TEST] Rollback — internal failure removes incomplete project");
+        // A create command that builds the project dir, then a file spec with no
+        // content source triggers an internal error before steps.
+        let mut files = BTreeMap::new();
+        files.insert(
+            ".broken".to_string(),
+            crate::config::FileSpec {
+                from: None,
+                inline: None,
+                template: None,
+                skip_if_exists: None,
+            },
+        );
+        files.insert(
+            ".keep".to_string(),
+            crate::config::FileSpec {
+                from: None,
+                inline: Some("x".to_string()),
+                template: None,
+                skip_if_exists: None,
+            },
+        );
+        let recipe = Recipe {
+            name: "Test".to_string(),
+            description: "test".to_string(),
+            language: None,
+            aliases: vec![],
+            variants: vec![],
+            create: Some(crate::config::Create {
+                command: Some("mkdir {{name}}".to_string()),
+                template_dir: None,
+            }),
+            pm: None,
+            tooling: None,
+            files,
+            variables: Default::default(),
+            commands: Default::default(),
+            steps: vec![],
+            final_message: None,
+        };
+        let mut config = Config::default();
+        config.recipes.insert("test".to_string(), recipe);
+
+        with_temp_dir("internal", |_dir| {
+            let result = run_new(&config, &test_options("myapp"));
+            assert!(result.result.is_err(), "Internal failure must error");
+            assert!(
+                !result.outcome.register,
+                "Rolled-back project must not be registered"
+            );
+            assert!(
+                !Path::new("myapp").exists(),
+                "Incomplete project dir must be removed"
+            );
+            println!("   ✓ Incomplete project removed and not registered.\n");
+        });
+    }
+
+    #[test]
+    fn rollback_should_keep_project_when_step_fails() {
+        println!("\n🔍 [TEST] Rollback — step failure keeps the project (Astro-style)");
+        let mut config = test_config(&[(".editorconfig", "root = true")]);
+        config.recipes.get_mut("test").unwrap().steps.push(Step {
+            command: "false".to_string(),
+            description: Some("Failing step".to_string()),
+            platform: None,
+            install: false,
+        });
+
+        with_temp_dir("step", |dir| {
+            let result = run_new(&config, &test_options("myapp"));
+            assert!(result.result.is_err(), "Step failure must error");
+            assert!(
+                result.outcome.register,
+                "Kept project must be registered (installed: false)"
+            );
+            assert!(!result.outcome.installed, "installed must be false");
+            // Without a create command, files are written to the cwd.
+            assert!(
+                dir.join(".editorconfig").exists(),
+                "Project files must survive a failed step"
+            );
+            println!("   ✓ Project kept after step failure, registered as not installed.\n");
+        });
+    }
+
+    #[test]
+    fn rollback_should_never_remove_preexisting_dir() {
+        println!("\n🔍 [TEST] Rollback — pre-existing directory is never removed");
+        let mut config = test_config(&[(".editorconfig", "root = true")]);
+        config.recipes.get_mut("test").unwrap().steps.push(Step {
+            command: "false".to_string(),
+            description: Some("Failing step".to_string()),
+            platform: None,
+            install: false,
+        });
+
+        with_temp_dir("preexisting", |dir| {
+            fs::create_dir_all(dir.join("myapp")).unwrap();
+            fs::write(dir.join("myapp/keep.txt"), "precious").unwrap();
+
+            let result = run_new(&config, &test_options("myapp"));
+            assert!(result.result.is_err());
+            assert!(
+                !result.outcome.register,
+                "Pre-existing dir must not be claimed as a fa project"
+            );
+            assert!(
+                dir.join("myapp/keep.txt").exists(),
+                "Pre-existing content must survive"
+            );
+            println!("   ✓ Pre-existing directory and its content preserved.\n");
+        });
+    }
+
+    #[test]
+    fn success_should_register_project_as_installed() {
+        println!("\n🔍 [TEST] Success — project registered as installed");
+        let config = test_config(&[(".editorconfig", "root = true")]);
+        with_temp_dir("success", |dir| {
+            let result = run_new(&config, &test_options_with_install("myapp"));
+            assert!(result.result.is_ok());
+            assert!(result.outcome.register);
+            assert!(result.outcome.installed);
+            assert!(dir.join(".editorconfig").exists());
+            println!("   ✓ Successful run registered and installed.\n");
+        });
+    }
+
+    #[test]
+    fn run_shell_should_auto_answer_confirmation_prompt() {
+        println!("\n🔍 [TEST] Shell — auto-answers interactive confirmation prompts");
+        // A command that reads a yes/no line and only succeeds on `y`, the way
+        // pnpm's minimumReleaseAge prompt behaves. Without auto-answering it
+        // would hang; with it, the piped `y\n` satisfies the read.
+        let result = run_shell_inner(
+            "read -r ans && [ \"$ans\" = y ]",
+            true,
+        );
+        assert!(result.is_ok(), "Auto-answered prompt should succeed: {result:?}");
+        println!("   ✓ Confirmation prompt auto-answered with `y`.\n");
+    }
+
+    #[test]
+    fn run_shell_should_report_failing_command() {
+        println!("\n🔍 [TEST] Shell — failing command surfaces the exit status");
+        let result = run_shell_inner("exit 3", true);
+        assert!(result.is_err(), "Non-zero exit must surface as an error");
+        let msg = format!("{result:?}");
+        assert!(msg.contains("3"), "Error should mention the exit status: {msg}");
+        println!("   ✓ Failing command reported with exit status.\n");
+    }
 
     #[test]
     fn expand_home_utility_should_expand_tilde_paths() {
@@ -288,7 +677,7 @@ mod tests {
     #[test]
     fn format_list_line_should_render_name_and_description() {
         let recipe = Recipe {
-            name: "Astro".to_string(),
+            name: "Demo".to_string(),
             description: "test".to_string(),
             language: Some("web · typescript".to_string()),
             aliases: vec![],
@@ -298,13 +687,30 @@ mod tests {
             tooling: None,
             files: Default::default(),
             variables: Default::default(),
+            commands: Default::default(),
             steps: vec![],
+            final_message: None,
         };
-        let line = format_list_line("astro", &recipe);
-        assert!(line.contains("astro"));
+        let line = format_list_line("demo", &recipe);
+        assert!(line.contains("demo"));
         assert!(line.contains("test"));
         assert!(!line.contains("[apply]"));
         assert!(!line.contains("pnpm / bun"));
         assert!(!line.contains("web · typescript"));
+    }
+
+    #[test]
+    fn format_command_line_should_render_name_aliases_and_description() {
+        let cmd = crate::config::Command {
+            command: "node --run build".to_string(),
+            description: Some("Build the project".to_string()),
+            platform: None,
+            aliases: vec!["fb".to_string(), "bld".to_string()],
+        };
+
+        let line = format_command_line("build", &cmd);
+        assert!(line.contains("build"));
+        assert!(line.contains("fb, bld"));
+        assert!(line.contains("Build the project"));
     }
 }
