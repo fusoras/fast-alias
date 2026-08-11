@@ -45,6 +45,10 @@ secrets/
 .fleet/
 .codegraph/
 
+# Git Worktrees
+.worktrees/
+worktrees/
+
 # Operating System files
 .DS_Store
 Thumbs.db
