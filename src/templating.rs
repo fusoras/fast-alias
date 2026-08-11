@@ -13,6 +13,25 @@ pub fn substitute(input: &str, vars: &HashMap<String, String>) -> String {
     result
 }
 
+/// Quotes a value so it is treated as a single literal shell word when
+/// interpolated into a command executed via `sh -c`. Neutralizes injection
+/// attempts via `;`, `&&`, `$(...)`, backticks, etc.
+pub fn shell_quote(value: &str) -> String {
+    let escaped = value.replace('\'', "'\\''");
+    format!("'{escaped}'")
+}
+
+/// Substitutes `{{key}}` placeholders in a shell command, shell-quoting every
+/// substituted value to prevent command injection (CWE-78).
+pub fn substitute_shell(input: &str, vars: &HashMap<String, String>) -> String {
+    let mut result = input.to_string();
+    for (key, value) in vars {
+        let placeholder = format!("{{{{{key}}}}}");
+        result = result.replace(&placeholder, &shell_quote(value));
+    }
+    result
+}
+
 /// Finds all unique `{{key}}` placeholders present in the input string.
 /// Unknown variables (not in `vars`) are returned so callers can prompt for them.
 pub fn find_unknown_placeholders(input: &str, vars: &HashMap<String, String>) -> Vec<String> {
@@ -74,12 +93,12 @@ mod tests {
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), "myapp".to_string());
 
-        let out = substitute("pnpm create astro@latest {{name}} --template basics", &vars);
-        assert_eq!(out, "pnpm create astro@latest myapp --template basics");
-        println!("   ✓ Command placeholder substituted correctly.");
+        let out = substitute("pnpm create my-recipe@latest {{name}} --template basics", &vars);
+        assert_eq!(out, "pnpm create my-recipe@latest myapp --template basics");
+        println!("   ✓ Known variable {{name}} substituted correctly: {out}\n");
 
-        let out2 = substitute("src/pages/{{name}}.astro", &vars);
-        assert_eq!(out2, "src/pages/myapp.astro");
+        let out2 = substitute("src/pages/{{name}}.ts", &vars);
+        assert_eq!(out2, "src/pages/myapp.ts");
         println!("   ✓ Path placeholder substituted correctly.\n");
     }
 
@@ -91,5 +110,25 @@ mod tests {
         let input = "{{name}} {{author}} {{name}}".to_string();
         let unknowns = find_unknown_placeholders(&input, &vars);
         assert_eq!(unknowns, vec!["author"]);
+    }
+
+    #[test]
+    fn shell_quote_should_wrap_in_single_quotes() {
+        assert_eq!(shell_quote("myapp"), "'myapp'");
+        assert_eq!(shell_quote("my app"), "'my app'");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
+    }
+
+    #[test]
+    fn substitute_shell_should_neutralize_injection() {
+        let mut vars = HashMap::new();
+        vars.insert("name".to_string(), "myapp; rm -rf ~".to_string());
+
+        let out = substitute_shell("pnpm create my-recipe@latest {{name}} --template minimal", &vars);
+        assert_eq!(out, "pnpm create my-recipe@latest 'myapp; rm -rf ~' --template minimal");
+        assert!(!out.contains("; rm -rf") || out.contains("'myapp; rm -rf ~'"));
+
+        let out2 = substitute_shell("echo {{name}}", &vars);
+        assert_eq!(out2, "echo 'myapp; rm -rf ~'");
     }
 }
