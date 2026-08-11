@@ -9,11 +9,11 @@ use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::colors::*;
 use crate::config::Config;
-use crate::engine::{format_list_line, is_supported, run_new, NewOptions};
+use crate::engine::{
+    format_command_line, format_list_line, is_supported, run_new, run_shell, NewOptions,
+};
 use crate::platform::Platform;
-use crate::state::State;
-
-/// Recipe-based project scaffolder CLI for Debian and Termux.
+use crate::state::State;/// Recipe-based project scaffolder CLI for Debian and Termux.
 #[derive(Parser)]
 #[command(name = "fa", about, long_about = None, disable_version_flag = true)]
 struct Cli {
@@ -27,9 +27,8 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Scaffold a new project from a recipe into a directory.
-    #[command(alias = "n")]
     New {
-        /// Recipe name or alias (e.g. astro)
+        /// Recipe name or alias (e.g. my-recipe)
         recipe: String,
         /// Project directory name
         name: String,
@@ -57,12 +56,89 @@ enum Commands {
     Show {
         recipe: String,
     },
+    /// Run an executable command declared in the recipe catalog.
+    Alias {
+        /// Command name or alias (e.g. cloudflare-pages, fpages)
+        name: String,
+    },
     /// Detect the device environment (platform, arch, package managers).
     Doctor,
 }
 
+/// Rewrites short-flag aliases into their subcommand form so `fa -n <recipe> <name>`
+/// maps to `fa new ...` and `fa -a <command>` maps to `fa alias <command>`.
+fn rewrite_short_flags(mut args: Vec<String>) -> Vec<String> {
+    if args.len() >= 2 {
+        match args[1].as_str() {
+            "-n" => args[1] = "new".to_string(),
+            "-a" => args[1] = "alias".to_string(),
+            _ => {}
+        }
+    }
+    args
+}
+
+/// True if a recipe performs scaffolding (create/files/steps), as opposed to
+/// only exposing executable commands.
+fn is_scaffold_recipe(recipe: &crate::config::Recipe) -> bool {
+    recipe.create.is_some() || !recipe.files.is_empty() || !recipe.steps.is_empty()
+}
+
+/// Asks the user once (per config path) whether they trust the shell commands
+/// defined in their personal config. The answer is persisted in state.toml, so
+/// subsequent runs never prompt again for the same path ("one covers all": the
+/// primary recipes.toml trust covers every recipes.d/*.toml modular file).
+/// Aborts with an error when the user declines.
+fn ensure_trusted() -> anyhow::Result<()> {
+    let Some(anchor) = Config::trust_anchor() else {
+        return Ok(());
+    };
+    let anchor = anchor.to_string_lossy().to_string();
+
+    let mut state = State::load();
+    if state.is_trusted(&anchor) {
+        return Ok(());
+    }
+
+    println!(
+        "{BOLD_YELLOW}[TRUST]{RESET} '{}' defines shell commands (recipes, steps, aliases) that will be executed by `fa`.",
+        anchor
+    );
+    println!("Review the file before trusting it.");
+    let answer = prompt_yes_no("Do you trust this configuration file?", false);
+
+    if !answer {
+        anyhow::bail!(
+            "Aborted: configuration file '{}' was not trusted. Edit it or run the command again after review.",
+            anchor
+        );
+    }
+
+    state.trust(&anchor);
+    state.save()?;
+    Ok(())
+}
+
+/// Prompts a yes/no question via stdin; `default` is used on empty input.
+fn prompt_yes_no(question: &str, default: bool) -> bool {
+    use std::io::Write;
+
+    let hint = if default { "Y/n" } else { "y/N" };
+    print!("{BOLD_CYAN}?{RESET} {question} [{hint}]: ");
+    let _ = std::io::stdout().flush();
+
+    let mut answer = String::new();
+    let _ = std::io::stdin().read_line(&mut answer);
+    match answer.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" => true,
+        "n" | "no" => false,
+        "" => default,
+        _ => default,
+    }
+}
+
 fn main() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(rewrite_short_flags(std::env::args().collect()));
 
     if cli.version {
         println!("{}", env!("CARGO_PKG_VERSION"));
@@ -75,13 +151,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     };
 
-    let (config, source) = Config::load()?;
-    let is_external = source != "Embedded default configuration";
-    if is_external {
-        println!(
-            "{BOLD_YELLOW}[WARNING]{RESET} Loading recipes from external source: {source}. Review recipe [[steps]] commands before running them."
-        );
-    }
+    let (config, _source) = Config::load()?;
 
     match command {
         Commands::New {
@@ -94,6 +164,9 @@ fn main() -> anyhow::Result<()> {
             let key = config
                 .resolve_recipe_key(&recipe)
                 .ok_or_else(|| anyhow::anyhow!("Unknown recipe '{recipe}'. Run `fa list` to see available recipes."))?;
+            if !dry_run {
+                ensure_trusted()?;
+            }
             let opts = NewOptions {
                 recipe_key: key.clone(),
                 project_name: name,
@@ -101,9 +174,9 @@ fn main() -> anyhow::Result<()> {
                 dry_run,
                 no_install,
             };
-            run_new(&config, &opts)?;
+            let new_result = run_new(&config, &opts);
 
-            if !dry_run {
+            if !dry_run && new_result.outcome.register {
                 let default_variant = config
                     .recipes
                     .get(&opts.recipe_key)
@@ -112,29 +185,60 @@ fn main() -> anyhow::Result<()> {
                 let effective_variant = opts.variant.clone().unwrap_or(default_variant);
                 let mut state = State::load();
                 state.projects.insert(
-                    opts.project_name.clone(),
+                    new_result.outcome.project_dir.clone(),
                     state::ProjectState {
                         recipe: opts.recipe_key.clone(),
                         variant: effective_variant,
                         created_at: timestamp(),
-                        path: opts.project_name,
-                        installed: !no_install,
+                        path: new_result.outcome.project_dir,
+                        installed: new_result.outcome.installed,
                     },
                 );
                 state.save()?;
             }
+
+            new_result.result?;
         }
         Commands::List { show_hidden } => {
+            let mut recipes = Vec::new();
             for (key, recipe) in &config.recipes {
                 if !show_hidden && !is_supported(recipe) {
                     continue;
                 }
-                println!("{}", format_list_line(key, recipe));
+                if !is_scaffold_recipe(recipe) {
+                    continue;
+                }
+                recipes.push(format_list_line(key, recipe));
+            }
+            if !recipes.is_empty() {
+                println!("{BOLD_CYAN}Recipes:{RESET}");
+                println!("  {DIM}Usage: fa new <recipe> <name>{RESET}");
+                println!();
+                for line in &recipes {
+                    println!("  {line}");
+                }
+            }
+            let commands = config
+                .all_commands()
+                .into_iter()
+                .map(|(_, key, cmd)| format_command_line(key, cmd))
+                .collect::<Vec<_>>();
+            if !commands.is_empty() {
+                println!("\n{BOLD_CYAN}Aliases:{RESET}");
+                println!("  {DIM}Usage: fa alias <name>{RESET}");
+                println!();
+                for line in commands {
+                    println!("  {line}");
+                }
             }
         }
         Commands::Search { query } => {
             let q = query.to_lowercase();
+            let mut recipes = Vec::new();
             for (key, recipe) in &config.recipes {
+                if !is_scaffold_recipe(recipe) {
+                    continue;
+                }
                 let mut haystack = format!("{key} {}", recipe.name.to_lowercase());
                 haystack.push_str(&recipe.aliases.join(" "));
                 if let Some(lang) = &recipe.language {
@@ -144,15 +248,62 @@ fn main() -> anyhow::Result<()> {
                 haystack.push(' ');
                 haystack.push_str(&recipe.variants.join(" "));
                 if haystack.contains(&q) {
-                    println!("{}", format_list_line(key, recipe));
+                    recipes.push(format_list_line(key, recipe));
+                }
+            }
+            let mut commands = Vec::new();
+            for (_, key, cmd) in config.all_commands() {
+                let mut haystack = key.to_lowercase();
+                haystack.push(' ');
+                haystack.push_str(&cmd.aliases.join(" "));
+                if let Some(desc) = &cmd.description {
+                    haystack.push(' ');
+                    haystack.push_str(&desc.to_lowercase());
+                }
+                if haystack.contains(&q) {
+                    commands.push(format_command_line(key, cmd));
+                }
+            }
+            if !recipes.is_empty() {
+                println!("{BOLD_CYAN}Recipes:{RESET}");
+                println!("  {DIM}Usage: fa new <recipe> <name>{RESET}");
+                println!();
+                for line in &recipes {
+                    println!("  {line}");
+                }
+            }
+            if !commands.is_empty() {
+                if !recipes.is_empty() {
+                    println!();
+                }
+                println!("{BOLD_CYAN}Aliases:{RESET}");
+                println!("  {DIM}Usage: fa alias <name>{RESET}");
+                println!();
+                for line in &commands {
+                    println!("  {line}");
                 }
             }
         }
         Commands::Show { recipe } => {
-            let key = config
-                .resolve_recipe_key(&recipe)
-                .ok_or_else(|| anyhow::anyhow!("Unknown recipe '{recipe}'."))?;
-            show_recipe(&config, key);
+            if let Some(key) = config.resolve_recipe_key(&recipe) {
+                show_recipe(&config, key);
+            } else if let Some(key) = config.resolve_command_key(&recipe) {
+                show_command(&config, &key);
+            } else {
+                anyhow::bail!("Unknown recipe or command '{recipe}'. Run `fa list` to see available options.");
+            }
+        }
+        Commands::Alias { name } => {
+            let key = config.resolve_command_key(&name).ok_or_else(|| {
+                anyhow::anyhow!("Unknown command '{name}'. Run `fa list` to see available aliases.")
+            })?;
+            let (_, _, cmd) = config
+                .all_commands()
+                .into_iter()
+                .find(|(_, ck, _)| *ck == &key)
+                .ok_or_else(|| anyhow::anyhow!("Command '{name}' not found"))?;
+            ensure_trusted()?;
+            run_shell(&cmd.command)?;
         }
         Commands::Doctor => {
             doctor();
@@ -160,6 +311,23 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn show_command(config: &Config, key: &str) {
+    let (recipe_key, _, cmd) = config
+        .all_commands()
+        .into_iter()
+        .find(|(_, ck, _)| ck.as_str() == key)
+        .expect("resolved command should exist");
+    println!("{BOLD_CYAN}Command:{RESET} {key}");
+    println!("Recipe: {recipe_key}");
+    if let Some(desc) = &cmd.description {
+        println!("Description: {desc}");
+    }
+    if !cmd.aliases.is_empty() {
+        println!("Aliases: {}", cmd.aliases.join(", "));
+    }
+    println!("\nCommand: {}", cmd.command);
 }
 
 fn show_recipe(config: &Config, key: &str) {
