@@ -3,7 +3,7 @@
 **/*.rs.bk
 *.rs.bk
 
-# Secrets & Credentials (applies also within templates/)
+# Secrets & Credentials
 *.pem
 *.key
 *.p12
@@ -23,10 +23,6 @@ secrets/
 .env.*
 .env.local
 .env.production
-templates/**/.env*
-templates/**/.*_history
-templates/**/id_*
-templates/**/*.key
 
 # Backups & Temp files
 *.old
