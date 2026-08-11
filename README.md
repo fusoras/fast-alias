@@ -11,14 +11,14 @@
 > [!WARNING] Development version
 > This installs the **development build** from the `develop` branch (pre-release, not a stable release).
 
-To install the latest development build directly on your machine (Debian or Termux) without requiring Rust or Cargo:
+To install `fa` directly on your machine (Debian or Termux) without requiring Rust or Cargo:
 
 ```bash
-curl -sSL https://raw.githubusercontent.com/<user>/fast-alias/develop/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.sh | sh
 ```
 
 > [!NOTE]
-> This command downloads the compiled pre-release binary from the active **`develop`** branch build assets and installs it to `~/.local/bin/fa` (or `$PREFIX/bin` on Termux).
+> This command automatically detects your platform (Debian or Termux) and architecture (`x86_64` or `aarch64`), downloads the pre-compiled binary asset, and installs it to `~/.local/bin/fa` (or `$PREFIX/bin` on Termux).
 
 ---
 
