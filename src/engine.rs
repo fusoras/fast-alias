@@ -160,6 +160,8 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
 
         // 2. Write files
         println!("\nWriting configuration files:");
+        let mut errors: Vec<String> = Vec::new();
+        let mut written = 0usize;
         for (dest, spec) in &recipe.files {
             let dest_path = expand_home(dest);
             let target = Path::new(&dest_path);
@@ -174,22 +176,41 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                 continue;
             }
 
-            let content = resolve_file_content(spec, &vars);
-            let content = match content {
+            let content = match resolve_file_content(spec, &vars) {
                 Some(c) => c,
                 None => {
-                    anyhow::bail!("No content source for file '{dest}' (missing from/inline/template)")
+                    errors.push(format!(
+                        "No content source for file '{dest}' (missing from/inline/template)"
+                    ));
+                    continue;
                 }
             };
 
-            if let Some(parent) = target.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|e| anyhow::anyhow!("Failed to create dir {}: {e}", parent.display()))?;
+            if let Some(parent) = target.parent()
+                && let Err(e) = fs::create_dir_all(parent) {
+                    errors.push(format!("Failed to create dir {}: {e}", parent.display()));
+                    continue;
+                }
+            if let Err(e) = fs::write(target, content) {
+                errors.push(format!("Failed to write {dest}: {e}"));
+                continue;
             }
-            fs::write(target, content)
-                .map_err(|e| anyhow::anyhow!("Failed to write {dest}: {e}"))?;
-            println!("  {BOLD_GREEN}✓{RESET} {dest}");
+            written += 1;
         }
+
+        if !errors.is_empty() {
+            for err in &errors {
+                println!("  {BOLD_RED}✗{RESET} {err}");
+            }
+            anyhow::bail!(
+                "{} of {} configuration files failed to write",
+                errors.len(),
+                recipe.files.len()
+            );
+        }
+
+        println!("  {BOLD_GREEN}✓{RESET} {written} configuration files written.");
+
         // The skeleton (create + files) is complete; from here on, failures are
         // recoverable (e.g. dependency installation) and must keep the project.
         scaffold_ok = true;
@@ -285,7 +306,7 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
 
     println!("\n{BOLD_GREEN}Project '{}' created successfully.{RESET}", opts.project_name);
     if let Some(msg) = &recipe.final_message {
-        println!("{BOLD_CYAN}[Note]{RESET} {msg}");
+        println!("\n{BOLD_CYAN}[Note]{RESET} {msg}\n");
     }
     if !opts.no_install {
         println!("Run `{DIM}cd {}{RESET} && {DIM}node --run dev{RESET}` to start developing.", opts.project_name);
