@@ -16,8 +16,8 @@ cargo test -- --nocapture
 
 | Test Name | Module | Primary Purpose & Verification |
 | --------- | ------ | ----------------------------- |
-| `test_embedded_recipe_config_parsing` | `src/config.rs` | Verifies TOML recipe catalog deserialization, embedded fallback loader (`include_str!`), and presence of default recipes (`astro`, `ts-lib`, `rust-cli`, `python`). |
-| `test_recipe_alias_resolution` | `src/config.rs` | Verifies resolution of recipe aliases (e.g., `astro` -> `astro-pnpm` default). |
+| `test_example_config_parsing` | `src/config.rs` | Verifies the example TOML catalog deserialization and presence of the `example` alias (first-run provisioning). |
+| `test_recipe_alias_resolution` | `src/config.rs` | Verifies resolution of recipe aliases (e.g., `demo` -> `demo` canonical). |
 | `test_recipe_uniqueness` | `src/config.rs` | Verifies that recipe names, variants, and aliases are strictly unique with no duplicate names or collisions. |
 | `test_variant_resolution` | `src/config.rs` | Verifies variant selection (`-v bun`) and default fallback to first declared variant. |
 | `test_templating_placeholder_substitution` | `src/templating.rs` | Verifies `{{var}}` substitution in file content, paths, and commands. |
@@ -45,8 +45,8 @@ cargo test -- --nocapture
 ```text
 running 12 tests
 
-🔍 [TEST] Embedded Default TOML Recipe Catalog Parsing
-   Explanation: Verifies that the recipe catalog parses successfully and contains 'astro'.
+🔍 [TEST] Example Config TOML Parsing
+   Explanation: Verifies that the example catalog parses successfully and contains 'example'.
 
 🔍 [TEST] Templating Placeholder Substitution
    Explanation: Verifies that {{var}} placeholders are substituted in content and paths.
@@ -55,7 +55,7 @@ running 12 tests
    Explanation: Verifies that variant selection falls back to the first declared variant.
 
 🔍 [TEST] Recipe Alias Resolution
-   Explanation: Verifies that 'astro' resolves to the canonical astro recipe.
+   Explanation: Verifies that 'demo' resolves to the canonical demo recipe.
 
 🔍 [TEST] Platform Release Asset Resolution
    Explanation: Verifies that Debian resolves to the x86_64 tarball asset and Termux to aarch64.

@@ -1,17 +1,17 @@
 # Recipe Structure & Configuration
 
-`recipes.toml` is the central **declarative catalog** of `fa`. It defines the recipes for scaffolding projects: their human-readable descriptions, language/category, variants, create strategy, package-manager commands, tooling, files to generate, and post-install steps.
+The **declarative catalog** of `fa` lives in your personal config directory. It defines the recipes for scaffolding projects: their human-readable descriptions, language/category, variants, create strategy, package-manager commands, tooling, files to generate, and post-install steps.
 
-## Configuration File Resolution Order
+## Configuration File Resolution
 
-1. **Base Catalog**:
-   - `./recipes.toml` (Current working directory)
-   - `~/.config/fa/recipes.toml` (XDG User Config)
-   - Embedded default in binary (`include_str!("../recipes.toml")`)
+`fa` loads the catalog exclusively from `~/.config/fa/`:
 
-2. **Modular Directories (`recipes.d/`)**:
-   - `./recipes.d/*.toml` (Local modular configurations, loaded alphabetically)
-   - `~/.config/fa/recipes.d/*.toml` (XDG User modular configurations)
+1. **Primary Catalog**: `~/.config/fa/recipes.toml`
+2. **Modular Directory**: `~/.config/fa/recipes.d/*.toml` (loaded alphabetically, merged into the catalog)
+
+On first run (no `~/.config/fa/` directory yet), `fa` provisions a small example configuration with an `example` alias. Deleting it leaves an empty catalog: no recipes, no aliases.
+
+Template files referenced as `{ from = "templates/<path>" }` or `{ template = "templates/<path>" }` are resolved from `~/.config/fa/templates/<path>` at runtime.
 
 Modular `.toml` files allow breaking down large configurations into clean, domain-specific files (e.g. `web.toml`, `cli.toml`). Recipes declared in `recipes.d/*.toml` are merged into the main recipe catalog.
 
@@ -21,7 +21,7 @@ Modular `.toml` files allow breaking down large configurations into clean, domai
 
 ```toml
 [projects.myapp]
-recipe = "astro-pnpm"
+recipe = "my-recipe"
 variant = "pnpm"
 created_at = "2026-08-10T12:00:00Z"
 path = "/home/user/projects/myapp"
@@ -31,10 +31,10 @@ installed = true
 ## Recipe Schema (`recipes.toml`)
 
 ```toml
-[recipes.astro]
-name        = "Astro"
-description = "Astro site with oxlint, prettier, stylelint and astro check"
-aliases     = ["astro"]
+[recipes.my-recipe]
+name        = "My Recipe"
+description = "A stack bootstrap with tooling"
+aliases     = ["mr"]
 language    = "web · typescript"
 variants    = ["pnpm", "bun", "npm"]
 
@@ -43,9 +43,9 @@ name   = { prompt = "Project name", default = "app" }
 author = { prompt = "Author", default = "" }
 
 [create]                                     # hybrid: official CLI OR template dir
-command = "pnpm create astro@latest -- --template basics --no-install"
+command = "pnpm create app@latest -- --template basics --no-install"
 # OR:
-# template_dir = "templates/astro/"
+# template_dir = "templates/my-recipe/"
 
 [pm]                                         # package-manager commands per variant
 install     = { pnpm = "pnpm add", bun = "bun add", npm = "npm install" }
@@ -54,12 +54,12 @@ dev_install = { pnpm = "pnpm add -D", bun = "bun add -d", npm = "npm install -D"
 [tooling]                                    # linter / formatter / typechecker
 linter    = { tool = "oxlint", files = ["oxlint.json"], script = "lint" }
 formatter = { tool = "prettier", files = [".prettierrc"], script = "format" }
-check     = { tool = "@astrojs/check", script = "check" }
+check     = { tool = "tsc", script = "check" }
 
 [files]                                      # files: inline, from template or templated
 "tsconfig.json"      = { from = "templates/tsconfig.strict.json" }
 ".editorconfig"      = { inline = "root = true ..." }
-"src/pages/{{name}}.astro" = { template = "templates/page.astro.tpl" }
+"src/pages/{{name}}.ts" = { template = "templates/page.ts.tpl" }
 
 [[steps]]                                    # post-install commands (like dotss post_install_commands)
 command = "git init"
@@ -79,9 +79,17 @@ Recipes can declare ordered shell commands executed after files are written and 
 
 Each key is the destination path (templatable with `{{var}}`). Value is one of:
 - **`inline`**: File content written verbatim.
-- **`from`**: Copy a static file from the bundled template directory (`templates/`).
+- **`from`**: Copy a static file from `~/.config/fa/templates/`.
 - **`template`**: Copy a file AND apply `{{var}}` substitution to its content.
 - **`skip_if_exists`** (Optional): Do not overwrite an existing destination.
+
+### Inline Content Size Limit
+
+`inline` file content MUST NOT exceed **40 lines**:
+
+- Any file longer than 40 lines must be moved to `~/.config/fa/templates/<recipe-name>/` and referenced with `{ from = "templates/<recipe-name>/<file>" }`. Template files are read from disk at runtime (no Rust code changes needed).
+- Short files (`.gitkeep`, minimal configs, small components) may stay inline.
+- Special cases that must stay inline beyond 40 lines require explicit user approval before proceeding.
 
 ## Variants
 
@@ -90,30 +98,3 @@ Each recipe can declare `variants` (e.g. `pnpm`, `bun`, `npm`). Variants select 
 ## Alias Governance
 
 Recipes may declare short aliases via the `aliases` array. Users can invoke `fa new <alias>` interchangeably with the canonical recipe name. Aliases must be explicitly defined in the recipe — never auto-generated.
-
-## Planned Active Recipes
-
-### 1. `astro` (Astro Web Project)
-- **Description**: Astro site with oxlint, prettier (+ prettier-plugin-astro), stylelint and @astrojs/check.
-- **Variants**: `pnpm`, `bun`, `npm`.
-- **Create**: Official `create-astro` CLI (`--no-install`).
-- **Tooling**: `oxlint` (lint), `prettier` (format), `@astrojs/check` (check).
-- **Files**: strict `tsconfig.json`, `.prettierrc`, `.stylelintrc`, `oxlint.json`, `.editorconfig`, `.gitignore`.
-
-### 2. `ts-lib` (TypeScript Library)
-- **Description**: Pure TypeScript library with oxlint, prettier and `tsc` typecheck.
-- **Variants**: `pnpm`, `bun`.
-- **Create**: Template directory (`templates/ts-lib/`).
-- **Files**: `package.json`, `tsconfig.json`, `src/index.ts`, `.prettierrc`, `oxlint.json`.
-
-### 3. `rust-cli` (Rust CLI)
-- **Description**: Rust command-line binary with clippy and rustfmt.
-- **Create**: `cargo new`.
-- **Tooling**: `clippy` (lint), `rustfmt` (format).
-- **Files**: `rustfmt.toml`, `.editorconfig`, `.gitignore`.
-
-### 4. `python` (Python Project)
-- **Description**: Python project with ruff and mypy.
-- **Create**: Template directory (`templates/python/`).
-- **Tooling**: `ruff` (lint/format), `mypy` (typecheck).
-- **Files**: `pyproject.toml`, `.editorconfig`, `.gitignore`.

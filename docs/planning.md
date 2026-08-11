@@ -2,11 +2,11 @@
 
 `fa` (fast-alias) is a modular, recipe-based project scaffolder CLI designed to automate project bootstrapping: scaffolding base structure, installing dependencies, and applying tooling (linter, formatter, typechecker) and configuration files — across **Debian** and **Termux** devices.
 
-`fa` is a **recipe player**: recipes are declared in TOML files (one per stack/toolchain). Astro is just the first recipe. Adding a language or toolchain never requires touching code — only adding a `.toml`.
+`fa` is a **recipe player**: recipes are declared in TOML files (one per stack/toolchain) that live in the user's personal config directory (`~/.config/fa/`). Adding a language or toolchain never requires touching code — only adding a `.toml` and optional template files.
 
 ## Core Features & Commands
 
-- **`fa new <recipe> <name>`**: Scaffolds a new project from the given recipe into a directory named `<name>` (or the current directory). Variant selection via `-v`/`--variant` (e.g. `fa new astro app -v bun`).
+- **`fa new <recipe> <name>`**: Scaffolds a new project from the given recipe into a directory named `<name>` (or the current directory). Variant selection via `-v`/`--variant` (e.g. `fa new my-recipe app -v bun`).
 - **`fa list`**: Displays available recipes grouped by language/category in a concise single-line format (routed through system `$PAGER` / `less` when on TTY).
 - **`fa search <query>`**: Searches recipes by name, alias, language, or variant, printing matches in the same single-line format as `list`.
 - **`fa show <recipe>`**: Displays full recipe details: description, language, variants, create strategy, tooling, files to generate, and steps.
@@ -28,12 +28,11 @@
 
 ## Recipe Engine Architecture
 
-1. **Recipe Catalog (`recipes.toml` + `recipes.d/*.toml`)**:
-   - Declarative TOML catalog of all recipes. Load order mirrors `project-dots`: local `./recipes.toml`, XDG `~/.config/fa/recipes.toml`, then embedded default.
-   - Modular `recipes.d/*.toml` files allow domain-specific catalogs (e.g. `web.toml`, `cli.toml`).
-2. **Recipe Schema**: Each recipe declares metadata, variables/prompts, create strategy (official CLI command OR bundled template directory), package-manager commands, tooling (linter/formatter/typechecker), files to generate (inline / from template / templated), and ordered `steps` (post-install commands).
+1. **Recipe Catalog (`~/.config/fa/recipes.toml` + `recipes.d/*.toml`)**:
+   - Declarative TOML catalog of all recipes. Loaded from the user config directory; modular `recipes.d/*.toml` files allow domain-specific catalogs (e.g. `web.toml`, `cli.toml`).
+2. **Recipe Schema**: Each recipe declares metadata, variables/prompts, create strategy (official CLI command OR template directory under `~/.config/fa/templates/`), package-manager commands, tooling (linter/formatter/typechecker), files to generate (inline / from template / templated), and ordered `steps` (post-install commands).
 3. **Templating Engine**: `{{var}}` placeholders substituted in file content, paths, and commands; variables resolved from prompts with defaults.
-4. **Hybrid Create Strategy**: Use the official scaffold CLI when available (`create-astro`, `cargo new`); fall back to an embedded template directory otherwise.
+4. **Hybrid Create Strategy**: Use the official scaffold CLI when available (`create-tool`, `cargo new`); fall back to a template directory under `~/.config/fa/templates/` otherwise.
 
 ## Completed & Roadmap Tasks
 
@@ -43,7 +42,7 @@
 
 ### Core Engine Tasks 🔲
 - [ ] **Task 3: Cargo Project Setup, SemVer Packaging & Versioning**
-- [ ] **Task 4: Recipe Catalog & Schema (`recipes.toml`)**
+- [ ] **Task 4: Recipe Catalog & Schema (`~/.config/fa/recipes.toml`)**
 - [ ] **Task 5: Platform Detection & Pre-flight Checks (`src/platform.rs`)**
 - [ ] **Task 6: Configuration & Atomic State Engine (`src/config.rs`, `src/state.rs`)**
 - [ ] **Task 7: Recipe Player Core (`src/engine.rs`): create → files → install → steps**
@@ -52,8 +51,8 @@
 - [ ] **Task 10: Unit Test Suite & TDD Verification (`cargo test -- --nocapture`)**
 
 ### Recipe Catalog Tasks 🔲
-- [ ] **Task 11: `astro-pnpm` Recipe (default Astro flow: oxlint + prettier + stylelint + astro check)**
-- [ ] **Task 12: `astro-bun` / `astro-npm` Variants**
+- [ ] **Task 11: Example configuration & first-run provisioning**
+- [ ] **Task 12: Recipe variant support (`bun` / `npm`)**
 - [ ] **Task 13: `ts-lib` Recipe (TypeScript library: oxlint + prettier + tsc)**
 - [ ] **Task 14: `rust-cli` Recipe (cargo new + clippy + rustfmt)**
 - [ ] **Task 15: `python` Recipe**

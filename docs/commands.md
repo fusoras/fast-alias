@@ -6,14 +6,17 @@
 
 | Command | Purpose | Options |
 | ------- | ------- | ------- |
-| `fa new <recipe> <name>` | Scaffolds a new project from the recipe into directory `<name>` | `-v` / `--variant` (e.g. `pnpm`, `bun`, `npm`), `--dry-run` / `-n` to preview, `--no-install` to skip dependency installation |
+| `fa new <recipe> <name>` | Scaffolds a new project from the recipe into directory `<name>` | `-v` / `--variant` (e.g. `pnpm`, `bun`, `npm`), `-d` / `--dry-run` to preview, `--no-install` to skip dependency installation |
 | `fa list` | Displays available recipes in a concise single-line format (routed through system `$PAGER` / `less` when on TTY) | `-sh` / `--show-hidden` to display unsupported recipes |
 | `fa search <query>` | Searches recipes by name, alias, language, or variant and prints matches in the same format as `list` | Query is matched case-insensitively |
 | `fa show <recipe>` | Displays full recipe details: description, language, variants, tooling, files, and steps | Accepts recipe name or alias |
 | `fa doctor` | Detects platform, architecture, and installed package managers (pnpm/bun/npm) | — |
-| `fa sync` | Fetches the latest recipe catalog from the repository without recompiling | `--dry-run` / `-n` to preview |
-| `fa self-update` | Checks GitHub Releases and updates the application binary in-place | `--dry-run` / `-n` to preview version update without downloading |
-| `fa self-uninstall` | Safely removes `fa` binary executable and state/config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config, `--dry-run` / `-d` to preview |
+| `fa sync` | Fetches the latest recipe catalog from the repository without recompiling | `-d` / `--dry-run` to preview |
+| `fa self-update` | Checks GitHub Releases and updates the application binary in-place | `-d` / `--dry-run` to preview version update without downloading |
+| `fa self-uninstall` | Safely removes `fa` binary executable and state/config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config, `-d` / `--dry-run` to preview |
+
+> [!NOTE]
+> **Short flags:** `fa -n <recipe> <name>` is shorthand for `fa new <recipe> <name>`, and `fa -a <command>` for `fa alias <command>`. Inside the `new` subcommand, dry-run is `-d` / `--dry-run` (not `-n`).
 | `fa --version` | Displays the current application version | `-v` |
 | `fa --help` | Displays the command-line help summary | `-h` |
 
@@ -24,17 +27,17 @@
 ### 1. New Project (Simplified Scaffolding)
 **Command**:
 ```bash
-fa new astro myapp
+fa new my-recipe myapp
 # Select a variant explicitly:
-fa new astro myapp -v bun
+fa new my-recipe myapp -v bun
 ```
 
 **Exact Output** (default variant, dependency install):
 ```text
-[Recipe] astro · Astro site with oxlint, prettier, stylelint and astro check
+[Recipe] my-recipe · A stack bootstrap with tooling
 [Variant] pnpm
 
-Scaffolding base via: pnpm create astro@latest -- --template basics --no-install
+Scaffolding base via: pnpm create app@latest myapp --template basics --no-install
 ✓ Base scaffolded at ./myapp
 
 Writing configuration files:
@@ -45,7 +48,7 @@ Writing configuration files:
   ✓ .editorconfig
 
 Installing dependencies...
-  ✓ pnpm add -D oxlint prettier prettier-plugin-astro stylelint @astrojs/check
+  ✓ pnpm add -D oxlint prettier stylelint tsc
 
 Steps:
   ✓ git init
@@ -57,18 +60,18 @@ Run `cd myapp && pnpm dev` to start developing.
 ### 2. New Project (Dry-Run Preview)
 **Command**:
 ```bash
-fa new astro myapp --dry-run
+fa new my-recipe myapp --dry-run
 ```
 
 **Exact Output**:
 ```text
 === DRY-RUN MODE ACTIVE: No changes will be made ===
-[Recipe] astro · Astro site with oxlint, prettier, stylelint and astro check
+[Recipe] my-recipe · A stack bootstrap with tooling
 [Variant] pnpm
-[Dry-Run] Would scaffold base via: pnpm create astro@latest -- --template basics --no-install
+[Dry-Run] Would scaffold base via: pnpm create app@latest myapp --template basics --no-install
 [Dry-Run] Would write file: tsconfig.json
 [Dry-Run] Would write file: .prettierrc
-[Dry-Run] Would run: pnpm add -D oxlint prettier prettier-plugin-astro stylelint @astrojs/check
+[Dry-Run] Would run: pnpm add -D oxlint prettier stylelint tsc
 [Dry-Run] Would run: git init
 ```
 
@@ -80,7 +83,7 @@ fa list
 
 **Exact Output**:
 ```text
-astro (astro-pnpm default / bun / npm) · web · typescript [apply]
+my-recipe (pnpm / bun / npm) · web · typescript [apply]
 ts-lib (pnpm / bun) · typescript [apply]
 rust-cli · systems · rust [apply]
 python · scripting · python [apply]
@@ -89,35 +92,35 @@ python · scripting · python [apply]
 ### 4. Search Recipes
 **Command**:
 ```bash
-fa search astro
+fa search my-recipe
 fa search rust
 ```
 
 **Exact Output** (same format as `list`):
 ```text
-astro (astro-pnpm default / bun / npm) · web · typescript [apply]
+my-recipe (pnpm / bun / npm) · web · typescript [apply]
 ```
 
 ### 5. Show Recipe Details
 **Command**:
 ```bash
-fa show astro
+fa show my-recipe
 ```
 
 **Exact Output**:
 ```text
-Recipe: astro
-Description: Astro site with oxlint, prettier, stylelint and astro check
+Recipe: my-recipe
+Description: A stack bootstrap with tooling
 Language: web · typescript
-Aliases: astro
+Aliases: my-recipe
 Variants: pnpm (default), bun, npm
 
-Create: pnpm create astro@latest -- --template basics --no-install
+Create: pnpm create app@latest myapp --template basics --no-install
 
 Tooling:
   - linter: oxlint (script: lint)
   - formatter: prettier (script: format)
-  - check: @astrojs/check (script: check)
+  - check: tsc (script: check)
 
 Files:
   - tsconfig.json (from template)

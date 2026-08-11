@@ -18,5 +18,5 @@
 
 1. **Token Masking**: `GITHUB_TOKEN` or any authentication secrets MUST NEVER be printed in stdout, stderr, debug logs, or state files.
 2. **Repository Override Verification**: `FAST_ALIAS_REPO` must only point to trusted GitHub repositories.
-3. **No Embedded Tokens**: Secrets or tokens must NEVER be placed inside `templates/<recipe-name>/`, as `include_str!` / `include_bytes!` embeds them directly into the compiled executable binary.
-4. **Recipe Source Trust**: Recipes loaded from `./recipes.toml` or `~/.config/fa/recipes.toml` (non-embedded) execute arbitrary `[[steps]]` commands. Always print a `[WARNING]` before running recipes from untrusted local sources.
+3. **Personal Config**: Templates and recipes live in `~/.config/fa/`. Never store secrets in `~/.config/fa/templates/` that you do not want on disk.
+4. **Recipe Source Trust**: Recipes loaded from `~/.config/fa/recipes.toml` (and `recipes.d/*.toml`) execute arbitrary `[[steps]]` commands. `fa` asks for an explicit one-time confirmation (`[TRUST]`) before running recipe steps or command aliases; the answer is persisted by path in `~/.local/state/fa/state.toml` and never re-prompted for the same config path. The auto-generated example config is trusted automatically. When a subcommand runs without an interactive terminal, `fa` auto-feeds `y` to stdin so approval prompts (e.g. pnpm `minimumReleaseAge` continuation) do not abort the install.
