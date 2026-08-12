@@ -15,6 +15,7 @@ use crate::engine::{
     format_command_line, format_list_line, is_supported, preflight, run_new, run_shell,
     NewOptions,
 };
+use crate::platform::Platform;
 use crate::state::State;/// Recipe-based project scaffolder CLI for Debian and Termux.
 #[derive(Parser)]
 #[command(name = "fa", about, long_about = None, disable_version_flag = true)]
@@ -65,6 +66,24 @@ enum Commands {
     Alias {
         /// Command name or alias (e.g. cloudflare-pages, fpages)
         name: String,
+    },
+    /// Checks GitHub Releases and updates the fa binary in-place.
+    SelfUpdate {
+        /// Preview the update check without replacing the binary
+        #[arg(short, long)]
+        dry_run: bool,
+    },
+    /// Uninstalls the fa executable and state/config directories from the system.
+    SelfUninstall {
+        /// Automatically confirm removal of configuration and state directories
+        #[arg(short = 'y', long)]
+        yes: bool,
+        /// Explicitly reject/skip removal of configuration and state directories
+        #[arg(short = 'n', long = "no")]
+        no: bool,
+        /// Preview uninstallation actions without deleting files
+        #[arg(short = 'd', long = "dry-run")]
+        dry_run: bool,
     },
 }
 
@@ -123,7 +142,7 @@ fn ensure_trusted() -> anyhow::Result<()> {
 }
 
 /// Prompts a yes/no question via stdin; `default` is used on empty input.
-fn prompt_yes_no(question: &str, default: bool) -> bool {
+pub(crate) fn prompt_yes_no(question: &str, default: bool) -> bool {
     use std::io::Write;
 
     let hint = if default { "Y/n" } else { "y/N" };
@@ -343,6 +362,26 @@ fn main() -> anyhow::Result<()> {
             ensure_trusted()?;
             preflight(&cmd.command)?;
             run_shell(&cmd.command)?;
+        }
+        Commands::SelfUpdate { dry_run } => {
+            if dry_run {
+                println!("{BOLD_YELLOW}=== DRY-RUN MODE ACTIVE: No binary changes will be made ==={RESET}");
+            }
+            let platform = Platform::detect();
+            if let Err(e) = update::check_and_perform_update(env!("CARGO_PKG_VERSION"), &platform, dry_run) {
+                eprintln!("\n{BOLD_RED}Self-update error:{RESET} {e}");
+                std::process::exit(1);
+            }
+            println!("\n{BOLD_GREEN}Self-update processing completed successfully.{RESET}");
+        }
+        Commands::SelfUninstall { yes, no, dry_run } => {
+            if dry_run {
+                println!("{BOLD_YELLOW}=== DRY-RUN MODE ACTIVE: No files will be deleted ==={RESET}");
+            }
+            if let Err(e) = update::perform_self_uninstall(dry_run, yes, no) {
+                eprintln!("\n{BOLD_RED}Self-uninstall error:{RESET} {e}");
+                std::process::exit(1);
+            }
         }
     }
 
