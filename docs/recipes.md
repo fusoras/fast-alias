@@ -101,7 +101,7 @@ Recipes may declare short aliases via the `aliases` array. Users can invoke `fa 
 
 ## General-Purpose Aliases (`[aliases]`)
 
-Beyond scaffolding, `fa` acts as a categorized alternative to Bash aliases. Commands live in top-level `[aliases]` sections — one per category — and run with `fa run <alias>`:
+Beyond scaffolding, `fa` acts as a categorized alternative to Bash aliases. Commands live in top-level `[aliases]` sections — one per category — and run with `fa alias <name>`:
 
 ```toml
 [aliases.git]                                     # category = section
@@ -116,8 +116,8 @@ du   = { command = "du -sh */", description = "Size per folder" }
 
 - **Category**: the section name (`git`, `sistema`). `fa list` and `fa search` group aliases by category.
 - **Command**: shell command executed via `sh -c`. `{{var}}` placeholders are shell-quoted (CWE-78 safe).
-- **Arguments**: `fa run gco main` fills `{{branch}}` positionally (first placeholder → first arg, in order of appearance). Extra arguments are appended shell-quoted as a passthrough (`fa run rm a.txt b.txt` → `git rm 'a.txt' 'b.txt'`).
-- **Aliases**: the `aliases` array declares alternative names (`fa run co` also works).
+- **Arguments**: `fa alias gco main` fills `{{branch}}` positionally (first placeholder → first arg, in order of appearance). Extra arguments are appended shell-quoted as a passthrough (`fa alias rm a.txt b.txt` → `git rm 'a.txt' 'b.txt'`).
+- **Aliases**: the `aliases` array declares alternative names (`fa alias co` also works).
 - **Platform** (optional): restrict to `debian`/`termux`.
-- **Dry-run**: `fa run <alias> [args] --dry-run` prints the resolved command without executing it.
+- **Dry-run**: `fa alias <name> [args] --dry-run` prints the resolved command without executing it.
 - **Modularity**: categories can live in separate files, e.g. `recipes.d/git.toml` containing only `[aliases.git]`.

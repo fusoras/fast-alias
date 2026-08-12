@@ -10,14 +10,14 @@
 | `fa list` | Displays available recipes and grouped aliases in a concise single-line format (routed through system `$PAGER` / `less` when on TTY) | `-sh` / `--show-hidden` to display unsupported recipes |
 | `fa search <query>` | Searches recipes and aliases by name, alias, category, language, or variant and prints matches in the same format as `list` | Query is matched case-insensitively |
 | `fa show <recipe>` | Displays full recipe details: description, language, variants, tooling, files, and steps | Accepts recipe name or alias |
-| `fa run <alias> [args...]` | Runs a general-purpose alias from the `[aliases]` catalog (category-based) | `--dry-run` / `-d` to preview the resolved command; args fill `{{var}}` placeholders or pass through shell-quoted |
+| `fa alias <name> [args...]` | Runs a general-purpose alias from the `[aliases]` catalog (category-based) | `--dry-run` / `-d` to preview the resolved command; args fill `{{var}}` placeholders or pass through shell-quoted |
 | `fa doctor` | Detects platform, architecture, and installed package managers (pnpm/bun/npm) | — |
 | `fa sync` | Fetches the latest recipe catalog from the repository without recompiling | `-d` / `--dry-run` to preview |
 | `fa self-update` | Checks GitHub Releases and updates the application binary in-place | `-d` / `--dry-run` to preview version update without downloading |
 | `fa self-uninstall` | Safely removes `fa` binary executable and state/config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config, `-d` / `--dry-run` to preview |
 
 > [!NOTE]
-> **Short flags:** `fa -n <recipe> <name>` is shorthand for `fa new <recipe> <name>`, and `fa -a <command>` for `fa run <command>` (and `fa alias <command>` still works as a synonym). Inside the `new` subcommand, dry-run is `-d` / `--dry-run` (not `-n`).
+> **Short flags:** `fa -n <recipe> <name>` is shorthand for `fa new <recipe> <name>`, and `fa -a <name>` for `fa alias <name>`. Inside the `new` subcommand, dry-run is `-d` / `--dry-run` (not `-n`).
 | `fa --version` | Displays the current application version | `-v` |
 | `fa --help` | Displays the command-line help summary | `-h` |
 
@@ -91,7 +91,7 @@ Recipes:
   ts-lib (pnpm / bun) · typescript [apply]
 
 Aliases:
-  Usage: fa run <alias> [args...]
+  Usage: fa alias <name> [args...]
 
   git:
     gco · Cambiar de rama
@@ -115,11 +115,11 @@ my-recipe (pnpm / bun / npm) · web · typescript [apply]
 ### 5. Run Alias (Categorized Commands)
 **Command**:
 ```bash
-fa run gco main            # git checkout 'main'
-fa run rm a.txt b.txt      # git rm 'a.txt' 'b.txt' (passthrough)
-fa run free                # free -h
-fa run gco main --dry-run  # preview without executing
-fa -a free                 # short-flag shorthand
+fa alias gco main            # git checkout 'main'
+fa alias rm a.txt b.txt      # git rm 'a.txt' 'b.txt' (passthrough)
+fa alias free                # free -h
+fa alias gco main --dry-run  # preview without executing
+fa -a free                   # short-flag shorthand
 ```
 
 **Exact Output (Dry-Run)**:
