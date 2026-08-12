@@ -1,9 +1,9 @@
 # AGENTS.md — fast-alias (`fa`)
 
-Recipe-based project scaffolder CLI that bootstraps projects, installs dependencies, and applies tooling (linter, formatter, typechecker) and configuration files on Debian and Termux (temporary name: `project-fast-alias`, version: `0.1.0-beta.1`).
+Recipe-based project scaffolder CLI that bootstraps projects, installs dependencies, and applies tooling (linter, formatter, typechecker) and configuration files on Debian and Termux (temporary name: `project-fast-alias`, version: `0.1.0-beta.2`).
 
 ## Project Facts
-- Binary crate `fa` v0.1.0-beta.1, edition 2024 (`Cargo.toml`). Written in Rust with no heavy external dependencies.
+- Binary crate `fa` v0.1.0-beta.2, edition 2024 (`Cargo.toml`). Written in Rust with no heavy external dependencies.
 - **Recipe Player Model**: `fa` is a "recipe player" — recipes are declared in TOML files (`~/.config/fa/recipes.toml` + `~/.config/fa/recipes.d/*.toml`) in the user's personal config directory. Adding a language/toolchain = adding a `.toml`, never touching code.
 - **Command Renaming Note**: Executable binary command is `fa` (from `fast-alias`) for CLI user convenience.
 - Target platforms: **Debian** and **Termux** (via the `project-dots` release pattern: `install.sh` + GitHub Releases + cross-compiled musl).

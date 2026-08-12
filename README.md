@@ -31,7 +31,6 @@ curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.
 | `fa search <query>` | Searches recipes by name, alias, language, or variant | Same single-line format as `list` |
 | `fa show <recipe>` | Displays full recipe description, tooling, files, and steps | Accepts recipe name or alias |
 | `fa alias <name>` | Runs a general-purpose alias from the `[aliases]` catalog | Accepts canonical name or declared alias; `fa -a <name>` is shorthand |
-| `fa doctor` | Detects platform, architecture, and installed package managers | — |
 | `fa sync` | Fetches the latest recipe catalog from the repository | `-d` / `--dry-run` to preview |
 | `fa self-update` | Checks GitHub Releases and updates `fa` binary in-place | `-d` / `--dry-run` to preview update check |
 | `fa self-uninstall` | Safely removes `fa` binary executable, state, and config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config |

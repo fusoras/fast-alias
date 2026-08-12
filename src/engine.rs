@@ -1,5 +1,5 @@
 use crate::config::{Config, Recipe};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -52,6 +52,77 @@ fn read_user_template(rel: &str) -> Option<String> {
     let templates_dir = Config::get_user_templates_dir()?;
     let path = templates_dir.join(rel);
     fs::read_to_string(&path).ok()
+}
+
+/// Shell builtins and keywords that never require an external binary, so they
+/// must not be reported as missing applications during preflight.
+const SHELL_BUILTINS: &[&str] = &[
+    ".", ":", "[", "[[", "alias", "bg", "break", "case", "cd", "command",
+    "continue", "coproc", "do", "done", "echo", "elif", "else", "esac",
+    "eval", "exec", "exit", "export", "false", "fi", "for", "function",
+    "hash", "if", "in", "jobs", "local", "pwd", "read", "readonly",
+    "return", "select", "set", "shift", "source", "then", "time", "times",
+    "trap", "true", "type", "typeset", "ulimit", "umask", "unalias",
+    "unset", "until", "wait", "while",
+];
+
+/// Extracts the standalone application names a shell command invokes: the
+/// first token of each segment separated by shell operators (`&&`, `||`, `;`,
+/// `|`, newline), de-duplicated in order of appearance. Shell builtins and
+/// leading environment assignments (e.g. `FOO=bar`) are skipped.
+pub fn extract_commands(command: &str) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out = Vec::new();
+    for segment in command.split(['&', '|', ';', '\n']) {
+        let Some(first) = segment.split_whitespace().next() else {
+            continue;
+        };
+        let token = first.trim_start_matches(['\'', '"', '(', '{']).to_string();
+        if token.is_empty()
+            || token.contains('=')
+            || SHELL_BUILTINS.contains(&token.as_str())
+        {
+            continue;
+        }
+        if seen.insert(token.clone()) {
+            out.push(token);
+        }
+    }
+    out
+}
+
+/// Returns the subset of `commands` that are not present on the system PATH.
+pub fn missing_commands(commands: &[String]) -> Vec<String> {
+    commands
+        .iter()
+        .filter(|cmd| !crate::platform::command_exists(cmd))
+        .cloned()
+        .collect()
+}
+
+/// Suggested install command hint for the current platform.
+fn install_hint(cmd: &str) -> String {
+    match crate::platform::Platform::detect() {
+        crate::platform::Platform::Debian => format!("sudo apt install {cmd}"),
+        crate::platform::Platform::Termux => format!("pkg install {cmd}"),
+        crate::platform::Platform::Unsupported(_) => "your system package manager".to_string(),
+    }
+}
+
+/// Ahead-of-execution check: verifies every application a shell command
+/// references exists on PATH. When something is missing, prints a friendly
+/// diagnostic and returns an error so the command never runs and no ugly
+/// "command not found" wall of text reaches the user.
+pub fn preflight(command: &str) -> anyhow::Result<()> {
+    let missing = missing_commands(&extract_commands(command));
+    if missing.is_empty() {
+        return Ok(());
+    }
+    for cmd in &missing {
+        println!("{BOLD_RED}✗ Missing application:{RESET} {BOLD_YELLOW}{cmd}{RESET} is not installed on this system.");
+        println!("  {DIM}Install it with your package manager — {}.{RESET}", install_hint(cmd));
+    }
+    anyhow::bail!("Missing system application(s): {}", missing.join(", "))
 }
 
 /// Runs the full `fa new` flow: create → files → steps.
@@ -145,6 +216,7 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                 if opts.dry_run {
                     println!("{DIM}[Dry-Run]{RESET} Would scaffold base via: {rendered}");
                 } else {
+                    preflight(&rendered)?;
                     run_shell(&rendered)?;
                     // Scaffold CLIs (create-tool, cargo new, ...) generate a
                     // subdirectory named after the project; run the rest of the
@@ -231,6 +303,7 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                 if opts.dry_run {
                     println!("  {DIM}[Dry-Run]{RESET} Would run: {rendered}");
                 } else {
+                    preflight(&rendered)?;
                     let label = step.description.as_deref().unwrap_or(&step.command);
                     if step.install {
                         run_shell_quiet_with_spinner(&rendered, label)?;
@@ -788,6 +861,41 @@ mod tests {
         let msg = format!("{err:?}");
         assert!(msg.contains("5"), "Error should mention the exit status: {msg}");
         println!("   ✓ Spinner variant succeeded and surfaced the failure.\n");
+    }
+
+    #[test]
+    fn extract_commands_should_pull_first_token_of_each_segment() {
+        let cmds = extract_commands("node --run build && pnpx wrangler pages deploy dist");
+        assert_eq!(cmds, vec!["node".to_string(), "pnpx".to_string()]);
+        println!("   ✓ Multi-command first tokens extracted in order.");
+
+        let git = extract_commands("git init --quiet && git add -A && (git commit -q || git checkout -b main)");
+        assert_eq!(git, vec!["git".to_string()]);
+        println!("   ✓ Parenthesized/duplicated commands de-duplicated to one app.\n");
+    }
+
+    #[test]
+    fn extract_commands_should_skip_shell_builtins_and_assignments() {
+        let cmds = extract_commands("FOO=bar echo 'hi' ; cd src && git status");
+        assert_eq!(cmds, vec!["git".to_string()]);
+        println!("   ✓ Builtins (echo, cd) and env assignments excluded.\n");
+    }
+
+    #[test]
+    fn missing_commands_should_report_only_absent_tools() {
+        let missing = missing_commands(&[
+            "git".to_string(),
+            "fa_non_existent_tool_xyz".to_string(),
+        ]);
+        assert_eq!(missing, vec!["fa_non_existent_tool_xyz".to_string()]);
+        println!("   ✓ Only the absent application is reported.\n");
+    }
+
+    #[test]
+    fn preflight_should_pass_when_all_apps_exist() {
+        let result = preflight("node --run build && pnpx wrangler pages deploy dist");
+        assert!(result.is_ok(), "Present apps must pass preflight: {result:?}");
+        println!("   ✓ Preflight passes when applications exist.\n");
     }
 
     #[test]

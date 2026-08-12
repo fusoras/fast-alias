@@ -60,7 +60,9 @@ Para evitar tests tautológicos, inútiles o falsos positivos (tests que aprueba
 | `test_platform_asset_resolution` | `src/update.rs` | Verifies target release asset resolution for Debian (`x86_64`) vs Termux (`aarch64-musl`). |
 | `test_self_uninstall_dry_run` | `src/update.rs` | Verifies dry-run preview for `self-uninstall` executable and state/config removal. |
 | `test_new_subcommand` | `src/main.rs` | Verifies parsing of the `new` subcommand and variant flag. |
-| `test_doctor_output` | `src/main.rs` | Verifies platform and package-manager detection output formatting. |
+| `test_dependency_preflight` | `src/engine.rs` | Verifies preflight: shell command extraction (first token per `&&`/`;`/`|` segment), shell-builtin/assignment exclusion, missing-application detection, and passing when all applications exist. |
+| `test_version_comparison` | `src/update.rs` | Verifies release-tag comparison: higher `-beta.N` is newer, same tag is not, older version is not. |
+| `test_cached_version_check` | `src/update.rs` | Verifies `check_version_update` reads the cached latest release from state.toml and returns `None` for a future running version. |
 
 ---
 

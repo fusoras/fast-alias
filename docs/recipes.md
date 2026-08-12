@@ -17,7 +17,7 @@ Modular `.toml` files allow breaking down large configurations into clean, domai
 
 ## State Management (`~/.local/state/fa/state.toml`)
 
-`fa` tracks created projects for safe removal and `doctor` reporting:
+`fa` tracks created projects for safe removal:
 
 ```toml
 [projects.myapp]

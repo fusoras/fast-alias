@@ -5,15 +5,16 @@ mod platform;
 mod spinner;
 mod state;
 mod templating;
+mod update;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::colors::*;
 use crate::config::Config;
 use crate::engine::{
-    format_command_line, format_list_line, is_supported, run_new, run_shell, NewOptions,
+    format_command_line, format_list_line, is_supported, preflight, run_new, run_shell,
+    NewOptions,
 };
-use crate::platform::Platform;
 use crate::state::State;/// Recipe-based project scaffolder CLI for Debian and Termux.
 #[derive(Parser)]
 #[command(name = "fa", about, long_about = None, disable_version_flag = true)]
@@ -65,9 +66,6 @@ enum Commands {
         /// Command name or alias (e.g. cloudflare-pages, fpages)
         name: String,
     },
-    /// Detect the device environment (platform, arch, package managers).
-    #[command(visible_aliases = ["-d"])]
-    Doctor,
 }
 
 /// Rewrites short-flag aliases into their subcommand form so `fa -n <recipe> <name>`
@@ -143,7 +141,18 @@ fn prompt_yes_no(question: &str, default: bool) -> bool {
 }
 
 fn main() -> anyhow::Result<()> {
-    let args = rewrite_short_flags(std::env::args().collect());
+    let args: Vec<String> = std::env::args().collect();
+
+    // Hidden internal subprocess: refreshes the cached latest release in
+    // state.toml synchronously. Detached via `fa --version` so the CLI returns
+    // instantly while the check finishes in the background.
+    if args.len() >= 2 && args[1] == "update-check" {
+        let version = std::env::var("FA_VERSION").unwrap_or_default();
+        update::check_and_cache_latest(&version);
+        return Ok(());
+    }
+
+    let args = rewrite_short_flags(args);
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(err) => {
@@ -161,7 +170,21 @@ fn main() -> anyhow::Result<()> {
     };
 
     if cli.version {
-        println!("{}", env!("CARGO_PKG_VERSION"));
+        let current_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
+        if let Some(latest) = update::check_version_update(env!("CARGO_PKG_VERSION")) {
+            let latest_tag = if latest.starts_with('v') {
+                latest
+            } else {
+                format!("v{latest}")
+            };
+            println!("{current_tag} -> {BOLD_YELLOW}Update: {latest_tag}{RESET}");
+            println!("    Run 'fa self-update' to update.");
+        } else {
+            println!("{current_tag}");
+        }
+
+        // Refresh state asynchronously without blocking the CLI.
+        update::spawn_background_version_check(env!("CARGO_PKG_VERSION"));
         return Ok(());
     }
 
@@ -318,10 +341,8 @@ fn main() -> anyhow::Result<()> {
                 anyhow::anyhow!("Unknown command '{name}'. Run `fa list` to see available aliases.")
             })?;
             ensure_trusted()?;
+            preflight(&cmd.command)?;
             run_shell(&cmd.command)?;
-        }
-        Commands::Doctor => {
-            doctor();
         }
     }
 
@@ -396,25 +417,6 @@ fn show_recipe(config: &Config, key: &str) {
                 step.description.as_deref().unwrap_or("no description")
             );
         }
-    }
-}
-
-fn doctor() {
-    println!("{BOLD_CYAN}=== fa Environment Diagnosis ==={RESET}");
-    let platform = Platform::detect();
-    println!("Platform: {}", platform.as_label());
-    println!("Architecture: {}", platform::detect_arch());
-    println!("\nPackage Managers:");
-    for pm in ["pnpm", "bun", "npm"] {
-        let marker = if platform::command_exists(pm) { "✓" } else { "✗" };
-        let color = if platform::command_exists(pm) { BOLD_GREEN } else { BOLD_RED };
-        println!("  {color}{marker}{RESET} {pm}");
-    }
-    println!("\nPrerequisites:");
-    for cmd in ["git", "curl", "tar"] {
-        let marker = if platform::command_exists(cmd) { "✓" } else { "✗" };
-        let color = if platform::command_exists(cmd) { BOLD_GREEN } else { BOLD_RED };
-        println!("  {color}{marker}{RESET} {cmd}");
     }
 }
 

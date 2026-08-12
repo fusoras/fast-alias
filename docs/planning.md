@@ -10,7 +10,8 @@
 - **`fa list`**: Displays available recipes grouped by language/category in a concise single-line format (routed through system `$PAGER` / `less` when on TTY).
 - **`fa search <query>`**: Searches recipes by name, alias, language, or variant, printing matches in the same single-line format as `list`.
 - **`fa show <recipe>`**: Displays full recipe details: description, language, variants, create strategy, tooling, files to generate, and steps.
-- **`fa doctor`**: Detects the current device environment: platform, architecture, installed package managers (pnpm/bun/npm), and prerequisites.
+- **Dependency Preflight**: Before running any recipe command or alias, `fa` extracts the applications the shell command invokes and verifies they exist on `PATH`; a missing application aborts with a friendly, actionable error before anything executes.
+- **Async Update Check**: `fa --version` reads the cached latest release from state.toml (zero-latency, offline) and spawns a detached background `update-check` subprocess that queries the GitHub Releases API and refreshes the cache asynchronously, so `fa` returns instantly and never shows update-check errors.
 - **`fa sync`**: Fetches the latest recipe catalog from the repository without recompiling the binary.
 - **`fa self-update [--dry-run / -n]`**: Checks GitHub Releases for new versions and updates the binary in-place.
 - **`fa self-uninstall [--yes / -y] [--no / -n] [--dry-run / -d]`**: Safely removes the binary executable and state/config directories.
@@ -62,5 +63,5 @@
 - [ ] **Task 17: GitHub Actions Release CI Pipeline (`.github/workflows/release.yml`)**
 - [ ] **Task 18: Self-Update Engine (`src/update.rs`)**
 - [ ] **Task 19: Self-Uninstall Engine & `--yes` Interactive Confirmation**
-- [ ] **Task 20: `fa list`, `fa search`, `fa show`, `fa doctor` Commands**
+- [ ] **Task 20: `fa list`, `fa search`, `fa show` Commands**
 - [ ] **Task 21: `fa sync` Recipe Catalog Refresh**

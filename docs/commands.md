@@ -11,15 +11,25 @@
 | `fa search <query>` | Searches recipes and aliases by name, alias, category, language, or variant and prints matches in the same format as `list` | Query is matched case-insensitively |
 | `fa show <recipe>` | Displays full recipe details: description, language, variants, tooling, files, and steps | Accepts recipe name or alias |
 | `fa alias <name> [args...]` | Runs a general-purpose alias from the `[aliases]` catalog (category-based) | `--dry-run` / `-d` to preview the resolved command; args fill `{{var}}` placeholders or pass through shell-quoted |
-| `fa doctor` | Detects platform, architecture, and installed package managers (pnpm/bun/npm) | — |
 | `fa sync` | Fetches the latest recipe catalog from the repository without recompiling | `-d` / `--dry-run` to preview |
 | `fa self-update` | Checks GitHub Releases and updates the application binary in-place | `-d` / `--dry-run` to preview version update without downloading |
 | `fa self-uninstall` | Safely removes `fa` binary executable and state/config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config, `-d` / `--dry-run` to preview |
 
 > [!NOTE]
 > **Short flags:** `fa -n <recipe> <name>` is shorthand for `fa new <recipe> <name>`, and `fa -a <name>` for `fa alias <name>`. Inside the `new` subcommand, dry-run is `-d` / `--dry-run` (not `-n`).
-| `fa --version` | Displays the current application version | `-v` |
+| `fa --version` | Displays the current application version; checks GitHub Releases asynchronously for updates and hints when a newer release exists | `-v` |
 | `fa --help` | Displays the command-line help summary | `-h` |
+
+### 1.1 Version & Async Update Check
+
+`fa --version` is instant and offline: it reads the latest release tag cached in `~/.local/state/fa/state.toml` (populated by a previous background check) and, when a newer release exists, appends an update hint:
+
+```text
+v0.1.0-beta.2 -> Update: v0.1.0-beta.3
+    Run 'fa self-update' to update.
+```
+
+It also spawns a detached `update-check` subprocess that queries the GitHub Releases API (via `curl`, honoring `FAST_ALIAS_REPO`) and refreshes the cache asynchronously — the CLI returns immediately and never blocks on the network or surfaces API errors.
 
 ---
 
@@ -130,6 +140,17 @@ fa -a free                   # short-flag shorthand
 
 Aliases are grouped by their `[aliases]` category (e.g. `git`, `sistema`, `deploy`). `fa list` and `fa search` display them grouped accordingly.
 
+### 6.4 Dependency Preflight
+
+Before running any recipe command (`create`, `[[steps]]`) or alias, `fa` inspects the shell command, extracts the applications it invokes (first token of each `&&`/`||`/`;`/`|` segment, shell builtins excluded), and checks each exists on `PATH`. If a required application is missing, `fa` aborts **before** executing anything and prints a friendly diagnostic instead of the raw shell error:
+
+```text
+✗ Missing application: git is not installed on this system.
+  Install it with your package manager — sudo apt install git.
+```
+
+Nothing is scaffolded or installed when a dependency is missing.
+
 ### 6. Show Recipe Details
 **Command**:
 ```bash
@@ -162,27 +183,7 @@ Steps:
   - git init (Initialize git repository)
 ```
 
-### 7. Doctor (Environment Detection)
-**Command**:
-```bash
-fa doctor
-```
-
-**Exact Output**:
-```text
-=== fa Environment Diagnosis ===
-Platform: Debian (x86_64)
-Package Managers:
-  ✓ pnpm 10.0.0
-  ✓ bun 1.2.0
-  ✗ npm (not found)
-Prerequisites:
-  ✓ git
-  ✓ curl
-  ✓ tar
-```
-
-### 8. Self-Update Engine
+### 7. Self-Update Engine
 **Command**:
 ```bash
 fa self-update --dry-run
@@ -208,7 +209,7 @@ Latest release tag: v<newer-version>
 [Dry-Run] Would extract and replace executable at: /home/user/.local/bin/fa
 ```
 
-### 9. Self-Uninstall Engine
+### 8. Self-Uninstall Engine
 **Command**:
 ```bash
 fa self-uninstall --dry-run
@@ -230,7 +231,7 @@ Target Config Directory: /home/user/.config/fa
 [Dry-Run] Would remove state directory: /home/user/.local/state/fa
 ```
 
-### 10. System Bootstrap Installation Script
+### 9. System Bootstrap Installation Script
 **Command**:
 ```bash
 curl -sSL https://raw.githubusercontent.com/<user>/fast-alias/develop/install.sh | sh

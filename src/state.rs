@@ -22,6 +22,13 @@ pub struct State {
     /// Persisted by path; once trusted, `fa` never asks again for that path.
     #[serde(default)]
     pub trusted: BTreeSet<String>,
+    /// Latest release tag cached by the background update check, when newer
+    /// than the running version. Enables zero-latency `fa --version` hints.
+    #[serde(default)]
+    pub cached_latest_version: Option<String>,
+    /// Unix epoch (seconds) of the last background release check.
+    #[serde(default)]
+    pub last_update_check_epoch: Option<u64>,
 }
 
 impl State {
