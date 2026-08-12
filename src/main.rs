@@ -60,7 +60,7 @@ enum Commands {
         recipe: String,
     },
     /// Run an executable command declared in the recipe catalog.
-    #[command(visible_aliases = ["run", "-a"])]
+    #[command(visible_aliases = ["-a"])]
     Alias {
         /// Command name or alias (e.g. cloudflare-pages, fpages)
         name: String,
@@ -524,8 +524,12 @@ mod tests {
             "Help output must display inline subcommand short aliases (new, -n): got:\n{formatted}"
         );
         assert!(
-            formatted.contains("alias, run, -a"),
-            "Help output must display inline subcommand aliases (alias, run, -a): got:\n{formatted}"
+            formatted.contains("alias, -a"),
+            "Help output must display inline subcommand aliases (alias, -a): got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("alias, run, -a"),
+            "The `run` command must stay free for future use, not bound to the alias subcommand: got:\n{formatted}"
         );
     }
 }

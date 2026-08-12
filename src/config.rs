@@ -16,7 +16,7 @@ name = "Example"
 description = "Example recipe — replace it with your own"
 language = "shell"
 
-# General-purpose aliases, grouped by category. Run them with `fa run <alias>`.
+# General-purpose aliases, grouped by category. Run them with `fa alias <name>`.
 [aliases.demo]
 hello = { command = "echo 'Hello from fa!'", description = "Example alias" }
 "##;
@@ -73,7 +73,7 @@ pub struct Variable {
     pub default: Option<String>,
 }
 
-/// Executable command declared in the alias catalog, invoked via `fa run <name>`.
+/// Executable command declared in the alias catalog, invoked via `fa alias <name>`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Command {
     pub command: String,
