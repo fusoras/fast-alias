@@ -5,6 +5,9 @@ use std::collections::HashMap;
 /// Substitutes `{{key}}` placeholders in the input string using the provided variable map.
 /// Returns a copy of the input with all recognized placeholders replaced.
 pub fn substitute(input: &str, vars: &HashMap<String, String>) -> String {
+    if !input.contains("{{") {
+        return input.to_string();
+    }
     let mut result = input.to_string();
     for (key, value) in vars {
         let placeholder = format!("{{{{{key}}}}}");
@@ -24,6 +27,9 @@ pub fn shell_quote(value: &str) -> String {
 /// Substitutes `{{key}}` placeholders in a shell command, shell-quoting every
 /// substituted value to prevent command injection (CWE-78).
 pub fn substitute_shell(input: &str, vars: &HashMap<String, String>) -> String {
+    if !input.contains("{{") {
+        return input.to_string();
+    }
     let mut result = input.to_string();
     for (key, value) in vars {
         let placeholder = format!("{{{{{key}}}}}");

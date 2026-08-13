@@ -20,14 +20,15 @@ impl Platform {
             return Platform::Debian;
         }
 
-        if let Ok(os_release) = std::fs::read_to_string("/etc/os-release") {
-            let lower = os_release.to_lowercase();
-            if lower.contains("id=debian")
-                || lower.contains("id=ubuntu")
-                || lower.contains("id_like=debian")
-            {
-                return Platform::Debian;
-            }
+        if let Ok(os_release) = std::fs::read_to_string("/etc/os-release")
+            && os_release.lines().any(|line| {
+                let lower = line.to_ascii_lowercase();
+                lower.contains("id=debian")
+                    || lower.contains("id=ubuntu")
+                    || lower.contains("id_like=debian")
+            })
+        {
+            return Platform::Debian;
         }
 
         Platform::Unsupported("Unknown Linux/POSIX system".to_string())

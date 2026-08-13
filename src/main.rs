@@ -16,7 +16,9 @@ use crate::engine::{
     NewOptions,
 };
 use crate::platform::Platform;
-use crate::state::State;/// Recipe-based project scaffolder CLI for Debian and Termux.
+use crate::state::State;
+
+/// Recipe-based project scaffolder CLI for Debian and Termux.
 #[derive(Parser)]
 #[command(name = "fa", about, long_about = None, disable_version_flag = true)]
 struct Cli {
