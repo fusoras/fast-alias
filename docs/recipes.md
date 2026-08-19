@@ -115,9 +115,11 @@ du   = { command = "du -sh */", description = "Size per folder" }
 ```
 
 - **Category**: the section name (`git`, `sistema`). `fa list` and `fa search` group aliases by category.
-- **Command**: shell command executed via `sh -c`. `{{var}}` placeholders are shell-quoted (CWE-78 safe).
-- **Arguments**: `fa alias gco main` fills `{{branch}}` positionally (first placeholder → first arg, in order of appearance). Extra arguments are appended shell-quoted as a passthrough (`fa alias rm a.txt b.txt` → `git rm 'a.txt' 'b.txt'`).
-- **Aliases**: the `aliases` array declares alternative names (`fa alias co` also works).
+- **Command**: shell command executed via `sh -c`. Supports positional parameters (`$1`, `$2`, `${1}`, `{{1}}`, `{{2}}`, `$@`, `$*`) and template variables (`{{var}}`). All substituted values are shell-quoted (CWE-78 safe).
+- **Arguments**:
+  - Positional variables (`$1`, `{{1}}`, etc.) are replaced with corresponding CLI argument index.
+  - If no positional placeholders are present, arguments are automatically appended shell-quoted at the end as passthrough (e.g. `fa alias rm a.txt b.txt` → `git rm 'a.txt' 'b.txt'`).
+- **Aliases**: the `aliases` array declares alternative names (`fa alias co` or `fa co` also works).
 - **Platform** (optional): restrict to `debian`/`termux`.
 - **Dry-run**: `fa alias <name> [args] --dry-run` prints the resolved command without executing it.
 - **Modularity**: categories can live in separate files, e.g. `recipes.d/git.toml` containing only `[aliases.git]`.

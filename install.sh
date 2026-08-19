@@ -5,7 +5,7 @@
 set -e
 
 # Default version tag (overridden if RELEASE_TAG environment variable is set)
-VERSION="${RELEASE_TAG:-v0.1.0-beta.2}"
+VERSION="${RELEASE_TAG:-v0.1.0-beta.3}"
 REPO="fusoras/fast-alias"
 
 # Colors for terminal output

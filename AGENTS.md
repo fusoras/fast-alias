@@ -1,9 +1,9 @@
 # AGENTS.md — fast-alias (`fa`)
 
-Recipe-based project scaffolder CLI that bootstraps projects, installs dependencies, and applies tooling (linter, formatter, typechecker) and configuration files on Debian and Termux (temporary name: `project-fast-alias`, version: `0.1.0-beta.2`).
+Recipe-based project scaffolder CLI that bootstraps projects, installs dependencies, and applies tooling (linter, formatter, typechecker) and configuration files on Debian and Termux (temporary name: `project-fast-alias`, version: `0.1.0-beta.3`).
 
 ## Project Facts
-- Binary crate `fa` v0.1.0-beta.2, edition 2024 (`Cargo.toml`). Written in Rust with no heavy external dependencies.
+- Binary crate `fa` v0.1.0-beta.3, edition 2024 (`Cargo.toml`). Written in Rust with no heavy external dependencies.
 - **Recipe Player Model**: `fa` is a "recipe player" — recipes are declared in TOML files (`~/.config/fa/recipes.toml` + `~/.config/fa/recipes.d/*.toml`) in the user's personal config directory. Adding a language/toolchain = adding a `.toml`, never touching code.
 - **Command Renaming Note**: Executable binary command is `fa` (from `fast-alias`) for CLI user convenience.
 - Target platforms: **Debian** and **Termux** (via the `project-dots` release pattern: `install.sh` + GitHub Releases + cross-compiled musl).
@@ -72,3 +72,7 @@ For detailed architecture, roadmap, CLI reference, recipe schema, unit testing, 
   - Only after confirming the test fails properly on broken code may the production logic be implemented or restored so the test passes cleanly (GREEN state).
   - Tests that pass on the first try without demonstrating failure sensitivity must be treated as potentially tautological/weak and audited immediately.
   - **Mandatory Output Evidence**: When creating or modifying unit tests (even unprompted), the AI assistant MUST include a dedicated response section titled `## Test Failure Verification (RED State)` displaying the actual terminal failure log output obtained on broken code before presenting the final passing implementation.
+- **Strict Non-Blocking Test Rule & Zero-Hang Policy**:
+  - Tests MUST NEVER block indefinitely or wait for interactive input (e.g. `stdin`, unhandled prompts, infinite polling/loops).
+  - Functions with interactive prompts (`prompt_yes_no`) must always be called with non-interactive arguments (`auto_confirm` / `auto_reject`) in tests.
+  - If a `cargo test` execution hangs or runs unexpectedly long, the assistant MUST NOT leave it hanging: it must immediately terminate/diagnose the process, fix the root cause (or report it directly to the user), and ensure the suite executes non-interactively to completion.

@@ -68,6 +68,9 @@ enum Commands {
     Alias {
         /// Command name or alias (e.g. cloudflare-pages, fpages)
         name: String,
+        /// Optional arguments passed through to the alias command
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
     },
     /// Checks GitHub Releases and updates the fa binary in-place.
     SelfUpdate {
@@ -89,14 +92,50 @@ enum Commands {
     },
 }
 
-/// Rewrites short-flag aliases into their subcommand form so `fa -n <recipe> <name>`
-/// maps to `fa new ...` and `fa -a <command>` maps to `fa alias <command>`.
-fn rewrite_short_flags(mut args: Vec<String>) -> Vec<String> {
+/// Builtin command names and flags that should not be intercepted as direct alias invocations.
+const BUILTIN_COMMANDS: &[&str] = &[
+    "new",
+    "-n",
+    "list",
+    "-l",
+    "search",
+    "show",
+    "alias",
+    "-a",
+    "self-update",
+    "self-uninstall",
+    "update-check",
+    "help",
+    "--help",
+    "-h",
+    "--version",
+    "-v",
+];
+
+/// Rewrites CLI arguments:
+/// 1. Short-flag aliases (`fa -n <recipe> <name>` -> `fa new ...`, `fa -a <cmd>` -> `fa alias <cmd>`).
+/// 2. Direct alias invocations (`fa <alias_name>` -> `fa alias <alias_name>`).
+fn rewrite_args(mut args: Vec<String>, config: Option<&Config>) -> Vec<String> {
     if args.len() >= 2 {
         match args[1].as_str() {
-            "-n" => args[1] = "new".to_string(),
-            "-a" => args[1] = "alias".to_string(),
+            "-n" => {
+                args[1] = "new".to_string();
+                return args;
+            }
+            "-a" => {
+                args[1] = "alias".to_string();
+                return args;
+            }
             _ => {}
+        }
+
+        let first = args[1].as_str();
+        if !BUILTIN_COMMANDS.contains(&first)
+            && !first.starts_with('-')
+            && let Some(cfg) = config
+            && cfg.resolve_command(first).is_some()
+        {
+            args.insert(1, "alias".to_string());
         }
     }
     args
@@ -173,7 +212,9 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let args = rewrite_short_flags(args);
+    let (config, _source) = Config::load()?;
+
+    let args = rewrite_args(args, Some(&config));
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(err) => {
@@ -214,8 +255,6 @@ fn main() -> anyhow::Result<()> {
         println!("{}", format_help_with_inline_aliases(&help_str));
         return Ok(());
     };
-
-    let (config, _source) = Config::load()?;
 
     match command {
         Commands::New {
@@ -357,13 +396,14 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("Unknown recipe or command '{recipe}'. Run `fa list` to see available options.");
             }
         }
-        Commands::Alias { name } => {
+        Commands::Alias { name, args } => {
             let (_category, _key, cmd) = config.resolve_command(&name).ok_or_else(|| {
                 anyhow::anyhow!("Unknown command '{name}'. Run `fa list` to see available aliases.")
             })?;
             ensure_trusted()?;
-            preflight(&cmd.command)?;
-            run_shell(&cmd.command)?;
+            let effective_command = crate::templating::substitute_command_args(&cmd.command, &args);
+            preflight(&effective_command)?;
+            run_shell(&effective_command)?;
         }
         Commands::SelfUpdate { dry_run } => {
             if dry_run {
@@ -555,6 +595,95 @@ mod tests {
     fn civil_from_days_epoch_should_be_1970_01_01() {
         let (y, m, d) = civil_from_days(0);
         assert_eq!((y, m, d), (1970, 1, 1));
+    }
+
+    #[test]
+    fn rewrite_args_should_rewrite_short_flags() {
+        let args = vec!["fa".to_string(), "-n".to_string(), "recipe".to_string(), "myapp".to_string()];
+        let rewritten = rewrite_args(args, None);
+        assert_eq!(rewritten, vec!["fa", "new", "recipe", "myapp"]);
+
+        let args = vec!["fa".to_string(), "-a".to_string(), "status".to_string()];
+        let rewritten = rewrite_args(args, None);
+        assert_eq!(rewritten, vec!["fa", "alias", "status"]);
+    }
+
+    #[test]
+    fn rewrite_args_should_rewrite_direct_alias_invocation() {
+        let mut config = Config::default();
+        let mut git_cmds = std::collections::BTreeMap::new();
+        git_cmds.insert(
+            "status".to_string(),
+            crate::config::Command {
+                command: "git status".to_string(),
+                description: Some("Repo status".to_string()),
+                platform: None,
+                aliases: vec!["st".to_string()],
+            },
+        );
+        config.aliases.insert("git".to_string(), git_cmds);
+
+        // Canonical alias name
+        let args = vec!["fa".to_string(), "status".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(rewritten, vec!["fa", "alias", "status"]);
+
+        // Short alias
+        let args = vec!["fa".to_string(), "st".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(rewritten, vec!["fa", "alias", "st"]);
+
+        // Builtin commands must NOT be rewritten
+        let args = vec!["fa".to_string(), "new".to_string(), "recipe".to_string(), "app".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(rewritten, vec!["fa", "new", "recipe", "app"]);
+    }
+
+    #[test]
+    fn cli_alias_should_accept_passthrough_arguments() {
+        let args = vec![
+            "fa".to_string(),
+            "alias".to_string(),
+            "avif".to_string(),
+            "in.jpg".to_string(),
+            "out.avif".to_string(),
+        ];
+        let cli = Cli::try_parse_from(args).expect("fa alias should accept passthrough arguments");
+        match cli.command {
+            Some(Commands::Alias { name, args }) => {
+                assert_eq!(name, "avif");
+                assert_eq!(args, vec!["in.jpg", "out.avif"]);
+            }
+            _ => panic!("Expected Commands::Alias with args"),
+        }
+    }
+
+    #[test]
+    fn rewrite_args_should_preserve_arguments_for_direct_alias() {
+        let mut config = Config::default();
+        let mut wrapper = std::collections::BTreeMap::new();
+        wrapper.insert(
+            "avif".to_string(),
+            crate::config::Command {
+                command: "avifenc -s 0 -q 50".to_string(),
+                description: Some("Convert to avif".to_string()),
+                platform: None,
+                aliases: vec![],
+            },
+        );
+        config.aliases.insert("wrapper".to_string(), wrapper);
+
+        let args = vec![
+            "fa".to_string(),
+            "avif".to_string(),
+            "ticket.jpeg".to_string(),
+            "ticket.avif".to_string(),
+        ];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(
+            rewritten,
+            vec!["fa", "alias", "avif", "ticket.jpeg", "ticket.avif"]
+        );
     }
 
     #[test]

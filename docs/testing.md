@@ -36,6 +36,20 @@ Para evitar tests tautológicos, inútiles o falsos positivos (tests que aprueba
 
 ---
 
+## Non-Blocking Tests & Zero-Hang Policy
+
+> [!CAUTION]
+> **Prohibición estricta de bloqueos interactivos en la suite de pruebas.**
+
+1. **Sin esperas en `stdin` ni llamadas interactivas:**
+   - Ningún test unitario puede solicitar datos por entrada estándar (`std::io::stdin()`) ni quedarse esperando respuestas en `prompt_yes_no`.
+   - Cualquier función que acepte confirmación interactiva (`perform_self_uninstall`, etc.) DEBE ser testeada con sus banderas automatizadas (`auto_confirm: true` o `auto_reject: true`).
+
+2. **Detección, resolución inmediata y reporte:**
+   - Si una ejecución de `cargo test` excede el tiempo esperado o queda colgada, el asistente DEBE cancelar el proceso inmediatamente, diagnosticar la causa raíz, corregir el código/test para garantizar que sea 100% no-bloqueante o informarlo de inmediato al usuario en lugar de dejar el comando en segundo plano sin resolver.
+
+---
+
 ## Planned Unit Test Inventory & Scope
 
 | Test Name | Module | Primary Purpose & Verification |

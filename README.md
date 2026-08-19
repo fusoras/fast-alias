@@ -81,10 +81,13 @@ deploy = { command = "node --run build && rsync -av dist/ server:/srv/www", desc
 Now, from inside any project:
 
 ```bash
-fa alias deploy   # run by canonical name
-fa alias dep      # run by alias
-fa -a dep         # run by alias (shorthand)
+fa alias deploy   # run by canonical name (recommended)
+fa -a dep         # run by alias shorthand (recommended)
+fa dep            # direct execution (quick alternative)
 ```
+
+> [!TIP]
+> **Recomendación de uso:** Se recomienda utilizar `fa alias <name>` o la forma abreviada `fa -a <name>`. Ejecutar directamente `fa <name>` es una alternativa rápida y conveniente, pero ten en cuenta que si en el futuro se añade un comando nativo a `fa` con el mismo nombre que tu alias, el comando nativo tendrá prioridad y el alias dejará de ejecutarse de forma directa.
 
 Aliases are grouped by category, so you can organize your workflow in sections:
 
@@ -99,14 +102,30 @@ free = { command = "free -h", description = "Memoria disponible" }
 
 ```bash
 fa alias status   # git status
-fa alias free     # free -h
-```
-
 Categories are ordinary TOML sections, so they can live in separate modular files too — e.g. a `git.toml` under `recipes.d/` containing only `[aliases.git]`.
+
+### Positional Arguments & Passthrough
+
+Aliases accept parameters and arguments dynamically:
+
+1. **Positional Arguments (`$1`, `$2`, etc. o `{{1}}`, `{{2}}`):**
+   ```toml
+   [aliases.wrapper]
+   avif = { command = "avifenc -s 0 -q ${3:-50} $1 -o $2", description = "Convertir imagen a .avif con calidad por defecto" }
+   ```
+   ```bash
+   fa avif imagen.jpg imagen.avif       # Ejecuta: avifenc -s 0 -q '50' 'imagen.jpg' -o 'imagen.avif'
+   fa avif imagen.jpg imagen.avif 80    # Ejecuta: avifenc -s 0 -q '80' 'imagen.jpg' -o 'imagen.avif'
+   ```
+
+2. **Default Values (`${N:-valor}` o `{{N:-valor}}`):**
+   Permite definir valores por defecto (números o texto) que se utilizarán cuando el usuario no provea ese argumento específico.
+
+3. **Passthrough automático:** Si el comando no contiene variables posicionales, los argumentos se añaden automáticamente al final de forma segura.
 
 ### Rules to remember
 
 - Aliases must be **explicitly defined** — `fa` never invents or infers them.
-- Names and aliases are matched case-insensitively (`fa -a DEP` works).
+- Names and aliases are matched case-insensitively (`fa -a DEP` or `fa DEP` works).
 - `fa list` shows scaffold recipes under **Recipes** and general-purpose commands under **Aliases** (ordered by category); `fa show <alias>` prints the command that would run.
 - The same `[TRUST]` confirmation that guards recipe steps also guards command aliases from your config files.

@@ -140,6 +140,29 @@ fa -a free                   # short-flag shorthand
 
 Aliases are grouped by their `[aliases]` category (e.g. `git`, `sistema`, `deploy`). `fa list` and `fa search` display them grouped accordingly.
 
+#### Positional Arguments & Argument Passthrough
+
+`fa` allows dynamic placement of arguments in alias definitions using standard bash variables (`$1`, `$2`, `${1}`, `$@`, `$*`) or template variables (`{{1}}`, `{{2}}`):
+
+```toml
+[aliases.wrapper]
+# Using $1 and $2:
+avif = { command = "avifenc -s 0 -q 50 $1 -o $2", description = "Convert image to .avif" }
+
+# Or using template braces:
+diff-dirs = { command = "diff -u {{1}} {{2}}", description = "Compare directories" }
+```
+
+When invoked:
+```bash
+fa avif input.jpg output.avif
+# Executes: avifenc -s 0 -q 50 'input.jpg' -o 'output.avif'
+```
+
+- **Positional variables:** Replaced with corresponding argument index (shell-quoted to prevent injection).
+- **Default values (`${N:-val}` o `{{N:-val}}`):** When the `N`-th argument is omitted, the default fallback value (numbers or string) is used automatically (e.g. `avifenc -q ${3:-50} $1 -o $2`).
+- **Passthrough mode:** If no positional variables are present in the command template, all trailing arguments are automatically shell-quoted and appended to the end.
+
 ### 6.4 Dependency Preflight
 
 Before running any recipe command (`create`, `[[steps]]`) or alias, `fa` inspects the shell command, extracts the applications it invokes (first token of each `&&`/`||`/`;`/`|` segment, shell builtins excluded), and checks each exists on `PATH`. If a required application is missing, `fa` aborts **before** executing anything and prints a friendly diagnostic instead of the raw shell error:

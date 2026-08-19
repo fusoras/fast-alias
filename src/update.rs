@@ -362,7 +362,7 @@ mod tests {
 
         #[test]
         fn self_uninstall_should_preview_without_deleting_in_dry_run() {
-            let result = perform_self_uninstall(true, false, false);
+            let result = perform_self_uninstall(true, true, false);
             assert!(result.is_ok(), "Self-uninstall dry-run should complete cleanly");
         }
 
