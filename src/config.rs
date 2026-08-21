@@ -95,6 +95,10 @@ pub struct Recipe {
     pub create: Option<Create>,
     pub pm: Option<Pm>,
     pub tooling: Option<Tooling>,
+    /// When true, the engine strips floating range prefixes (`^`/`~`) from
+    /// `package.json` dependency versions after all installs complete.
+    #[serde(default)]
+    pub pin_versions: Option<bool>,
     #[serde(default)]
     pub files: BTreeMap<String, FileSpec>,
     #[serde(default)]

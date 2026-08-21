@@ -1,6 +1,7 @@
 mod colors;
 mod config;
 mod engine;
+mod pinning;
 mod platform;
 mod spinner;
 mod state;
@@ -276,6 +277,7 @@ fn main() -> anyhow::Result<()> {
                 variant,
                 dry_run,
                 no_install,
+                pin_versions: config.recipes.get(key.as_str()).and_then(|r| r.pin_versions).unwrap_or(false),
             };
             let new_result = run_new(&config, &opts);
 

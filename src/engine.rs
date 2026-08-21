@@ -15,6 +15,9 @@ pub struct NewOptions {
     pub variant: Option<String>,
     pub dry_run: bool,
     pub no_install: bool,
+    /// When true, the engine strips floating range prefixes from dependency
+    /// manifests after all installs complete.
+    pub pin_versions: bool,
 }
 
 /// Result of a `fa new` run: whether the project should be registered in
@@ -289,8 +292,9 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
 
         // 3. Steps
         if !recipe.steps.is_empty() {
+            let last_install_idx = recipe.steps.iter().rposition(|s| s.install);
             println!("\nSteps:");
-            for step in &recipe.steps {
+            for (idx, step) in recipe.steps.iter().enumerate() {
                 if let Some(platform) = &step.platform
                     && platform != "all" && !platform_matches(platform)? {
                         continue;
@@ -311,6 +315,30 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                     } else {
                         println!("  {BOLD_GREEN}✓{RESET} {label}");
                         run_shell(&rendered)?;
+                    }
+                }
+                if Some(idx) == last_install_idx && opts.pin_versions {
+                    if opts.dry_run {
+                        println!("  {DIM}[Dry-Run]{RESET} Would pin versions in package.json");
+                    } else {
+                        println!("\nPinning exact versions:");
+                        let cwd = std::env::current_dir().unwrap_or_default();
+                        for r in crate::pinning::pin_project(&cwd) {
+                            match &r.status {
+                                crate::pinning::PinStatus::Pinned(n) => {
+                                    println!("  {BOLD_GREEN}✓{RESET} {} — removed prefix from {n} version(s)", r.manifest);
+                                }
+                                crate::pinning::PinStatus::Unchanged => {
+                                    println!("  {DIM}−{RESET} {} — unchanged", r.manifest);
+                                }
+                                crate::pinning::PinStatus::NotFound => {
+                                    println!("  {DIM}−{RESET} {} — not found (skipped)", r.manifest);
+                                }
+                                crate::pinning::PinStatus::Error(e) => {
+                                    println!("  {BOLD_YELLOW}⚠{RESET} {} — {e}", r.manifest);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -640,6 +668,7 @@ mod tests {
             variables: Default::default(),
             steps: vec![],
             final_message: None,
+            pin_versions: None,
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -653,6 +682,7 @@ mod tests {
             variant: None,
             dry_run: false,
             no_install: true,
+            pin_versions: false,
         }
     }
 
@@ -663,6 +693,7 @@ mod tests {
             variant: None,
             dry_run: false,
             no_install: false,
+            pin_versions: false,
         }
     }
 
@@ -722,6 +753,7 @@ mod tests {
             variables: Default::default(),
             steps: vec![],
             final_message: None,
+            pin_versions: None,
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -926,6 +958,7 @@ mod tests {
             variables: Default::default(),
             steps: vec![],
             final_message: None,
+            pin_versions: None,
         };
         let line = format_list_line("demo", &recipe);
         assert!(line.contains("demo"));
@@ -950,6 +983,7 @@ mod tests {
             variables: Default::default(),
             steps: vec![],
             final_message: None,
+            pin_versions: None,
         };
         let line = format_list_line("demo", &recipe);
         assert!(line.contains("demo, d, dm"), "Recipe aliases must be formatted comma-separated alongside key: got '{line}'");

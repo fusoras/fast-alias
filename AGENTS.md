@@ -39,6 +39,7 @@ For detailed architecture, roadmap, CLI reference, recipe schema, unit testing, 
 - Use concise bullet points for agent rules and documentation.
 - Present user-facing commands using the compiled binary (`fa <command>`) rather than `cargo run --`.
 - **Recipe Player Principle**: The engine must stay "dumb" — all stack/toolchain complexity lives in the TOML recipes, never hardcoded in the binary. No recipe-specific logic in code.
+- **Short Commands Principle**: The CLI must stay as short as possible. NEVER add parameters to existing commands — use TOML config toggles instead (e.g. `pin_versions = true` in recipes.toml). Every new flag lengthens the command for all users forever. If a feature can live in config, it must live in config.
 - **Security Governance & Secret Leak Prevention**:
   - NEVER commit API keys, private keys (`id_*`), certificates (`*.key`, `*.pem`), or `.env` files within project directories. Templates and recipes live in `~/.config/fa/` on disk — no config is embedded in the release binary.
   - Never log runtime tokens (e.g. `GITHUB_TOKEN`) in stdout, stderr, or `state.toml`.

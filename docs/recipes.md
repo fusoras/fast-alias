@@ -37,31 +37,32 @@ description = "A stack bootstrap with tooling"
 aliases     = ["mr"]
 language    = "web · typescript"
 variants    = ["pnpm", "bun", "npm"]
+pin_versions = true                                  # strip ^/~ from package.json after installs (default: false)
 
-[variables]                                  # prompts with defaults
+[recipes.my-recipe.variables]                        # prompts with defaults
 name   = { prompt = "Project name", default = "app" }
 author = { prompt = "Author", default = "" }
 
-[create]                                     # hybrid: official CLI OR template dir
-command = "pnpm create app@latest -- --template basics --no-install"
+[recipes.my-recipe.create]                           # hybrid: official CLI OR template dir
+command = "pnpm create app@latest {{name}} -- --template basics --no-install"
 # OR:
 # template_dir = "templates/my-recipe/"
 
-[pm]                                         # package-manager commands per variant
+[recipes.my-recipe.pm]                               # package-manager commands per variant
 install     = { pnpm = "pnpm add", bun = "bun add", npm = "npm install" }
 dev_install = { pnpm = "pnpm add -D", bun = "bun add -d", npm = "npm install -D" }
 
-[tooling]                                    # linter / formatter / typechecker
-linter    = { tool = "oxlint", files = ["oxlint.json"], script = "lint" }
-formatter = { tool = "prettier", files = [".prettierrc"], script = "format" }
+[recipes.my-recipe.tooling]                          # linter / formatter / typechecker
+linter    = { tool = "oxlint", script = "lint" }
+formatter = { tool = "prettier", script = "format" }
 check     = { tool = "tsc", script = "check" }
 
-[files]                                      # files: inline, from template or templated
+[recipes.my-recipe.files]                            # files: inline, from template or templated
 "tsconfig.json"      = { from = "templates/tsconfig.strict.json" }
 ".editorconfig"      = { inline = "root = true ..." }
 "src/pages/{{name}}.ts" = { template = "templates/page.ts.tpl" }
 
-[[steps]]                                    # post-install commands (like dotss post_install_commands)
+[[recipes.my-recipe.steps]]                          # post-install commands
 command = "git init"
 description = "Initialize git repository"
 ```
@@ -94,6 +95,16 @@ Each key is the destination path (templatable with `{{var}}`). Value is one of:
 ## Variants
 
 Each recipe can declare `variants` (e.g. `pnpm`, `bun`, `npm`). Variants select the matching `[pm]` command set and may override `[tooling]` and `[files]`. The user selects a variant with `-v`/`--variant`, defaulting to the first declared variant. Variants are NOT aliases: aliases are short names for the recipe itself.
+
+## Version Pinning (`pin_versions`)
+
+When `pin_versions = true`, the engine strips floating range prefixes (`^`/`~`) from `package.json` dependency versions after all installs complete, right before `git init` so the initial commit includes exact versions. Toggle by adding or removing the line in `[recipes.<name>]`:
+
+```toml
+[recipes.astro]
+pin_versions = true    # strip ^ and ~ → exact versions
+# omit or set false to keep defaults
+```
 
 ## Alias Governance
 
