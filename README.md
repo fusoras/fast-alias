@@ -58,6 +58,55 @@ On first run (no `~/.config/fa/` yet) `fa` creates it with a small example confi
 > [!WARNING]
 > Commands in recipes execute arbitrary shell on your machine. `fa` asks for a one-time `[TRUST]` confirmation before running recipe steps or command aliases, and remembers it per config file. Only define commands you trust.
 
+## Declaring a recipe
+
+Scaffolding recipes live under `[recipes.<name>]` in your `~/.config/fa/recipes.toml` (or in modular files under `~/.config/fa/recipes.d/*.toml`). A recipe defines the stack metadata, language/tooling, package manager commands, configuration files, and post-scaffold steps.
+
+### Example — Node / Web Recipe (Vite)
+
+```toml
+[recipes.vite-react]
+name        = "Vite React TypeScript"
+description = "React SPA with Vite, TypeScript and Tailwind"
+aliases     = ["vr"]
+language    = "web · react · typescript"
+variants    = ["pnpm", "npm", "bun"]
+pin_versions = true                                  # strip ^/~ from package.json after installs
+
+[recipes.vite-react.create]
+command = "pnpm create vite@latest {{name}} --template react-ts"
+
+[recipes.vite-react.pm]
+install     = { pnpm = "pnpm add", npm = "npm install", bun = "bun add" }
+dev_install = { pnpm = "pnpm add -D", npm = "npm install -D", bun = "bun add -d" }
+
+[recipes.vite-react.tooling]
+linter    = { tool = "oxlint", script = "lint" }
+formatter = { tool = "prettier", script = "format" }
+
+[recipes.vite-react.files]
+"tsconfig.json" = { from = "templates/tsconfig.json" }
+
+[[recipes.vite-react.steps]]
+command = "git init"
+description = "Initialize git repository"
+```
+
+### Version Pinning (`pin_versions`)
+
+When scaffolding modern projects, package managers often install dependencies using floating ranges (`^1.2.3` or `~1.2.3`), which can cause unexpected dependency drift over time.
+
+By adding `pin_versions = true` to your recipe:
+
+- **Exact Version Locking**: `fa` automatically strips floating range prefixes (`^` and `~`), turning them into exact pinned versions (e.g. `"^4.17.21"` becomes `"4.17.21"`).
+- **Current Scope**: Currently supported natively for **Node.js (`package.json`)**. It processes `dependencies`, `devDependencies`, and `optionalDependencies` safely in place while preserving exact indentation, key order, and non-floating specs (like `workspace:*`, `catalog:`, git URLs, or file paths).
+- **Execution Timing**: Pinning runs automatically after all package installations complete and right before post-install `[[steps]]` (such as `git init`), guaranteeing that your initial git commit records exact, reproducible dependencies.
+
+```toml
+[recipes.my-recipe]
+pin_versions = true    # Strip ^ and ~ from package.json (default: false)
+```
+
 ## Declaring a command alias
 
 Beyond scaffolding, `fa` is a categorized alternative to Bash aliases. General-purpose commands live in **top-level `[aliases]` sections — one per category** (e.g. `git`, `sistema`, `deploy`), completely independent from scaffold recipes. Run them from anywhere with `fa alias <alias>`.
@@ -102,6 +151,8 @@ free = { command = "free -h", description = "Memoria disponible" }
 
 ```bash
 fa alias status   # git status
+```
+
 Categories are ordinary TOML sections, so they can live in separate modular files too — e.g. a `git.toml` under `recipes.d/` containing only `[aliases.git]`.
 
 ### Positional Arguments & Passthrough
@@ -125,7 +176,6 @@ Aliases accept parameters and arguments dynamically:
 
 ### Rules to remember
 
-- Aliases must be **explicitly defined** — `fa` never invents or infers them.
-- Names and aliases are matched case-insensitively (`fa -a DEP` or `fa DEP` works).
+- **Case-insensitive matching**: Names and aliases ignore case (e.g. if defined as `dep`, `fa dep`, `fa DEP`, and `fa -a Dep` work identically).
 - `fa list` shows scaffold recipes under **Recipes** and general-purpose commands under **Aliases** (ordered by category); `fa show <alias>` prints the command that would run.
 - The same `[TRUST]` confirmation that guards recipe steps also guards command aliases from your config files.
