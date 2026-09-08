@@ -67,6 +67,7 @@ For detailed architecture, roadmap, CLI reference, recipe schema, unit testing, 
   - **User Defines Versions Exclusively**: The user exclusively determines, authorizes, and defines version numbers (e.g. `v0.1.0-beta.1`) and release triggers. The assistant MAY ONLY suggest version numbers when asked, and MUST NEVER increment or change version numbers independently.
   - Do NOT increment or bump the version number for intermediate local commits or small feature/bugfix edits.
   - **Bump Trigger**: Version updates (`Cargo.toml`, `Cargo.lock`, `install.sh`, `AGENTS.md`) are executed ONLY when the user explicitly defines the target version and instructs to bump/publish.
+  - **CHANGELOG Governance**: Changes are added to `CHANGELOG.md` ONLY with explicit user approval that the result works and they liked it. Never document in `CHANGELOG.md` unvalidated or unapproved work.
 - **Strict Test Sensitivity & Mandatory Failure Verification (Red-Before-Green Rule)**:
   - NEVER accept a new or modified unit test that passes on the first attempt without proving it can fail.
   - Every new/updated test MUST be tested against broken implementation logic (mutation testing or pre-implementation failure) to verify it actively detects code breakage (RED state).
