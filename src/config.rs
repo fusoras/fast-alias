@@ -16,7 +16,7 @@ name = "Example"
 description = "Example recipe — replace it with your own"
 language = "shell"
 
-# General-purpose aliases, grouped by category. Run them with `fa alias <name>`.
+# General-purpose aliases, grouped by section. Run them with `fa alias <name>`.
 [aliases.demo]
 hello = { command = "echo 'Hello from fa!'", description = "Example alias" }
 "##;
@@ -115,26 +115,26 @@ pub struct Recipe {
 pub struct Config {
     #[serde(default)]
     pub recipes: BTreeMap<String, Recipe>,
-    /// General-purpose executable commands, organized by category. Each entry
-    /// maps a category name (e.g. `git`, `sistema`) to its commands, so aliases
+    /// General-purpose executable commands, organized by section. Each entry
+    /// maps a section name (e.g. `git`, `sistema`) to its commands, so aliases
     /// live independently of scaffolding recipes.
     #[serde(default)]
     pub aliases: BTreeMap<String, BTreeMap<String, Command>>,
 }
 
 impl Config {
-    /// Fallback category label used only when a TOML section name arrives
-    /// empty/whitespace. Real categories always come from `[aliases.<name>]`
+    /// Fallback section label used only when a TOML section name arrives
+    /// empty/whitespace. Real sections always come from `[aliases.<name>]`
     /// sections at runtime (Recipe Player Principle); nothing is hardcoded.
-    pub const FALLBACK_ALIAS_CATEGORY: &'static str = "general";
+    pub const FALLBACK_ALIAS_SECTION: &'static str = "general";
 
-    /// Returns the display name for an alias category, falling back to
-    /// [`Self::FALLBACK_ALIAS_CATEGORY`] for empty/whitespace names.
-    pub fn display_category(category: &str) -> &str {
-        if category.trim().is_empty() {
-            Self::FALLBACK_ALIAS_CATEGORY
+    /// Returns the display name for an alias section, falling back to
+    /// [`Self::FALLBACK_ALIAS_SECTION`] for empty/whitespace names.
+    pub fn display_section(section: &str) -> &str {
+        if section.trim().is_empty() {
+            Self::FALLBACK_ALIAS_SECTION
         } else {
-            category
+            section
         }
     }
 
@@ -232,10 +232,10 @@ impl Config {
                 config.recipes.insert(recipe_name, recipe);
             }
 
-            for (category, commands) in sub_config.aliases {
+            for (section, commands) in sub_config.aliases {
                 config
                     .aliases
-                    .entry(category)
+                    .entry(section)
                     .or_default()
                     .extend(commands);
             }
@@ -298,23 +298,23 @@ impl Config {
     }
 
     /// Resolves an input query to its full command definition, returning
-    /// `(category, command_key, &Command)`.
+    /// `(section, command_key, &Command)`.
     pub fn resolve_command(&self, query: &str) -> Option<(String, String, &Command)> {
-        for (category, commands) in &self.aliases {
+        for (section, commands) in &self.aliases {
             if let Some((key, command)) = find_command(commands, query) {
-                return Some((category.clone(), key.clone(), command));
+                return Some((section.clone(), key.clone(), command));
             }
         }
         None
     }
 
-    /// Returns (category, command_key, &Command) for every command in the
+    /// Returns (section, command_key, &Command) for every command in the
     /// alias catalog.
     pub fn all_commands(&self) -> Vec<(&str, &String, &Command)> {
         let mut out = Vec::new();
-        for (category, commands) in &self.aliases {
+        for (section, commands) in &self.aliases {
             for (command_key, command) in commands {
-                out.push((category.as_str(), command_key, command));
+                out.push((section.as_str(), command_key, command));
             }
         }
         out
@@ -405,7 +405,7 @@ check = { command = "node --run check", description = "Run checks" }
     }
 
     #[test]
-    fn alias_categories_should_resolve_across_sections() {
+    fn alias_sections_should_resolve_across_sections() {
         let config: Config = toml::from_str(
             r#"
 [recipes.demo]
@@ -420,28 +420,28 @@ gco = { command = "git checkout {{branch}}", description = "Switch branch", alia
 free = { command = "free -h", description = "Free memory" }
 "#,
         )
-        .expect("Should parse config with alias categories");
+        .expect("Should parse config with alias sections");
 
         assert_eq!(
-            config.resolve_command("gco").map(|(cat, key, _)| (cat, key)),
+            config.resolve_command("gco").map(|(section, key, _)| (section, key)),
             Some(("git".to_string(), "gco".to_string()))
         );
         assert_eq!(
-            config.resolve_command("co").map(|(cat, key, _)| (cat, key)),
+            config.resolve_command("co").map(|(section, key, _)| (section, key)),
             Some(("git".to_string(), "gco".to_string()))
         );
         assert_eq!(
-            config.resolve_command("free").map(|(cat, key, _)| (cat, key)),
+            config.resolve_command("free").map(|(section, key, _)| (section, key)),
             Some(("sistema".to_string(), "free".to_string()))
         );
         assert_eq!(
-            config.resolve_command("status").map(|(cat, key, _)| (cat, key)),
+            config.resolve_command("status").map(|(section, key, _)| (section, key)),
             Some(("git".to_string(), "status".to_string()))
         );
         assert!(config.resolve_command("ghost").is_none());
 
         let grouped = config.all_commands();
-        assert_eq!(grouped.len(), 3, "Both alias categories are listed");
+        assert_eq!(grouped.len(), 3, "Both alias sections are listed");
     }
 
     #[test]

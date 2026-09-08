@@ -109,7 +109,7 @@ pin_versions = true    # Strip ^ and ~ from package.json (default: false)
 
 ## Declaring a command alias
 
-Beyond scaffolding, `fa` is a categorized alternative to Bash aliases. General-purpose commands live in **top-level `[aliases]` sections — one per category** (e.g. `git`, `sistema`, `deploy`), completely independent from scaffold recipes. Run them from anywhere with `fa alias <alias>`.
+Beyond scaffolding, `fa` is a section-grouped alternative to Bash aliases. General-purpose commands live in **top-level `[aliases]` sections — one per section** (e.g. `git`, `sistema`, `deploy`), completely independent from scaffold recipes. Run them from anywhere with `fa alias <alias>`.
 
 Each alias has:
 
@@ -138,7 +138,7 @@ fa dep            # direct execution (quick alternative)
 > [!TIP]
 > **Recomendación de uso:** Se recomienda utilizar `fa alias <name>` o la forma abreviada `fa -a <name>`. Ejecutar directamente `fa <name>` es una alternativa rápida y conveniente, pero ten en cuenta que si en el futuro se añade un comando nativo a `fa` con el mismo nombre que tu alias, el comando nativo tendrá prioridad y el alias dejará de ejecutarse de forma directa.
 
-Aliases are grouped by category, so you can organize your workflow in sections:
+Aliases are grouped by section, so you can organize your workflow in sections:
 
 ```toml
 [aliases.git]
@@ -153,7 +153,7 @@ free = { command = "free -h", description = "Memoria disponible" }
 fa alias status   # git status
 ```
 
-Categories are ordinary TOML sections, so they can live in separate modular files too — e.g. a `git.toml` under `recipes.d/` containing only `[aliases.git]`.
+Sections are ordinary TOML sections, so they can live in separate modular files too — e.g. a `git.toml` under `recipes.d/` containing only `[aliases.git]`.
 
 ### Positional Arguments & Passthrough
 
@@ -177,5 +177,5 @@ Aliases accept parameters and arguments dynamically:
 ### Rules to remember
 
 - **Case-insensitive matching**: Names and aliases ignore case (e.g. if defined as `dep`, `fa dep`, `fa DEP`, and `fa -a Dep` work identically).
-- `fa list` shows scaffold recipes under **Recipes** and general-purpose commands under **Aliases** (ordered by category); `fa show <alias>` prints the command that would run.
+- `fa list` shows scaffold recipes under **Recipes** and general-purpose commands under **Aliases** (ordered by section); `fa show <alias>` prints the command that would run.
 - The same `[TRUST]` confirmation that guards recipe steps also guards command aliases from your config files.

@@ -7,7 +7,7 @@
 ## Core Features & Commands
 
 - **`fa new <recipe> <name>`**: Scaffolds a new project from the given recipe into a directory named `<name>` (or the current directory). Variant selection via `-v`/`--variant` (e.g. `fa new my-recipe app -v bun`).
-- **`fa list`**: Displays recipes in a concise single-line format, plus aliases grouped by `[aliases.<category>]` section with one `<category>:` header per group.
+- **`fa list`**: Displays recipes in a concise single-line format, plus aliases grouped by `[aliases.<section>]` section with one `<section>:` header per group.
 - **`fa search <query>`**: Searches recipes by name, alias, language, or variant, printing matches in the same single-line format as `list`.
 - **`fa show <recipe>`**: Displays full recipe details: description, language, variants, create strategy, tooling, files to generate, and steps.
 - **Dependency Preflight**: Before running any recipe command or alias, `fa` extracts the applications the shell command invokes and verifies they exist on `PATH`; a missing application aborts with a friendly, actionable error before anything executes.

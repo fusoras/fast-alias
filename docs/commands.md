@@ -8,9 +8,9 @@
 | ------- | ------- | ------- |
 | `fa new <recipe> <name>` | Scaffolds a new project from the recipe into directory `<name>` | `-v` / `--variant` (e.g. `pnpm`, `bun`, `npm`), `-d` / `--dry-run` to preview, `--no-install` to skip dependency installation |
 | `fa list` | Displays available recipes and grouped aliases in a concise single-line format (routed through system `$PAGER` / `less` when on TTY) | `-sh` / `--show-hidden` to display unsupported recipes |
-| `fa search <query>` | Searches recipes and aliases by name, alias, category, language, or variant and prints matches in the same format as `list` | Query is matched case-insensitively |
+| `fa search <query>` | Searches recipes and aliases by name, alias, section, language, or variant and prints matches in the same format as `list` | Query is matched case-insensitively |
 | `fa show <recipe>` | Displays full recipe details: description, language, variants, tooling, files, and steps | Accepts recipe name or alias |
-| `fa alias <name> [args...]` | Runs a general-purpose alias from the `[aliases]` catalog (category-based) | `--dry-run` / `-d` to preview the resolved command; args fill `{{var}}` placeholders or pass through shell-quoted |
+| `fa alias <name> [args...]` | Runs a general-purpose alias from the `[aliases]` catalog (section-based) | `--dry-run` / `-d` to preview the resolved command; args fill `{{var}}` placeholders or pass through shell-quoted |
 | `fa sync` | Fetches the latest recipe catalog from the repository without recompiling | `-d` / `--dry-run` to preview |
 | `fa self-update` | Checks GitHub Releases and updates the application binary in-place | `-d` / `--dry-run` to preview version update without downloading |
 | `fa self-uninstall` | Safely removes `fa` binary executable and state/config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config, `-d` / `--dry-run` to preview |
@@ -122,7 +122,7 @@ fa search rust
 my-recipe (pnpm / bun / npm) · web · typescript [apply]
 ```
 
-### 5. Run Alias (Categorized Commands)
+### 5. Run Alias (Commands by Section)
 **Command**:
 ```bash
 fa alias gco main            # git checkout 'main'
@@ -138,7 +138,7 @@ fa -a free                   # short-flag shorthand
   [Alias] git · gco
 ```
 
-Aliases are grouped by their `[aliases]` category (e.g. `git`, `sistema`, `deploy`). `fa list` and `fa search` display them grouped accordingly.
+Aliases are grouped by their `[aliases]` section (e.g. `git`, `sistema`, `deploy`). `fa list` and `fa search` display them grouped accordingly.
 
 #### Positional Arguments & Argument Passthrough
 

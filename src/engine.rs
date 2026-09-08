@@ -599,28 +599,28 @@ pub fn format_command_line(command_key: &str, command: &crate::config::Command) 
     format!("{BOLD_BLUE}{name}{RESET} · {DIM_GRAY}{description}{RESET}")
 }
 
-/// Formats an alias category header for `fa list` (`<category>:`).
-/// The name comes from the TOML `[aliases.<category>]` section at runtime;
-/// an empty section name falls back to [`Config::FALLBACK_ALIAS_CATEGORY`].
-pub fn format_category_header(category: &str) -> String {
-    format!("  {}:", Config::display_category(category))
+/// Formats an alias section header for `fa list` (`<section>:`).
+/// The name comes from the TOML `[aliases.<section>]` section at runtime;
+/// an empty section name falls back to [`Config::FALLBACK_ALIAS_SECTION`].
+pub fn format_section_header(section: &str) -> String {
+    format!("  {}:", Config::display_section(section))
 }
 
-/// Returns `fa list` alias lines grouped by category: one `<category>:` header
-/// per non-empty `[aliases.<category>]` section, followed by its single-line
+/// Returns `fa list` alias lines grouped by section: one `<section>:` header
+/// per non-empty `[aliases.<section>]` section, followed by its single-line
 /// command entries, with a blank line between groups for readability.
 /// Iteration follows `BTreeMap` order, so output is deterministic. Recipes are
 /// intentionally untouched.
 pub fn format_alias_groups(config: &Config) -> Vec<String> {
     let mut lines = Vec::new();
-    for (category, commands) in &config.aliases {
+    for (section, commands) in &config.aliases {
         if commands.is_empty() {
             continue;
         }
         if !lines.is_empty() {
             lines.push(String::new());
         }
-        lines.push(format_category_header(category));
+        lines.push(format_section_header(section));
         for (command_key, command) in commands {
             lines.push(format!("    {}", format_command_line(command_key, command)));
         }
@@ -1034,7 +1034,7 @@ mod tests {
     }
 
     #[test]
-    fn alias_list_should_group_by_category() {
+    fn alias_list_should_group_by_section() {
         let config: Config = toml::from_str(
             r#"
 [recipes.demo]
@@ -1049,7 +1049,7 @@ gco = { command = "git checkout {{branch}}", description = "Switch branch", alia
 free = { command = "free -h", description = "Free memory" }
 "#,
         )
-        .expect("Should parse config with alias categories");
+        .expect("Should parse config with alias sections");
 
         let lines = format_alias_groups(&config);
         let plain: Vec<String> = lines
@@ -1083,7 +1083,7 @@ free = { command = "free -h", description = "Free memory" }
             "sistema group must contain indented free, got: {:?}",
             plain[5]
         );
-        // Deterministic order: BTreeMap sorts categories, commands sort by key.
+        // Deterministic order: BTreeMap sorts sections, commands sort by key.
         assert!(plain.iter().position(|l| l == "  git:").unwrap()
             < plain.iter().position(|l| l == "  sistema:").unwrap());
     }

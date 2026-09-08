@@ -388,14 +388,14 @@ fn main() -> anyhow::Result<()> {
         Commands::Show { recipe } => {
             if let Some(key) = config.resolve_recipe_key(&recipe) {
                 show_recipe(&config, key);
-            } else if let Some((category, key, _)) = config.resolve_command(&recipe) {
-                show_command(&config, &category, &key);
+            } else if let Some((section, key, _)) = config.resolve_command(&recipe) {
+                show_command(&config, &section, &key);
             } else {
                 anyhow::bail!("Unknown recipe or command '{recipe}'. Run `fa list` to see available options.");
             }
         }
         Commands::Alias { name, args } => {
-            let (_category, _key, cmd) = config.resolve_command(&name).ok_or_else(|| {
+            let (_section, _key, cmd) = config.resolve_command(&name).ok_or_else(|| {
                 anyhow::anyhow!("Unknown command '{name}'. Run `fa list` to see available aliases.")
             })?;
             ensure_trusted()?;
@@ -428,14 +428,14 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn show_command(config: &Config, category: &str, key: &str) {
+fn show_command(config: &Config, section: &str, key: &str) {
     let (_, _, cmd) = config
         .all_commands()
         .into_iter()
-        .find(|(cat, ck, _)| *cat == category && ck.as_str() == key)
+        .find(|(sec, ck, _)| *sec == section && ck.as_str() == key)
         .expect("resolved command should exist");
     println!("{BOLD_CYAN}Command:{RESET} {key}");
-    println!("Category: {category}");
+    println!("Section: {section}");
     if let Some(desc) = &cmd.description {
         println!("Description: {desc}");
     }

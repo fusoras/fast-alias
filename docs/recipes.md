@@ -112,10 +112,10 @@ Recipes may declare short aliases via the `aliases` array. Users can invoke `fa 
 
 ## General-Purpose Aliases (`[aliases]`)
 
-Beyond scaffolding, `fa` acts as a categorized alternative to Bash aliases. Commands live in top-level `[aliases]` sections — one per category — and run with `fa alias <name>`:
+Beyond scaffolding, `fa` acts as a section-grouped alternative to Bash aliases. Commands live in top-level `[aliases]` sections — one per section — and run with `fa alias <name>`:
 
 ```toml
-[aliases.git]                                     # category = section
+[aliases.git]                                     # section
 status = { command = "git status", description = "Repo state" }
 gco    = { command = "git checkout {{branch}}", description = "Switch branch", aliases = ["co"] }
 rm     = { command = "git rm", description = "Remove files" }
@@ -125,7 +125,7 @@ free = { command = "free -h", description = "Free memory" }
 du   = { command = "du -sh */", description = "Size per folder" }
 ```
 
-- **Category**: the section name (`git`, `sistema`). `fa list` and `fa search` group aliases by category.
+- **Section**: the section name (`git`, `sistema`). `fa list` and `fa search` group aliases by section.
 - **Command**: shell command executed via `sh -c`. Supports positional parameters (`$1`, `$2`, `${1}`, `{{1}}`, `{{2}}`, `$@`, `$*`) and template variables (`{{var}}`). All substituted values are shell-quoted (CWE-78 safe).
 - **Arguments**:
   - Positional variables (`$1`, `{{1}}`, etc.) are replaced with corresponding CLI argument index.
@@ -133,4 +133,4 @@ du   = { command = "du -sh */", description = "Size per folder" }
 - **Aliases**: the `aliases` array declares alternative names (`fa alias co` or `fa co` also works).
 - **Platform** (optional): restrict to `debian`/`termux`.
 - **Dry-run**: `fa alias <name> [args] --dry-run` prints the resolved command without executing it.
-- **Modularity**: categories can live in separate files, e.g. `recipes.d/git.toml` containing only `[aliases.git]`.
+- **Modularity**: sections can live in separate files, e.g. `recipes.d/git.toml` containing only `[aliases.git]`.
