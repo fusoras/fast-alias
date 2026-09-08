@@ -599,6 +599,35 @@ pub fn format_command_line(command_key: &str, command: &crate::config::Command) 
     format!("{BOLD_BLUE}{name}{RESET} · {DIM_GRAY}{description}{RESET}")
 }
 
+/// Formats an alias category header for `fa list` (`<category>:`).
+/// The name comes from the TOML `[aliases.<category>]` section at runtime;
+/// an empty section name falls back to [`Config::FALLBACK_ALIAS_CATEGORY`].
+pub fn format_category_header(category: &str) -> String {
+    format!("  {}:", Config::display_category(category))
+}
+
+/// Returns `fa list` alias lines grouped by category: one `<category>:` header
+/// per non-empty `[aliases.<category>]` section, followed by its single-line
+/// command entries, with a blank line between groups for readability.
+/// Iteration follows `BTreeMap` order, so output is deterministic. Recipes are
+/// intentionally untouched.
+pub fn format_alias_groups(config: &Config) -> Vec<String> {
+    let mut lines = Vec::new();
+    for (category, commands) in &config.aliases {
+        if commands.is_empty() {
+            continue;
+        }
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(format_category_header(category));
+        for (command_key, command) in commands {
+            lines.push(format!("    {}", format_command_line(command_key, command)));
+        }
+    }
+    lines
+}
+
 /// Returns a human-readable "supported" marker for a recipe on the current platform.
 pub fn is_supported(_recipe: &Recipe) -> bool {
     true
@@ -1002,5 +1031,60 @@ mod tests {
         assert!(line.contains("build"));
         assert!(line.contains("fb, bld"));
         assert!(line.contains("Build the project"));
+    }
+
+    #[test]
+    fn alias_list_should_group_by_category() {
+        let config: Config = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "A demo recipe"
+
+[aliases.git]
+status = { command = "git status", description = "Repo state" }
+gco = { command = "git checkout {{branch}}", description = "Switch branch", aliases = ["co"] }
+
+[aliases.sistema]
+free = { command = "free -h", description = "Free memory" }
+"#,
+        )
+        .expect("Should parse config with alias categories");
+
+        let lines = format_alias_groups(&config);
+        let plain: Vec<String> = lines
+            .iter()
+            .map(|l| {
+                // Strip ANSI color codes for stable assertions.
+                let mut s = l.clone();
+                for code in [BOLD_BLUE, RESET, DIM_GRAY, BOLD_CYAN] {
+                    s = s.replace(code, "");
+                }
+                s
+            })
+            .collect();
+
+        assert_eq!(plain.len(), 6, "2 headers + 3 commands + 1 blank separator, got: {plain:?}");
+        assert_eq!(plain[0], "  git:");
+        assert!(
+            plain[1].starts_with("    ") && plain[1].contains("gco"),
+            "git group must contain indented gco, got: {:?}",
+            plain[1]
+        );
+        assert!(
+            plain[2].starts_with("    ") && plain[2].contains("status"),
+            "git group must contain indented status, got: {:?}",
+            plain[2]
+        );
+        assert_eq!(plain[3], "", "groups must be separated by a blank line, got: {plain:?}");
+        assert_eq!(plain[4], "  sistema:");
+        assert!(
+            plain[5].starts_with("    ") && plain[5].contains("free"),
+            "sistema group must contain indented free, got: {:?}",
+            plain[5]
+        );
+        // Deterministic order: BTreeMap sorts categories, commands sort by key.
+        assert!(plain.iter().position(|l| l == "  git:").unwrap()
+            < plain.iter().position(|l| l == "  sistema:").unwrap());
     }
 }

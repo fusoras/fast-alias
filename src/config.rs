@@ -123,6 +123,21 @@ pub struct Config {
 }
 
 impl Config {
+    /// Fallback category label used only when a TOML section name arrives
+    /// empty/whitespace. Real categories always come from `[aliases.<name>]`
+    /// sections at runtime (Recipe Player Principle); nothing is hardcoded.
+    pub const FALLBACK_ALIAS_CATEGORY: &'static str = "general";
+
+    /// Returns the display name for an alias category, falling back to
+    /// [`Self::FALLBACK_ALIAS_CATEGORY`] for empty/whitespace names.
+    pub fn display_category(category: &str) -> &str {
+        if category.trim().is_empty() {
+            Self::FALLBACK_ALIAS_CATEGORY
+        } else {
+            category
+        }
+    }
+
     /// Loads the user configuration from `~/.config/fa/recipes.toml` and
     /// `~/.config/fa/recipes.d/*.toml`. On first run (no config directory yet)
     /// it provisions an example configuration so the user always has a starting

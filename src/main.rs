@@ -13,8 +13,8 @@ use clap::{CommandFactory, Parser, Subcommand};
 use crate::colors::*;
 use crate::config::Config;
 use crate::engine::{
-    format_command_line, format_list_line, is_supported, preflight, run_new, run_shell,
-    NewOptions,
+    format_alias_groups, format_command_line, format_list_line, is_supported, preflight, run_new,
+    run_shell, NewOptions,
 };
 use crate::platform::Platform;
 use crate::state::State;
@@ -323,17 +323,13 @@ fn main() -> anyhow::Result<()> {
                     println!("  {line}");
                 }
             }
-            let commands = config
-                .all_commands()
-                .into_iter()
-                .map(|(_, key, cmd)| format_command_line(key, cmd))
-                .collect::<Vec<_>>();
+            let commands = format_alias_groups(&config);
             if !commands.is_empty() {
                 println!("\n{BOLD_CYAN}Aliases:{RESET}");
                 println!("  {DIM}Usage: fa alias <name>{RESET}");
                 println!();
                 for line in commands {
-                    println!("  {line}");
+                    println!("{line}");
                 }
             }
         }
