@@ -62,6 +62,31 @@ check     = { tool = "tsc", script = "check" }
 ".editorconfig"      = { inline = "root = true ..." }
 "src/pages/{{name}}.ts" = { template = "templates/page.ts.tpl" }
 
+## Template Base (`template_base`)
+
+Recipes with many template files can declare an optional base directory once instead of repeating it in every spec:
+
+```toml
+[recipes.rust-stack]
+name         = "Rust Stack"
+description  = "Rust CLI bootstrap"
+template_base = "rust-stack"                       # base under ~/.config/fa/templates/ (default: unset)
+
+[recipes.rust-stack.files]
+".gitignore"    = { from = ".gitignore" }          # → templates/rust-stack/.gitignore
+"deny.toml"     = { from = "config/deny.toml" }    # → templates/rust-stack/config/deny.toml
+"welcome.txt"   = { template = "greet.txt.tpl" }   # → templates/rust-stack/greet.txt.tpl (+ {{var}} substitution)
+"legacy.cfg"    = { from = "templates/other/legacy.cfg" }  # explicit `templates/` prefix ignores the base
+"snippet.toml"  = { inline = "..." }               # inline always ignores the base
+```
+
+Rules:
+- `template_base` lives at recipe level (`[recipes.<name>]`), never inside `files`.
+- Prefixless `from`/`template` resolve as `base/spec` (both sides normalized).
+- A spec with an explicit `templates/` prefix ignores the base (legacy escape hatch).
+- Absolute paths, `..` escapes and empty paths fail fast in `Config::load` with `must stay inside ~/.config/fa/templates/` naming `recipe`/`file`.
+- **Compatibility**: when `template_base` is unset (`None`, the default), every spec resolves exactly as before — `from = "templates/X"` and `from = "X"` keep resolving to `~/.config/fa/templates/X` byte-identically.
+
 [[recipes.my-recipe.steps]]                          # post-install commands
 command = "git init"
 description = "Initialize git repository"

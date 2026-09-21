@@ -267,4 +267,5 @@ Installs `fa` on a fresh machine (Debian or Termux) in one command without requi
 
 ## Environment Variables & Token Security
 
-`fa` respects environment variables such as `FAST_ALIAS_REPO` and `GITHUB_TOKEN`. For full specification and token security guidelines, see [`docs/environment.md`](environment.md).
+`fa` respects `FAST_ALIAS_REPO` (release repo override) and `GITHUB_TOKEN` (authenticated API rate limit). Tokens are never logged or persisted.
+For token handling rules, see internal governance in `AGENTS.md` (Security Governance).

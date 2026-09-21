@@ -47,12 +47,10 @@ pub fn expand_home(path: &str) -> String {
     path.to_string()
 }
 
-// Reads a template file from the user templates directory
-// (`~/.config/fa/templates/<rel>`), keyed by its path relative to `templates/`
-// (e.g. `my-recipe/Layout.tsx`). Templates are user-provided files on disk, so
-// adding a template never requires editing Rust code.
-fn read_user_template(rel: &str) -> Option<String> {
-    let templates_dir = Config::get_user_templates_dir()?;
+// Reads a template file from a templates directory (`<dir>/<rel>`).
+// Templates are user-provided files on disk, so adding a template never
+// requires editing Rust code.
+fn read_user_template_with_dir(templates_dir: &Path, rel: &str) -> Option<String> {
     let path = templates_dir.join(rel);
     fs::read_to_string(&path).ok()
 }
@@ -266,12 +264,16 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                 continue;
             }
 
-            let content = match resolve_file_content(spec, &vars) {
-                Some(c) => c,
-                None => {
+            let content = match resolve_file_content(spec, &vars, recipe.template_base.as_deref()) {
+                Ok(Some(c)) => c,
+                Ok(None) => {
                     errors.push(format!(
                         "No content source for file '{display_dest}' (missing from/inline/template)"
                     ));
+                    continue;
+                }
+                Err(e) => {
+                    errors.push(e);
                     continue;
                 }
             };
@@ -437,32 +439,67 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
     }
 }
 
-/// Resolves the content of a file spec (from / inline / template).
+/// Resolves the content of a file spec (from / inline / template) honoring an
+/// optional recipe-level `template_base` (`None` = legacy byte-identical).
+/// Returns `Ok(None)` only when the spec declares no content source at all;
+/// missing template files and out-of-range paths are `Err` with a clear
+/// message (never a silent "No content source").
 fn resolve_file_content(
     spec: &crate::config::FileSpec,
     vars: &HashMap<String, String>,
-) -> Option<String> {
-    if let Some(src) = &spec.from {
-        let rel = template_rel(src)?;
-        return read_user_template(&rel);
-    }
-    if let Some(inline) = &spec.inline {
-        return Some(inline.clone());
-    }
-    if let Some(tpl) = &spec.template {
-        let rel = template_rel(tpl)?;
-        if let Some(content) = read_user_template(&rel) {
-            return Some(substitute(&content, vars));
-        }
-    }
-    None
+    base: Option<&str>,
+) -> Result<Option<String>, String> {
+    let Some(templates_dir) = Config::get_user_templates_dir() else {
+        // Without HOME there is no templates dir: inline still works, file
+        // refs report a clear missing-file error instead of silent None.
+        return resolve_file_content_with_dir(spec, vars, Path::new("/nonexistent"), base);
+    };
+    resolve_file_content_with_dir(spec, vars, &templates_dir, base)
 }
 
-/// Strips the `templates/` prefix from a `from`/`template` spec value so it can
-/// be used as a relative path into the user templates directory (e.g.
-/// `templates/my-recipe/Layout.tsx` → `my-recipe/Layout.tsx`).
-fn template_rel(spec: &str) -> Option<String> {
-    spec.strip_prefix("templates/").map(|s| s.to_string())
+/// Dir-injected resolver honoring an optional `template_base`. Exists so
+/// tests can exercise resolution against an isolated temp templates dir
+/// without mutating HOME (see `resolve_eq` precedent).
+fn resolve_file_content_with_dir(
+    spec: &crate::config::FileSpec,
+    vars: &HashMap<String, String>,
+    templates_dir: &Path,
+    base: Option<&str>,
+) -> Result<Option<String>, String> {
+    if let Some(src) = &spec.from {
+        let rel = template_rel_with_base(base, src)?;
+        return match read_user_template_with_dir(templates_dir, &rel) {
+            Some(c) => Ok(Some(c)),
+            None => Err(format!(
+                "template file '{src}' not found in ~/.config/fa/templates/{rel}"
+            )),
+        };
+    }
+    if let Some(inline) = &spec.inline {
+        return Ok(Some(inline.clone()));
+    }
+    if let Some(tpl) = &spec.template {
+        let rel = template_rel_with_base(base, tpl)?;
+        return match read_user_template_with_dir(templates_dir, &rel) {
+            Some(content) => Ok(Some(substitute(&content, vars))),
+            None => Err(format!(
+                "template file '{tpl}' not found in ~/.config/fa/templates/{rel}"
+            )),
+        };
+    }
+    Ok(None)
+}
+
+/// Normalizes a `from`/`template` spec value to a path relative to the user
+/// templates directory: a single leading `templates/` prefix is stripped when
+/// present, otherwise the value is used as-is (e.g. `templates/my-recipe/f`
+/// and `my-recipe/f` both → `my-recipe/f`). Absolute paths and `..` escapes
+/// are rejected with a clear error (see [`Config::normalize_template_rel`]).
+/// Normalizes a `from`/`template` spec value against an optional
+/// `template_base` (see [`Config::resolve_rel`]): `None` is legacy
+/// byte-identical; a `templates/`-prefixed spec always ignores the base.
+fn template_rel_with_base(base: Option<&str>, spec: &str) -> Result<String, String> {
+    Config::resolve_rel(base, spec).map_err(|e| e.to_string())
 }
 
 /// Controls how a spawned command's output is presented to the user.
@@ -713,6 +750,7 @@ mod tests {
             steps: vec![],
             final_message: None,
             pin_versions: None,
+            template_base: None,
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -798,6 +836,7 @@ mod tests {
             steps: vec![],
             final_message: None,
             pin_versions: None,
+            template_base: None,
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -1003,6 +1042,7 @@ mod tests {
             steps: vec![],
             final_message: None,
             pin_versions: None,
+            template_base: None,
         };
         let line = format_list_line("demo", &recipe);
         assert!(line.contains("demo"));
@@ -1028,6 +1068,7 @@ mod tests {
             steps: vec![],
             final_message: None,
             pin_versions: None,
+            template_base: None,
         };
         let line = format_list_line("demo", &recipe);
         assert!(line.contains("demo, d, dm"), "Recipe aliases must be formatted comma-separated alongside key: got '{line}'");
@@ -1101,5 +1142,253 @@ free = { command = "free -h", description = "Free memory" }
         // Deterministic order: BTreeMap sorts sections, commands sort by key.
         assert!(plain.iter().position(|l| l == "  git:").unwrap()
             < plain.iter().position(|l| l == "  sistema:").unwrap());
+    }
+
+    #[test]
+    fn template_rel_should_accept_with_or_without_prefix() {
+        println!("\n🔍 [TEST] Engine template_rel — prefixed and prefixless normalize equally");
+        let with = template_rel_with_base(None, "templates/my-recipe/file.txt").expect("prefixed must Ok");
+        let without = template_rel_with_base(None, "my-recipe/file.txt").expect("prefixless must Ok");
+        assert_eq!(with, "my-recipe/file.txt");
+        assert_eq!(without, "my-recipe/file.txt");
+        println!("   ✓ Both forms resolve to '{with}'.\n");
+    }
+
+    #[test]
+    fn template_rel_should_reject_escape_with_clear_error() {
+        println!("\n🔍 [TEST] Engine template_rel — traversal/absolute rejected clearly");
+        for bad in ["../evil.txt", "templates/../evil.txt", "/abs/x.txt"] {
+            let err = template_rel_with_base(None, bad).expect_err(&format!("'{bad}' must be rejected"));
+            assert!(
+                err.contains("must stay inside ~/.config/fa/templates/"),
+                "Error must name the templates dir, got: '{err}'"
+            );
+        }
+        println!("   ✓ Out-of-range paths rejected (not silent).\n");
+    }
+
+    #[test]
+    fn resolve_file_content_should_resolve_with_and_without_prefix_equally() {
+        println!("\n🔍 [TEST] Engine resolve — `from` with/without prefix reads the same file");
+        // No HOME mutation (unsafe is forbidden): exercise the dir-injected
+        // resolver against an isolated temp templates dir.
+        let base = std::env::temp_dir().join(format!(
+            "fa-test-tpl-{}-{}",
+            std::process::id(),
+            "resolve-eq"
+        ));
+        let tpl_dir = base.join("my-recipe");
+        fs::create_dir_all(&tpl_dir).unwrap();
+        fs::write(tpl_dir.join("file.txt"), "hello").unwrap();
+        fs::write(tpl_dir.join("greet.txt"), "hi {{name}}").unwrap();
+
+        let vars: HashMap<String, String> =
+            [("name".to_string(), "world".to_string())].into_iter().collect();
+        let run = |spec: crate::config::FileSpec| {
+            resolve_file_content_with_dir(&spec, &vars, &base, None)
+        };
+
+        let prefixed = run(crate::config::FileSpec {
+            from: Some("templates/my-recipe/file.txt".to_string()),
+            inline: None,
+            template: None,
+            skip_if_exists: None,
+        });
+        let bare = run(crate::config::FileSpec {
+            from: Some("my-recipe/file.txt".to_string()),
+            inline: None,
+            template: None,
+            skip_if_exists: None,
+        });
+        assert_eq!(prefixed, Ok(Some("hello".to_string())), "prefixed `from` must read");
+        assert_eq!(bare, Ok(Some("hello".to_string())), "prefixless `from` must read equally");
+
+        let tpl_bare = run(crate::config::FileSpec {
+            from: None,
+            inline: None,
+            template: Some("my-recipe/greet.txt".to_string()),
+            skip_if_exists: None,
+        });
+        assert_eq!(tpl_bare, Ok(Some("hi world".to_string())), "prefixless `template` must substitute");
+
+        let _ = fs::remove_dir_all(&base);
+        println!("   ✓ Prefixless `from`/`template` resolve exactly like prefixed.\n");
+    }
+
+    #[test]
+    fn resolve_file_content_should_reject_escape_with_clear_error() {
+        println!("\n🔍 [TEST] Engine resolve — escape gives clear error, empty stays silent-source");
+        let vars: HashMap<String, String> = HashMap::new();
+        let evil = resolve_file_content(
+            &crate::config::FileSpec {
+                from: Some("../evil.txt".to_string()),
+                inline: None,
+                template: None,
+                skip_if_exists: None,
+            },
+            &vars,
+            None,
+        );
+        let msg = evil.expect_err("traversal must be Err, not silent None");
+        assert!(
+            msg.contains("must stay inside ~/.config/fa/templates/"),
+            "Escape must name the templates dir, got: '{msg}'"
+        );
+        let empty = resolve_file_content(
+            &crate::config::FileSpec {
+                from: None,
+                inline: None,
+                template: None,
+                skip_if_exists: None,
+            },
+            &vars,
+            None,
+        );
+        assert_eq!(empty, Ok(None), "genuinely sourceless spec stays Ok(None)");
+        println!("   ✓ Traversal errors clearly; empty spec keeps legacy Ok(None).\n");
+    }
+
+    #[test]
+    fn resolve_with_base_should_join_from_under_base() {
+        println!("\n🔍 [TEST] Engine resolve — base + from joins under base");
+        let base = std::env::temp_dir().join(format!(
+            "fa-test-tpl-{}-{}",
+            std::process::id(),
+            "base-join"
+        ));
+        let stack_dir = base.join("rust-stack");
+        fs::create_dir_all(&stack_dir).unwrap();
+        fs::write(stack_dir.join(".gitignore"), "target/").unwrap();
+
+        let vars: HashMap<String, String> = HashMap::new();
+        let got = resolve_file_content_with_dir(
+            &crate::config::FileSpec {
+                from: Some(".gitignore".to_string()),
+                inline: None,
+                template: None,
+                skip_if_exists: None,
+            },
+            &vars,
+            &base,
+            Some("rust-stack"),
+        );
+        assert_eq!(got, Ok(Some("target/".to_string())), "base + from must join");
+        let _ = fs::remove_dir_all(&base);
+        println!("   ✓ base + from joined correctly.\n");
+    }
+
+    #[test]
+    fn resolve_with_base_should_ignore_base_for_prefixed_legacy() {
+        println!("\n🔍 [TEST] Engine resolve — `templates/` spec ignores base (legacy)");
+        let base = std::env::temp_dir().join(format!(
+            "fa-test-tpl-{}-{}",
+            std::process::id(),
+            "base-legacy"
+        ));
+        let other_dir = base.join("other");
+        fs::create_dir_all(&other_dir).unwrap();
+        fs::write(other_dir.join("file.txt"), "legacy").unwrap();
+
+        let vars: HashMap<String, String> = HashMap::new();
+        let with_base = resolve_file_content_with_dir(
+            &crate::config::FileSpec {
+                from: Some("templates/other/file.txt".to_string()),
+                inline: None,
+                template: None,
+                skip_if_exists: None,
+            },
+            &vars,
+            &base,
+            Some("rust-stack"),
+        );
+        let without_base = resolve_file_content_with_dir(
+            &crate::config::FileSpec {
+                from: Some("templates/other/file.txt".to_string()),
+                inline: None,
+                template: None,
+                skip_if_exists: None,
+            },
+            &vars,
+            &base,
+            None,
+        );
+        assert_eq!(with_base, Ok(Some("legacy".to_string())));
+        assert_eq!(with_base, without_base, "prefixed spec must ignore base");
+        let _ = fs::remove_dir_all(&base);
+        println!("   ✓ Prefixed spec identical with/without base.\n");
+    }
+
+    #[test]
+    fn resolve_with_base_should_ignore_base_for_inline() {
+        println!("\n🔍 [TEST] Engine resolve — inline ignores base");
+        let vars: HashMap<String, String> = HashMap::new();
+        let dir = std::env::temp_dir();
+        let got = resolve_file_content_with_dir(
+            &crate::config::FileSpec {
+                from: None,
+                inline: Some("verbatim".to_string()),
+                template: None,
+                skip_if_exists: None,
+            },
+            &vars,
+            &dir,
+            Some("rust-stack"),
+        );
+        assert_eq!(got, Ok(Some("verbatim".to_string())), "inline must ignore base");
+        println!("   ✓ inline ignores base.\n");
+    }
+
+    #[test]
+    fn resolve_with_base_should_apply_base_to_template_equally() {
+        println!("\n🔍 [TEST] Engine resolve — template applies base + substitution");
+        let base = std::env::temp_dir().join(format!(
+            "fa-test-tpl-{}-{}",
+            std::process::id(),
+            "base-tpl"
+        ));
+        let stack_dir = base.join("rust-stack");
+        fs::create_dir_all(&stack_dir).unwrap();
+        fs::write(stack_dir.join("greet.txt"), "hi {{name}}").unwrap();
+
+        let vars: HashMap<String, String> =
+            [("name".to_string(), "world".to_string())].into_iter().collect();
+        let got = resolve_file_content_with_dir(
+            &crate::config::FileSpec {
+                from: None,
+                inline: None,
+                template: Some("greet.txt".to_string()),
+                skip_if_exists: None,
+            },
+            &vars,
+            &base,
+            Some("rust-stack"),
+        );
+        assert_eq!(got, Ok(Some("hi world".to_string())), "template + base must substitute");
+        let _ = fs::remove_dir_all(&base);
+        println!("   ✓ template + base substituted correctly.\n");
+    }
+
+    #[test]
+    fn resolve_with_base_should_reject_escapes_with_clear_error() {
+        println!("\n🔍 [TEST] Engine resolve — base escapes rejected clearly");
+        let vars: HashMap<String, String> = HashMap::new();
+        let dir = std::env::temp_dir();
+        let evil = resolve_file_content_with_dir(
+            &crate::config::FileSpec {
+                from: Some("../evil.txt".to_string()),
+                inline: None,
+                template: None,
+                skip_if_exists: None,
+            },
+            &vars,
+            &dir,
+            Some("rust-stack"),
+        );
+        let msg = evil.expect_err("traversal with base must be Err");
+        assert!(
+            msg.contains("must stay inside ~/.config/fa/templates/"),
+            "Escape must name the templates dir, got: '{msg}'"
+        );
+        println!("   ✓ Base escape rejected clearly.\n");
     }
 }

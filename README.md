@@ -167,8 +167,6 @@ pin_versions = true    # Strip ^ and ~ from package.json (default: false)
 ```
 
 ## Docs
-- [Aliases](docs/aliases.md) - Command aliases and argument passthrough.
+- [Aliases](docs/commands.md) - Command aliases and argument passthrough (see also [Recipes](docs/recipes.md)).
 - [Recipes](docs/recipes.md) - Recipe schema and template conventions.
 - [Commands](docs/commands.md) - CLI reference and subcommands.
-- [Platforms](docs/platforms.md) - Debian and Termux support notes.
-- [Environment](docs/environment.md) - Env vars and token security.

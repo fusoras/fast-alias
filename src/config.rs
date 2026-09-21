@@ -95,6 +95,13 @@ pub struct Recipe {
     pub create: Option<Create>,
     pub pm: Option<Pm>,
     pub tooling: Option<Tooling>,
+    /// Optional base directory under `~/.config/fa/templates/` prepended to
+    /// every prefixless `from`/`template` spec (e.g. `template_base =
+    /// "rust-stack"` + `from = ".gitignore"` → `rust-stack/.gitignore`).
+    /// `None` (default) keeps the legacy behavior byte-identical: specs
+    /// resolve exactly as `normalize_template_rel` does today.
+    #[serde(default)]
+    pub template_base: Option<String>,
     /// When true, the engine strips floating range prefixes (`^`/`~`) from
     /// `package.json` dependency versions after all installs complete.
     #[serde(default)]
@@ -178,6 +185,8 @@ impl Config {
             )
         };
 
+        config.validate_template_paths()?;
+
         Ok((config, source_summary))
     }
 
@@ -244,6 +253,85 @@ impl Config {
         }
 
         Ok(())
+    }
+
+    /// Normalizes a `from`/`template` spec to a path relative to
+    /// `~/.config/fa/templates/`. Accepts the value with or without a single
+    /// leading `templates/` prefix (it is stripped once when present, used
+    /// as-is otherwise). Rejects absolute paths and `..` escapes with a clear
+    /// error so misconfigurations never fail silently downstream.
+    pub fn normalize_template_rel(spec: &str) -> anyhow::Result<String> {
+        let rel = spec.strip_prefix("templates/").unwrap_or(spec);
+        if rel.is_empty() {
+            anyhow::bail!(
+                "template path '{spec}' must stay inside ~/.config/fa/templates/"
+            );
+        }
+        if Path::new(spec).is_absolute() || Path::new(rel).is_absolute() {
+            anyhow::bail!(
+                "template path '{spec}' must stay inside ~/.config/fa/templates/"
+            );
+        }
+        if rel.split('/').any(|c| c == "..") {
+            anyhow::bail!(
+                "template path '{spec}' must stay inside ~/.config/fa/templates/"
+            );
+        }
+        Ok(rel.to_string())
+    }
+
+    /// Validates every `from`/`template` reference in all recipes, failing fast
+    /// with a clear error when a path would escape `~/.config/fa/templates/`.
+    /// Resolution honors each recipe's `template_base` (see
+    /// [`Self::resolve_rel`]): a `None` base resolves exactly like
+    /// [`Self::normalize_template_rel`] (legacy byte-identical).
+    fn validate_template_paths(&self) -> anyhow::Result<()> {
+        for (recipe_key, recipe) in &self.recipes {
+            if let Some(base) = &recipe.template_base {
+                Self::normalize_template_rel(base).map_err(|e| {
+                    anyhow::anyhow!(
+                        "recipe '{recipe_key}': invalid template_base '{base}': {e}"
+                    )
+                })?;
+            }
+            for (dest, spec) in &recipe.files {
+                for value in [&spec.from, &spec.template].into_iter().flatten() {
+                    Self::resolve_rel(recipe.template_base.as_deref(), value).map_err(|e| {
+                        anyhow::anyhow!(
+                            "recipe '{recipe_key}' file '{dest}': {e}"
+                        )
+                    })?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolves a `from`/`template` spec against an optional recipe-level
+    /// `template_base`, returning a path relative to
+    /// `~/.config/fa/templates/`.
+    ///
+    /// - `None` base → identical to [`Self::normalize_template_rel`] (legacy).
+    /// - `Some(base)` + prefixless spec → `base/spec` (both sides normalized).
+    /// - `Some(base)` + spec starting with `templates/` → base is ignored
+    ///   (legacy byte-identical escape hatch).
+    /// - Absolute paths, `..` escapes and empty paths are rejected with a
+    ///   `must stay inside ~/.config/fa/templates/` error.
+    pub fn resolve_rel(base: Option<&str>, spec: &str) -> anyhow::Result<String> {
+        // Legacy escape hatch: an explicit `templates/` prefix always ignores
+        // the base so old configs keep resolving byte-identically.
+        if spec.starts_with("templates/") {
+            return Self::normalize_template_rel(spec);
+        }
+        let Some(base) = base else {
+            return Self::normalize_template_rel(spec);
+        };
+        let base_rel = Self::normalize_template_rel(base)?;
+        let spec_rel = Self::normalize_template_rel(spec)?;
+        let joined = format!("{base_rel}/{spec_rel}");
+        // Both halves are individually clean, so the join cannot escape; run
+        // it through the normalizer once more for a single clear error path.
+        Self::normalize_template_rel(&joined)
     }
 
     /// Returns the standard user configuration directory (~/.config/fa).
@@ -477,5 +565,114 @@ free = { command = "free -h", description = "Free memory" }
         let broken_toml = "this is not = [valid toml content {{";
         let parsed: Result<Config, _> = toml::from_str(broken_toml);
         assert!(parsed.is_err(), "Invalid TOML must return deserialization error");
+    }
+
+    #[test]
+    fn template_path_should_accept_with_or_without_prefix() {
+        println!("\n🔍 [TEST] Template path — with/without `templates/` prefix resolves equally");
+        let with = Config::normalize_template_rel("templates/my-recipe/file.txt")
+            .expect("prefixed path must normalize");
+        let without = Config::normalize_template_rel("my-recipe/file.txt")
+            .expect("prefixless path must normalize");
+        assert_eq!(with, "my-recipe/file.txt");
+        assert_eq!(without, "my-recipe/file.txt");
+        // Only one leading prefix is stripped: a nested `templates/` dir stays.
+        let nested = Config::normalize_template_rel("templates/templates/x")
+            .expect("nested templates dir must normalize");
+        assert_eq!(nested, "templates/x");
+        println!("   ✓ Prefixed and prefixless paths normalize to the same rel.\n");
+    }
+
+    #[test]
+    fn template_path_should_reject_escape_with_clear_error() {
+        println!("\n🔍 [TEST] Template path — traversal/absolute rejected with clear error");
+        for bad in ["../evil.txt", "templates/../evil.txt", "a/../../b", "/abs/path.txt", "templates/"] {
+            let err = Config::normalize_template_rel(bad)
+                .err()
+                .unwrap_or_else(|| panic!("'{bad}' must be rejected"));
+            let msg = err.to_string();
+            assert!(
+                msg.contains("must stay inside ~/.config/fa/templates/"),
+                "Error must name the templates dir, got: '{msg}'"
+            );
+        }
+        println!("   ✓ Out-of-range paths rejected with clear error (not silent).\n");
+    }
+
+    #[test]
+    fn template_base_should_default_to_none_for_legacy_compat() {
+        println!("\n🔍 [TEST] template_base — defaults to None (legacy byte-identical)");
+        let config: Config = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "A demo recipe"
+"#,
+        )
+        .expect("Should parse recipe without template_base");
+        let demo = config.recipes.get("demo").expect("demo must exist");
+        assert!(demo.template_base.is_none(), "legacy recipes default to None");
+        println!("   ✓ Missing template_base defaults to None.\n");
+    }
+
+    #[test]
+    fn resolve_rel_should_keep_legacy_identical_when_base_is_none() {
+        println!("\n🔍 [TEST] resolve_rel — base None keeps legacy identical");
+        let with = Config::resolve_rel(None, "templates/my-recipe/file.txt")
+            .expect("prefixed must resolve");
+        let bare = Config::resolve_rel(None, "my-recipe/file.txt")
+            .expect("prefixless must resolve");
+        assert_eq!(with, "my-recipe/file.txt");
+        assert_eq!(bare, "my-recipe/file.txt");
+        assert_eq!(with, bare, "both forms must resolve equally with None base");
+        println!("   ✓ Base None resolves exactly like legacy normalize.\n");
+    }
+
+    #[test]
+    fn resolve_rel_should_join_base_and_spec() {
+        println!("\n🔍 [TEST] resolve_rel — base + from join");
+        let rel = Config::resolve_rel(Some("rust-stack"), ".gitignore")
+            .expect("base + spec must join");
+        assert_eq!(rel, "rust-stack/.gitignore");
+        let nested = Config::resolve_rel(Some("rust-stack"), "config/.editorconfig")
+            .expect("nested spec must join");
+        assert_eq!(nested, "rust-stack/config/.editorconfig");
+        println!("   ✓ Joined rel verified.\n");
+    }
+
+    #[test]
+    fn resolve_rel_should_ignore_base_when_spec_has_templates_prefix() {
+        println!("\n🔍 [TEST] resolve_rel — `templates/` spec ignores base (legacy byte-identical)");
+        let with_base =
+            Config::resolve_rel(Some("rust-stack"), "templates/other/file.txt")
+                .expect("prefixed spec must resolve");
+        let without_base = Config::resolve_rel(None, "templates/other/file.txt")
+            .expect("legacy must resolve");
+        assert_eq!(with_base, "other/file.txt");
+        assert_eq!(with_base, without_base, "prefixed spec must ignore base entirely");
+        println!("   ✓ Prefixed spec ignores base.\n");
+    }
+
+    #[test]
+    fn resolve_rel_should_reject_escapes_with_clear_error() {
+        println!("\n🔍 [TEST] resolve_rel — escapes/absolutes rejected with clear error");
+        for (base, spec) in [
+            (Some("rust-stack"), "../evil.txt"),
+            (Some("../evil"), "file.txt"),
+            (Some("rust-stack"), "/abs/x.txt"),
+            (Some("rust-stack"), ""),
+            (Some("rust-stack"), "templates/../evil.txt"),
+            (None, "../evil.txt"),
+        ] {
+            let err = Config::resolve_rel(base, spec)
+                .err()
+                .unwrap_or_else(|| panic!("base={base:?} spec='{spec}' must be rejected"));
+            let msg = err.to_string();
+            assert!(
+                msg.contains("must stay inside ~/.config/fa/templates/"),
+                "Error must name the templates dir, got: '{msg}'"
+            );
+        }
+        println!("   ✓ Escapes rejected clearly.\n");
     }
 }
