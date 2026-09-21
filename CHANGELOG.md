@@ -14,3 +14,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fa list`: deterministic grouped output via `format_section_header` / `format_alias_groups`; recipes untouched, no new flags.
 - `pin_versions = true` recipe toggle: after the last install step, strip `^`/`~` prefixes from `package.json` versions (Node only) so the initial commit records exact versions (default: false).
 - Native Node pinning (`src/pinning.rs`): byte-preserving rewrite of `dependencies`/`devDependencies`/`optionalDependencies`; reports Pinned/Unchanged/NotFound/Error; dry-run preview; other ecosystems plug into `pin_project`.
+- `files` root shortcut: `"" = { from = "..." }` in `recipes.toml` writes the file to the project root, inferring the filename from the `from`/`template` basename.

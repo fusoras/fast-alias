@@ -1,7 +1,7 @@
 use crate::config::{Config, Recipe};
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::colors::*;
@@ -238,16 +238,31 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
         let mut errors: Vec<String> = Vec::new();
         let mut written = 0usize;
         for (dest, spec) in &recipe.files {
-            let dest_path = expand_home(dest);
-            let target = Path::new(&dest_path);
+            // When dest is empty string, the file goes to the project root.
+            // The filename is inferred from the basename of `from` or `template`.
+            let (target, display_dest) = if dest.is_empty() {
+                let cwd = std::env::current_dir()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                let file_name = spec.from.as_ref()
+                    .or(spec.template.as_ref())
+                    .and_then(|s| Path::new(s).file_name())
+                    .and_then(|f| f.to_str())
+                    .unwrap_or("");
+                let target = PathBuf::from(&cwd).join(file_name);
+                (target, file_name)
+            } else {
+                let dest_path = expand_home(dest);
+                (PathBuf::from(&dest_path), dest.as_str())
+            };
 
             if opts.dry_run {
-                println!("  {DIM}[Dry-Run]{RESET} Would write file: {dest}");
+                println!("  {DIM}[Dry-Run]{RESET} Would write file: {display_dest}");
                 continue;
             }
 
             if target.exists() && spec.skip_if_exists == Some(true) {
-                println!("  {BOLD_YELLOW}[SKIP]{RESET} {dest} (already exists)");
+                println!("  {BOLD_YELLOW}[SKIP]{RESET} {display_dest} (already exists)");
                 continue;
             }
 
@@ -255,7 +270,7 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                 Some(c) => c,
                 None => {
                     errors.push(format!(
-                        "No content source for file '{dest}' (missing from/inline/template)"
+                        "No content source for file '{display_dest}' (missing from/inline/template)"
                     ));
                     continue;
                 }
@@ -266,8 +281,8 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                     errors.push(format!("Failed to create dir {}: {e}", parent.display()));
                     continue;
                 }
-            if let Err(e) = fs::write(target, content) {
-                errors.push(format!("Failed to write {dest}: {e}"));
+            if let Err(e) = fs::write(&target, content) {
+                errors.push(format!("Failed to write {display_dest}: {e}"));
                 continue;
             }
             written += 1;
