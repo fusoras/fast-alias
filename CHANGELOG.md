@@ -15,3 +15,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pin_versions = true` recipe toggle: after the last install step, strip `^`/`~` prefixes from `package.json` versions (Node only) so the initial commit records exact versions (default: false).
 - Native Node pinning (`src/pinning.rs`): byte-preserving rewrite of `dependencies`/`devDependencies`/`optionalDependencies`; reports Pinned/Unchanged/NotFound/Error; dry-run preview; other ecosystems plug into `pin_project`.
 - `files` root shortcut: `"" = { from = "..." }` in `recipes.toml` writes the file to the project root, inferring the filename from the `from`/`template` basename.
+- `template_base = "..."` recipe option: set a base directory under `~/.config/fa/templates/` so `from`/`template` paths shorten (e.g. with `template_base = "rust-stack"`, `".gitignore" = { from = ".gitignore" }` resolves to `rust-stack/.gitignore`).
+- Compat note: when absent (default None) behavior is exactly legacy (`templates/...` and bare paths resolve identically); `templates/`-prefixed `from` ignores base; `..`/absolute rejected with clear `recipe/file` error.
