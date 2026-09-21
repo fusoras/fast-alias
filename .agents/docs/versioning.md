@@ -25,12 +25,13 @@ Format: `v<MAJOR>.<MINOR>.<PATCH>-<PRERELEASE>` (e.g. `v0.1.0-beta.3`)
 
 ## 2. Version Bump Checklist (Files to Update)
 
-When preparing a new release, update the version string across all 4 authoritative files:
+When preparing a new release, update the version string across the 4 canonical files:
+1. `Cargo.toml` (`version = "0.1.0-beta.X"`)
+2. `Cargo.lock` (updated automatically via `cargo check`)
+3. `install.sh` (`VERSION="${RELEASE_TAG:-v0.1.0-beta.X}"`)
+4. `AGENTS.md` (project version references)
 
-## Version Locations
-The version number appears in **`Cargo.toml`** (`version = "0.1.0-beta.11"`).
-`src/main.rs` uses `env!("CARGO_PKG_VERSION")` to prevent version drift at compile time.
-`install.sh` and `AGENTS.md` should also be updated during version bumps.
+*(Note: `src/main.rs` uses `env!("CARGO_PKG_VERSION")` and must never be edited during a bump).*
 
 ---
 
@@ -41,15 +42,15 @@ The version number appears in **`Cargo.toml`** (`version = "0.1.0-beta.11"`).
 cargo test -- --nocapture
 
 # 2. Stage and commit version bump
-git add Cargo.toml src/main.rs install.sh AGENTS.md Cargo.lock
-git commit -m "update: bump version to v0.1.0-beta.3"
+git add Cargo.toml Cargo.lock install.sh AGENTS.md CHANGELOG.md
+git commit -m "update: bump version to v0.1.0-beta.X"
 
 # 3. Push develop branch to remote (Requires explicit user confirmation)
 git push origin develop
 
 # 4. Create and push release Git tag
-git tag -a v0.1.0-beta.3 -m "Release v0.1.0-beta.3"
-git push origin v0.1.0-beta.3
+git tag -a v0.1.0-beta.X -m "Release v0.1.0-beta.X"
+git push origin v0.1.0-beta.X
 ```
 
 ---
