@@ -2,7 +2,7 @@
 
 > Recipe-based project scaffolder that bootstraps projects, installs dependencies, and applies tooling (linter, formatter, typechecker) and configuration files on **Debian** and **Termux**.
 
-`fa` is a small CLI tool written in Rust that scaffolds a project with a single short command, replicating your own stack workflows across all your devices. It follows the `project-dots` release pattern (`install.sh` + GitHub Releases + cross-compiled musl).
+`fa` is a small CLI tool written in Rust that scaffolds a project with a single short command, replicating your own stack workflows across all your devices.
 
 ---
 
@@ -26,11 +26,11 @@ curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.
 
 | Command | Description | Notes |
 |---|---|---|
+| `fa alias <name>` | Runs a general-purpose alias from the `[aliases]` catalog | Accepts canonical name or declared alias; `fa -a <name>` is shorthand |
 | `fa new <recipe> <name>` | Scaffolds a new project from the recipe into directory `<name>` | `-v` / `--variant` to pick a toolchain variant, `-d` / `--dry-run` to preview, `--no-install` to skip dependencies |
 | `fa list` | Displays available recipes for current platform | `-sh` / `--show-hidden` to display unsupported recipes |
 | `fa search <query>` | Searches recipes by name, alias, language, or variant | Same single-line format as `list` |
 | `fa show <recipe>` | Displays full recipe description, tooling, files, and steps | Accepts recipe name or alias |
-| `fa alias <name>` | Runs a general-purpose alias from the `[aliases]` catalog | Accepts canonical name or declared alias; `fa -a <name>` is shorthand |
 | `fa sync` | Fetches the latest recipe catalog from the repository | `-d` / `--dry-run` to preview |
 | `fa self-update` | Checks GitHub Releases and updates `fa` binary in-place | `-d` / `--dry-run` to preview update check |
 | `fa self-uninstall` | Safely removes `fa` binary executable, state, and config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config |
@@ -40,9 +40,9 @@ curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.
 
 ---
 
-# Configuring Your Own Recipes & Aliases
+# Configuring Your Own Aliases & Recipes
 
-`fa` is a **recipe player**: everything lives in declarative TOML files in your personal config directory, so adding a recipe or command alias is config only — never touching the binary.
+`fa` is a **recipe player**: everything lives in declarative TOML files in your personal config directory, so adding a recipe or command alias is config only.
 
 ## Where the configuration lives
 
@@ -57,6 +57,65 @@ On first run (no `~/.config/fa/` yet) `fa` creates it with a small example confi
 
 > [!WARNING]
 > Commands in recipes execute arbitrary shell on your machine. `fa` asks for a one-time `[TRUST]` confirmation before running recipe steps or command aliases, and remembers it per config file. Only define commands you trust.
+
+## Declaring a command alias
+
+Beyond scaffolding, `fa` is a section-grouped alternative to Bash aliases. General-purpose commands live in **top-level `[aliases]` sections — one per section** (e.g. `git`, `system`, `deploy`), completely independent from scaffold recipes. Run them from anywhere with `fa alias <alias>`.
+
+Each alias has:
+
+- **`command`** (required): the shell command to run.
+- **`description`** (optional): shown in `fa list`.
+- **`aliases`** (optional): short names to invoke it with.
+- **`platform`** (optional): restrict to `debian` or `termux`.
+
+### Example
+
+Aliases are grouped by section and can live together in `~/.config/fa/recipes.toml` or split across `recipes.d/*.toml`:
+
+```toml
+[aliases.deploy]
+deploy = { command = "node --run build && rsync -av dist/ server:/srv/www", description = "Build and deploy", aliases = ["dep"] }
+
+[aliases.git]
+status = { command = "git status", description = "Show repo status" }
+
+[aliases.system]
+free = { command = "free -h", description = "Show available memory" }
+```
+
+```bash
+fa alias deploy   # run by canonical name (recommended)
+fa -a dep         # run by alias shorthand (recommended)
+```
+
+> [!TIP]
+> **Usage recommendation:** prefer `fa alias <name>` or `fa -a <name>`. Direct `fa <name>` is quick but a future native command with same name would take precedence.
+
+### Positional Arguments & Passthrough
+
+Aliases accept parameters and arguments dynamically:
+
+1. **Positional Arguments (`$1`, `$2`, etc. or `{{1}}`, `{{2}}`):**
+   ```toml
+   [aliases.wrapper]
+   avif = { command = "avifenc -s 0 -q ${3:-50} $1 -o $2", description = "Convert image to .avif with default quality" }
+   ```
+   ```bash
+   fa avif image.jpg image.avif       # Runs: avifenc -s 0 -q '50' 'image.jpg' -o 'image.avif'
+   fa avif image.jpg image.avif 80    # Runs: avifenc -s 0 -q '80' 'image.jpg' -o 'image.avif'
+   ```
+
+2. **Default Values (`${N:-value}` or `{{N:-value}}`):**
+   Defines default values (numbers or text) used when the user does not provide that specific argument.
+
+3. **Automatic passthrough:** If the command contains no positional variables, arguments are safely appended at the end.
+
+### Rules to remember
+
+- **Case-insensitive matching**: Names and aliases ignore case (e.g. if defined as `dep`, `fa dep`, `fa DEP`, and `fa -a Dep` work identically).
+- `fa list` shows scaffold recipes under **Recipes** and general-purpose commands under **Aliases** (ordered by section); `fa show <alias>` prints the command that would run.
+- The same `[TRUST]` confirmation that guards recipe steps also guards command aliases from your config files.
 
 ## Declaring a recipe
 
@@ -107,75 +166,9 @@ By adding `pin_versions = true` to your recipe:
 pin_versions = true    # Strip ^ and ~ from package.json (default: false)
 ```
 
-## Declaring a command alias
-
-Beyond scaffolding, `fa` is a section-grouped alternative to Bash aliases. General-purpose commands live in **top-level `[aliases]` sections — one per section** (e.g. `git`, `sistema`, `deploy`), completely independent from scaffold recipes. Run them from anywhere with `fa alias <alias>`.
-
-Each alias has:
-
-- **`command`** (required): the shell command to run.
-- **`description`** (optional): shown in `fa list`.
-- **`aliases`** (optional): short names to invoke it with.
-- **`platform`** (optional): restrict to `debian` or `termux`.
-
-### Example — add a deploy alias
-
-Put this in `~/.config/fa/recipes.toml`:
-
-```toml
-[aliases.deploy]
-deploy = { command = "node --run build && rsync -av dist/ server:/srv/www", description = "Build and deploy", aliases = ["dep"] }
-```
-
-Now, from inside any project:
-
-```bash
-fa alias deploy   # run by canonical name (recommended)
-fa -a dep         # run by alias shorthand (recommended)
-fa dep            # direct execution (quick alternative)
-```
-
-> [!TIP]
-> **Recomendación de uso:** Se recomienda utilizar `fa alias <name>` o la forma abreviada `fa -a <name>`. Ejecutar directamente `fa <name>` es una alternativa rápida y conveniente, pero ten en cuenta que si en el futuro se añade un comando nativo a `fa` con el mismo nombre que tu alias, el comando nativo tendrá prioridad y el alias dejará de ejecutarse de forma directa.
-
-Aliases are grouped by section, so you can organize your workflow in sections:
-
-```toml
-[aliases.git]
-status = { command = "git status", description = "Ver estado del repo" }
-l = { command = "git log --oneline -10", description = "Últimos commits" }
-
-[aliases.sistema]
-free = { command = "free -h", description = "Memoria disponible" }
-```
-
-```bash
-fa alias status   # git status
-```
-
-Sections are ordinary TOML sections, so they can live in separate modular files too — e.g. a `git.toml` under `recipes.d/` containing only `[aliases.git]`.
-
-### Positional Arguments & Passthrough
-
-Aliases accept parameters and arguments dynamically:
-
-1. **Positional Arguments (`$1`, `$2`, etc. o `{{1}}`, `{{2}}`):**
-   ```toml
-   [aliases.wrapper]
-   avif = { command = "avifenc -s 0 -q ${3:-50} $1 -o $2", description = "Convertir imagen a .avif con calidad por defecto" }
-   ```
-   ```bash
-   fa avif imagen.jpg imagen.avif       # Ejecuta: avifenc -s 0 -q '50' 'imagen.jpg' -o 'imagen.avif'
-   fa avif imagen.jpg imagen.avif 80    # Ejecuta: avifenc -s 0 -q '80' 'imagen.jpg' -o 'imagen.avif'
-   ```
-
-2. **Default Values (`${N:-valor}` o `{{N:-valor}}`):**
-   Permite definir valores por defecto (números o texto) que se utilizarán cuando el usuario no provea ese argumento específico.
-
-3. **Passthrough automático:** Si el comando no contiene variables posicionales, los argumentos se añaden automáticamente al final de forma segura.
-
-### Rules to remember
-
-- **Case-insensitive matching**: Names and aliases ignore case (e.g. if defined as `dep`, `fa dep`, `fa DEP`, and `fa -a Dep` work identically).
-- `fa list` shows scaffold recipes under **Recipes** and general-purpose commands under **Aliases** (ordered by section); `fa show <alias>` prints the command that would run.
-- The same `[TRUST]` confirmation that guards recipe steps also guards command aliases from your config files.
+## Docs
+- [Aliases](docs/aliases.md) - Command aliases and argument passthrough.
+- [Recipes](docs/recipes.md) - Recipe schema and template conventions.
+- [Commands](docs/commands.md) - CLI reference and subcommands.
+- [Platforms](docs/platforms.md) - Debian and Termux support notes.
+- [Environment](docs/environment.md) - Env vars and token security.
