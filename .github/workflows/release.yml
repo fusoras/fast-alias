@@ -17,11 +17,14 @@ jobs:
         shell: bash
     strategy:
       matrix:
+        # single-source: keep in sync with src/update.rs::resolve_asset_name
+        # triple table:
+        #   Debian (x86_64) -> x86_64-unknown-linux-gnu
+        #   Termux (aarch64) -> aarch64-unknown-linux-musl
+        # Asset pattern: fa-<target>.tar.gz (fa must match Cargo.toml [package] name)
         include:
           - target: x86_64-unknown-linux-gnu
-            asset_name: fa-x86_64-unknown-linux-gnu.tar.gz
           - target: aarch64-unknown-linux-musl
-            asset_name: fa-aarch64-unknown-linux-musl.tar.gz
 
     steps:
       - name: Checkout repository
@@ -48,11 +51,11 @@ jobs:
       - name: Package binary into tarball
         run: |
           set -Eeuo pipefail
-          tar -czf ${{ matrix.asset_name }} -C target/${{ matrix.target }}/release fa
+          tar -czf fa-${{ matrix.target }}.tar.gz -C target/${{ matrix.target }}/release fa
 
       - name: Upload asset to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.asset_name }}
+          files: fa-${{ matrix.target }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

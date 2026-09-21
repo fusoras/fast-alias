@@ -34,22 +34,29 @@ for cmd in curl tar; do
     fi
 done
 
+# single-source: keep in sync with src/update.rs::resolve_asset_name
+# triple table:
+#   Debian (x86_64) -> x86_64-unknown-linux-gnu
+#   Termux (aarch64) -> aarch64-unknown-linux-musl
+# Asset pattern: ${BIN_NAME}-${TRIPLE}.tar.gz (BIN_NAME must match Cargo.toml [package] name)
+BIN_NAME="fa"
 # Detect Architecture
 ARCH_RAW=$(uname -m)
 case "$ARCH_RAW" in
     x86_64|amd64)
         ARCH="x86_64"
-        ASSET_TARGET="fa-x86_64-unknown-linux-gnu.tar.gz"
+        TRIPLE="x86_64-unknown-linux-gnu"
         ;;
     aarch64|arm64)
         ARCH="aarch64"
-        ASSET_TARGET="fa-aarch64-unknown-linux-musl.tar.gz"
+        TRIPLE="aarch64-unknown-linux-musl"
         ;;
     *)
         log_error "Unsupported architecture: $ARCH_RAW. Supported architectures are x86_64 and aarch64."
         exit 1
         ;;
 esac
+ASSET_TARGET="${BIN_NAME}-${TRIPLE}.tar.gz"
 
 # Detect Platform and Install Path
 if [ -n "$TERMUX_VERSION" ] || [ -d "/data/data/com.termux" ]; then

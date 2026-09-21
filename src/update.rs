@@ -6,6 +6,14 @@ use std::process::Command;
 /// Default GitHub repository for release checks (overridable via `FAST_ALIAS_REPO`).
 const DEFAULT_REPO: &str = "fusoras/fast-alias";
 
+/// Release target triples — single source for asset names.
+/// single-source: keep in sync with install.sh / .github/workflows/release.yml
+/// triple table:
+///   Debian (x86_64) -> x86_64-unknown-linux-gnu
+///   Termux (aarch64) -> aarch64-unknown-linux-musl
+const DEBIAN_TARGET_TRIPLE: &str = "x86_64-unknown-linux-gnu";
+const TERMUX_TARGET_TRIPLE: &str = "aarch64-unknown-linux-musl";
+
 /// Resolves the target GitHub repository (`owner/repo`).
 fn repo() -> String {
     env::var("FAST_ALIAS_REPO").unwrap_or_else(|_| DEFAULT_REPO.to_string())
@@ -133,12 +141,14 @@ fn fetch_latest_release_tag(url: &str, max_time_secs: u32) -> anyhow::Result<Str
 }
 
 /// Resolves the release asset name for a given platform.
-pub fn resolve_asset_name(platform: &Platform) -> anyhow::Result<&'static str> {
-    match platform {
-        Platform::Debian => Ok("fa-x86_64-unknown-linux-gnu.tar.gz"),
-        Platform::Termux => Ok("fa-aarch64-unknown-linux-musl.tar.gz"),
+/// Built single-source from `env!("CARGO_PKG_NAME")` + target triple.
+pub fn resolve_asset_name(platform: &Platform) -> anyhow::Result<String> {
+    let triple = match platform {
+        Platform::Debian => DEBIAN_TARGET_TRIPLE,
+        Platform::Termux => TERMUX_TARGET_TRIPLE,
         Platform::Unsupported(reason) => anyhow::bail!("Unsupported platform for self-update: {reason}"),
-    }
+    };
+    Ok(format!("{}-{triple}.tar.gz", env!("CARGO_PKG_NAME")))
 }
 
 /// Checks GitHub Releases for updates and performs an in-place self-update
