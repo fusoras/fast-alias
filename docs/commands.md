@@ -1,271 +1,113 @@
-# CLI Command Reference & Manual — fa
+# CLI Reference — fa
 
 `fa` provides a simple, safety-first command-line interface to scaffold projects, apply tooling, and manage recipe catalogs across **Debian** and **Termux**.
 
 ## Overview of Commands
 
-| Command | Purpose | Options |
-| ------- | ------- | ------- |
-| `fa new <recipe> <name>` | Scaffolds a new project from the recipe into directory `<name>` | `-v` / `--variant` (e.g. `pnpm`, `bun`, `npm`), `-d` / `--dry-run` to preview, `--no-install` to skip dependency installation |
-| `fa list` | Displays available recipes and grouped aliases in a concise single-line format (routed through system `$PAGER` / `less` when on TTY) | `-sh` / `--show-hidden` to display unsupported recipes |
-| `fa search <query>` | Searches recipes and aliases by name, alias, section, language, or variant and prints matches in the same format as `list` | Query is matched case-insensitively |
-| `fa show <recipe>` | Displays full recipe details: description, language, variants, tooling, files, and steps | Accepts recipe name or alias |
-| `fa alias <name> [args...]` | Runs a general-purpose alias from the `[aliases]` catalog (section-based) | `--dry-run` / `-d` to preview the resolved command; args fill `{{var}}` placeholders or pass through shell-quoted |
-| `fa sync` | Fetches the latest recipe catalog from the repository without recompiling | `-d` / `--dry-run` to preview |
-| `fa self-update` | Checks GitHub Releases and updates the application binary in-place | `-d` / `--dry-run` to preview version update without downloading |
-| `fa self-uninstall` | Safely removes `fa` binary executable and state/config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config, `-d` / `--dry-run` to preview |
-
-> [!NOTE]
-> **Short flags:** `fa -n <recipe> <name>` is shorthand for `fa new <recipe> <name>`, and `fa -a <name>` for `fa alias <name>`. Inside the `new` subcommand, dry-run is `-d` / `--dry-run` (not `-n`).
-| `fa --version` | Displays the current application version; checks GitHub Releases asynchronously for updates and hints when a newer release exists | `-v` |
-| `fa --help` | Displays the command-line help summary | `-h` |
-
-### 1.1 Version & Async Update Check
-
-`fa --version` is instant and offline: it reads the latest release tag cached in `~/.local/state/fa/state.toml` (populated by a previous background check) and, when a newer release exists, appends an update hint:
-
-```text
-v0.1.0-beta.2 -> Update: v0.1.0-beta.3
-    Run 'fa self-update' to update.
-```
-
-It also spawns a detached `update-check` subprocess that queries the GitHub Releases API (via `curl`, honoring `FAST_ALIAS_REPO`) and refreshes the cache asynchronously — the CLI returns immediately and never blocks on the network or surfaces API errors.
+| Command | Shorthand | Purpose | Key Flags |
+| ------- | --------- | ------- | --------- |
+| `fa new <recipe> <name>` | `fa -n` | Scaffold a project into `<name>` | `-v, --variant <name>`, `-d, --dry-run`, `--no-install` |
+| `fa list` | `fa -l` | List available recipes and grouped aliases | `-s, --show-hidden` |
+| `fa search <query>` | — | Search recipes and aliases by keyword | (case-insensitive) |
+| `fa show <target>` | — | Show full details of a recipe or alias | Accepts recipe or alias name |
+| `fa alias <name> [args...]` | `fa -a`, `fa <name>` | Run an alias defined in `[aliases]` | Passthrough or positional arguments |
+| `fa self-update` | — | Update `fa` binary to the latest GitHub release | `-d, --dry-run` |
+| `fa self-uninstall` | — | Remove `fa` binary, state, and config | `-y, --yes`, `-n, --no`, `-d, --dry-run` |
+| `fa --version` | `fa -v` | Display version and check for updates | — |
+| `fa --help` | `fa -h` | Display CLI help | — |
 
 ---
 
-## Command Specifications & Exact Terminal Outputs
+## Commands
 
-### 1. New Project (Simplified Scaffolding)
-**Command**:
+### 1. `fa new <recipe> <name>`
+Scaffolds a new project directory using the specified recipe.
+
 ```bash
-fa new my-recipe myapp
-# Select a variant explicitly:
-fa new my-recipe myapp -v bun
+fa new next-ts myapp               # Default variant
+fa new next-ts myapp -v bun        # Specific variant
+fa new next-ts myapp --dry-run     # Preview actions without creating files
+fa new next-ts myapp --no-install  # Write files but skip package installation
+fa -n next-ts myapp                # Short-flag shorthand
 ```
 
-**Exact Output** (default variant, dependency install):
-```text
-[Recipe] my-recipe · A stack bootstrap with tooling
-[Variant] pnpm
+### 2. `fa list` & `fa search <query>`
+Inspect available recipes and command aliases.
 
-Scaffolding base via: pnpm create app@latest myapp --template basics --no-install
-✓ Base scaffolded at ./myapp
-
-Writing configuration files:
-  ✓ tsconfig.json
-  ✓ .prettierrc
-  ✓ .stylelintrc
-  ✓ oxlint.json
-  ✓ .editorconfig
-
-Installing dependencies...
-  ✓ pnpm add -D oxlint prettier stylelint tsc
-
-Steps:
-  ✓ git init
-
-Project 'myapp' created successfully.
-Run `cd myapp && pnpm dev` to start developing.
-```
-
-### 2. New Project (Dry-Run Preview)
-**Command**:
 ```bash
-fa new my-recipe myapp --dry-run
+fa list               # List supported recipes and command aliases
+fa list -s            # Include unsupported recipes on current platform
+fa search typescript  # Search by name, language, tag, or description
 ```
 
-**Exact Output**:
-```text
-=== DRY-RUN MODE ACTIVE: No changes will be made ===
-[Recipe] my-recipe · A stack bootstrap with tooling
-[Variant] pnpm
-[Dry-Run] Would scaffold base via: pnpm create app@latest myapp --template basics --no-install
-[Dry-Run] Would write file: tsconfig.json
-[Dry-Run] Would write file: .prettierrc
-[Dry-Run] Would run: pnpm add -D oxlint prettier stylelint tsc
-[Dry-Run] Would run: git init
-```
+### 3. `fa show <target>`
+Displays detailed recipe configuration (variants, tooling, scaffolded files, and execution steps) or command alias definitions.
 
-### 3. List Recipes
-**Command**:
 ```bash
-fa list
+fa show next-ts
+fa show gco
 ```
 
-**Exact Output**:
-```text
-Recipes:
-  Usage: fa new <recipe> <name>
+### 4. `fa alias <name> [args...]`
+Executes a command alias configured under `[aliases]` in `recipes.toml`. Aliases can also be invoked directly (`fa <name>`).
 
-  my-recipe (pnpm / bun / npm) · web · typescript [apply]
-  ts-lib (pnpm / bun) · typescript [apply]
-
-Aliases:
-  Usage: fa alias <name> [args...]
-
-  git:
-    gco · Cambiar de rama
-    status · Ver estado del repo
-  sistema:
-    free · Memoria disponible
-```
-
-### 4. Search Recipes
-**Command**:
 ```bash
-fa search my-recipe
-fa search rust
+fa alias gco main       # Explicit subcommand
+fa gco main             # Direct invocation shorthand
+fa -a free              # Short flag
 ```
 
-**Exact Output** (same format as `list`):
-```text
-my-recipe (pnpm / bun / npm) · web · typescript [apply]
-```
+#### Argument Substitution & Passthrough
+Command aliases support dynamic arguments defined in `recipes.toml`:
 
-### 5. Run Alias (Commands by Section)
-**Command**:
-```bash
-fa alias gco main            # git checkout 'main'
-fa alias rm a.txt b.txt      # git rm 'a.txt' 'b.txt' (passthrough)
-fa alias free                # free -h
-fa alias gco main --dry-run  # preview without executing
-fa -a free                   # short-flag shorthand
-```
-
-**Exact Output (Dry-Run)**:
-```text
-  [Dry-Run] Would run: git checkout 'main'
-  [Alias] git · gco
-```
-
-Aliases are grouped by their `[aliases]` section (e.g. `git`, `sistema`, `deploy`). `fa list` and `fa search` display them grouped accordingly.
-
-#### Positional Arguments & Argument Passthrough
-
-`fa` allows dynamic placement of arguments in alias definitions using standard bash variables (`$1`, `$2`, `${1}`, `$@`, `$*`) or template variables (`{{1}}`, `{{2}}`):
+- **Positional variables:** `$1`, `$2` or `{{1}}`, `{{2}}` are replaced by arguments and shell-quoted.
+- **Default fallbacks:** `${1:-fallback}` or `{{1:-fallback}}` apply when the argument is omitted.
+- **Passthrough:** If no positional placeholders are defined, trailing arguments are automatically shell-quoted and appended.
 
 ```toml
-[aliases.wrapper]
-# Using $1 and $2:
-avif = { command = "avifenc -s 0 -q 50 $1 -o $2", description = "Convert image to .avif" }
+# Example definitions in recipes.toml
+[aliases.images]
+avif = { command = "avifenc -s 0 -q ${2:-50} $1 -o ${1%.*}.avif", description = "Convert image" }
 
-# Or using template braces:
-diff-dirs = { command = "diff -u {{1}} {{2}}", description = "Compare directories" }
+[aliases.git]
+gco = { command = "git checkout", description = "Switch branch" } # Passthrough: fa gco main -> git checkout 'main'
 ```
 
-When invoked:
+---
+
+## Features & Utilities
+
+### Dependency Preflight
+Before running any recipe step or alias command, `fa` inspects the shell command and verifies all required binaries exist on `PATH`. If a tool is missing, execution halts immediately with a clear installation hint.
+
+### Version & Background Update Check
+`fa --version` prints the active version immediately. It reads cached release data from `~/.local/state/fa/state.toml` and displays an update hint if a newer release exists. It spawns a non-blocking background check so the CLI never hangs on network requests.
+
+### `fa self-update`
+Downloads and replaces the current binary with the latest release from GitHub Releases.
+
 ```bash
-fa avif input.jpg output.avif
-# Executes: avifenc -s 0 -q 50 'input.jpg' -o 'output.avif'
+fa self-update          # Update in-place
+fa self-update --dry-run # Check latest release asset without modifying binary
 ```
 
-- **Positional variables:** Replaced with corresponding argument index (shell-quoted to prevent injection).
-- **Default values (`${N:-val}` o `{{N:-val}}`):** When the `N`-th argument is omitted, the default fallback value (numbers or string) is used automatically (e.g. `avifenc -q ${3:-50} $1 -o $2`).
-- **Passthrough mode:** If no positional variables are present in the command template, all trailing arguments are automatically shell-quoted and appended to the end.
+### `fa self-uninstall`
+Uninstalls the `fa` binary and prompts to clean up configuration (`~/.config/fa`) and state (`~/.local/state/fa`) directories.
 
-### 6.4 Dependency Preflight
-
-Before running any recipe command (`create`, `[[steps]]`) or alias, `fa` inspects the shell command, extracts the applications it invokes (first token of each `&&`/`||`/`;`/`|` segment, shell builtins excluded), and checks each exists on `PATH`. If a required application is missing, `fa` aborts **before** executing anything and prints a friendly diagnostic instead of the raw shell error:
-
-```text
-✗ Missing application: git is not installed on this system.
-  Install it with your package manager — sudo apt install git.
-```
-
-Nothing is scaffolded or installed when a dependency is missing.
-
-### 6. Show Recipe Details
-**Command**:
 ```bash
-fa show my-recipe
+fa self-uninstall            # Interactive prompt for config/state
+fa self-uninstall --yes      # Non-interactive, removes binary and config/state
+fa self-uninstall --no       # Removes binary only, preserves config/state
+fa self-uninstall --dry-run  # Preview paths targeted for deletion
 ```
 
-**Exact Output**:
-```text
-Recipe: my-recipe
-Description: A stack bootstrap with tooling
-Language: web · typescript
-Aliases: my-recipe
-Variants: pnpm (default), bun, npm
+### Bootstrap Installation Script
+Installs `fa` on a fresh machine (Debian or Termux) without requiring Rust or Cargo:
 
-Create: pnpm create app@latest myapp --template basics --no-install
-
-Tooling:
-  - linter: oxlint (script: lint)
-  - formatter: prettier (script: format)
-  - check: tsc (script: check)
-
-Files:
-  - tsconfig.json (from template)
-  - .prettierrc (from template)
-  - .stylelintrc (from template)
-  - oxlint.json (from template)
-  - .editorconfig (inline)
-
-Steps:
-  - git init (Initialize git repository)
-```
-
-### 7. Self-Update Engine
-**Command**:
-```bash
-fa self-update --dry-run
-```
-
-**Exact Output (Up-to-Date)**:
-```text
-Checking GitHub Releases for updates...
-Current version: <current-version>
-Latest release tag: v<current-version>
-
-[Up-to-Date] fa is already running the latest version.
-```
-
-**Exact Output (Update Available - Dry Run)**:
-```text
-Checking GitHub Releases for updates...
-Current version: <current-version>
-Latest release tag: v<newer-version>
-
-=== DRY-RUN MODE ACTIVE: No binary changes will be made ===
-[Dry-Run] Would download pre-compiled release binary asset: fa-x86_64-unknown-linux-gnu.tar.gz
-[Dry-Run] Would extract and replace executable at: /home/user/.local/bin/fa
-```
-
-### 8. Self-Uninstall Engine
-**Command**:
-```bash
-fa self-uninstall --dry-run
-# Or non-interactive confirmation:
-fa self-uninstall --yes
-# Or skip removing config/state directories:
-fa self-uninstall --no
-```
-
-**Exact Output (Dry-Run Preview)**:
-```text
-=== DRY-RUN MODE ACTIVE: No files will be deleted ===
-=== fa Self-Uninstall Engine ===
-Target Binary Path: /home/user/.local/bin/fa
-Target State Directory: /home/user/.local/state/fa
-Target Config Directory: /home/user/.config/fa
-
-[Dry-Run] Would remove executable: /home/user/.local/bin/fa
-[Dry-Run] Would remove state directory: /home/user/.local/state/fa
-```
-
-### 9. System Bootstrap Installation Script
-**Command**:
 ```bash
 curl -sSL https://raw.githubusercontent.com/<user>/fast-alias/develop/install.sh | sh
 ```
 
-**Purpose**:
-Installs `fa` on a fresh machine (Debian or Termux) in one command without requiring Rust or Cargo.
-
----
-
-## Environment Variables & Token Security
-
-`fa` respects `FAST_ALIAS_REPO` (release repo override) and `GITHUB_TOKEN` (authenticated API rate limit). Tokens are never logged or persisted.
-For token handling rules, see internal governance in `AGENTS.md` (Security Governance).
+### Environment Variables
+- `FAST_ALIAS_REPO`: Override target GitHub repository (`owner/repo`) for updates.
+- `GITHUB_TOKEN`: GitHub personal access token used to avoid API rate limits when checking releases.
