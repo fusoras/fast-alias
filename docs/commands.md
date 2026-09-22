@@ -101,6 +101,10 @@ fa self-uninstall --no       # Removes binary only, preserves config/state
 fa self-uninstall --dry-run  # Preview paths targeted for deletion
 ```
 
+### Shell Completions
+Static scripts complete subcommands, flags, recipe names and alias names.
+See `completions/README.md` for one-line install per shell (Debian + Termux).
+
 ### Bootstrap Installation Script
 Installs `fa` on a fresh machine (Debian or Termux) without requiring Rust or Cargo:
 
