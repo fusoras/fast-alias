@@ -1,5 +1,4 @@
 mod colors;
-mod completions;
 mod config;
 mod engine;
 mod pinning;
@@ -23,7 +22,7 @@ use crate::state::State;
 /// Recipe-based project scaffolder CLI for Debian and Termux.
 #[derive(Parser)]
 #[command(name = "fa", about, long_about = None, disable_version_flag = true)]
-pub(crate) struct Cli {
+struct Cli {
     /// Print version
     #[arg(short = 'v', long)]
     version: bool,
@@ -32,7 +31,7 @@ pub(crate) struct Cli {
 }
 
 #[derive(Subcommand)]
-pub(crate) enum Commands {
+enum Commands {
     /// Scaffold a new project from a recipe into a directory.
     #[command(visible_aliases = ["-n"])]
     New {
@@ -92,11 +91,6 @@ pub(crate) enum Commands {
         #[arg(short = 'd', long = "dry-run")]
         dry_run: bool,
     },
-    /// Print the shell completion script for the given shell to stdout.
-    Completions {
-        /// Shell to generate completions for (bash, zsh, fish, powershell, elvish)
-        shell: String,
-    },
 }
 
 /// Builtin command names and flags that should not be intercepted as direct alias invocations.
@@ -111,7 +105,6 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "-a",
     "self-update",
     "self-uninstall",
-    "completions",
     "update-check",
     "help",
     "--help",
@@ -429,11 +422,6 @@ fn main() -> anyhow::Result<()> {
                 eprintln!("\n{BOLD_RED}Self-uninstall error:{RESET} {e}");
                 std::process::exit(1);
             }
-        }
-        Commands::Completions { shell } => {
-            let mut cmd = Cli::command();
-            let script = crate::completions::generate_completion(&mut cmd, &shell)?;
-            print!("{script}");
         }
     }
 
