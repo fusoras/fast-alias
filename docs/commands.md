@@ -13,6 +13,7 @@
 | `fa alias <name> [args...]` | `fa -a`, `fa <name>` | Run an alias defined in `[aliases]` | Passthrough or positional arguments |
 | `fa self-update` | — | Update `fa` binary to the latest GitHub release | `-d, --dry-run` |
 | `fa self-uninstall` | — | Remove `fa` binary, state, and config | `-y, --yes`, `-n, --no`, `-d, --dry-run` |
+| `fa completions <shell>` | — | Print shell completion script to stdout | `bash`, `zsh`, `fish`, `powershell`, `elvish` |
 | `fa --version` | `fa -v` | Display version and check for updates | — |
 | `fa --help` | `fa -h` | Display CLI help | — |
 
@@ -99,6 +100,15 @@ fa self-uninstall            # Interactive prompt for config/state
 fa self-uninstall --yes      # Non-interactive, removes binary and config/state
 fa self-uninstall --no       # Removes binary only, preserves config/state
 fa self-uninstall --dry-run  # Preview paths targeted for deletion
+```
+
+### Shell Completions
+Prints the completion script for the given shell to stdout (covers all subcommands and flags):
+
+```bash
+fa completions bash > ~/.local/share/bash-completion/completions/fa
+eval "$(fa completions zsh)"            # or save to ${fpath} for lazy loading
+fa completions fish > ~/.config/fish/completions/fa.fish
 ```
 
 ### Bootstrap Installation Script
