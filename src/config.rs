@@ -68,9 +68,108 @@ pub struct Step {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Variable {
     pub prompt: String,
     pub default: Option<String>,
+    /// Optional type check: "string" | "integer" | "float" | "boolean".
+    /// Absent = free string, no type check (legacy behavior).
+    #[serde(rename = "type", default)]
+    pub var_type: Option<String>,
+    /// Optional allow-list: input must equal one of these strings.
+    #[serde(default)]
+    pub choices: Option<Vec<String>>,
+    /// Optional regex the string form must match (type must be string).
+    #[serde(default)]
+    pub pattern: Option<String>,
+    /// Optional: when true, empty input is rejected.
+    #[serde(default)]
+    pub required: Option<bool>,
+}
+
+impl Variable {
+    /// True when the variable declares any validation rule.
+    pub fn is_typed(&self) -> bool {
+        self.var_type.is_some()
+            || self.choices.is_some()
+            || self.pattern.is_some()
+            || self.required == Some(true)
+    }
+
+    /// Schema check at config-load time: unknown types, empty choices,
+    /// `pattern` on non-string types and invalid regexes fail with the
+    /// recipe + variable name in the message.
+    pub fn validate_schema(&self, recipe: &str, name: &str) -> anyhow::Result<()> {
+        if let Some(t) = &self.var_type
+            && !matches!(t.as_str(), "string" | "integer" | "float" | "boolean") {
+                anyhow::bail!(
+                    "recipe '{recipe}' variable '{name}': unknown type '{t}' (expected one of: string, integer, float, boolean)"
+                );
+            }
+        if let Some(choices) = &self.choices
+            && choices.is_empty() {
+                anyhow::bail!(
+                    "recipe '{recipe}' variable '{name}': 'choices' must not be empty"
+                );
+            }
+        if let Some(p) = &self.pattern {
+            let t = self.var_type.as_deref().unwrap_or("string");
+            if t != "string" {
+                anyhow::bail!(
+                    "recipe '{recipe}' variable '{name}': 'pattern' requires type = \"string\" (got '{t}')"
+                );
+            }
+            regex::Regex::new(p).map_err(|e| {
+                anyhow::anyhow!(
+                    "recipe '{recipe}' variable '{name}': invalid pattern regex '{p}': {e}"
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Runtime value check: required-emptiness, type, choices and pattern.
+    /// Empty (or blank when required) values skip type/choices/pattern so an
+    /// optional variable left blank stays allowed.
+    pub fn validate_value(&self, name: &str, value: &str) -> Result<(), String> {
+        if self.required == Some(true) && value.trim().is_empty() {
+            return Err(format!("'{name}' is required and must not be empty"));
+        }
+        if value.is_empty() {
+            return Ok(());
+        }
+        if let Some(t) = self.var_type.as_deref() {
+            let ok = match t {
+                "string" => true,
+                "integer" => value.trim().parse::<i64>().is_ok(),
+                "float" => value.trim().parse::<f64>().is_ok(),
+                "boolean" => matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "true" | "false" | "1" | "0" | "yes" | "no" | "y" | "n"
+                ),
+                unknown => {
+                    return Err(format!(
+                        "'{name}': unknown type '{unknown}' (expected one of: string, integer, float, boolean)"
+                    ));
+                }
+            };
+            if !ok {
+                return Err(format!("'{name}': '{value}' is not a valid {t}"));
+            }
+        }
+        if let Some(choices) = &self.choices
+            && !choices.iter().any(|c| c == value) {
+                return Err(format!("'{name}': '{value}' is not one of: {}", choices.join(", ")));
+            }
+        if let Some(p) = &self.pattern {
+            let re = regex::Regex::new(p)
+                .map_err(|e| format!("'{name}': invalid pattern regex '{p}': {e}"))?;
+            if !re.is_match(value) {
+                return Err(format!("'{name}': '{value}' does not match pattern '{p}'"));
+            }
+        }
+        Ok(())
+    }
 }
 
 /// Executable command declared in the alias catalog, invoked via `fa alias <name>`.
@@ -186,6 +285,7 @@ impl Config {
         };
 
         config.validate_template_paths()?;
+        config.validate_variables()?;
 
         Ok((config, source_summary))
     }
@@ -383,6 +483,16 @@ impl Config {
     /// Returns the effective default variant for a recipe (first declared, or empty).
     pub fn default_variant(recipe: &Recipe) -> String {
         recipe.variants.first().cloned().unwrap_or_default()
+    }
+
+    /// Schema check for every `[variables]` entry in every recipe.
+    pub fn validate_variables(&self) -> anyhow::Result<()> {
+        for (recipe_key, recipe) in &self.recipes {
+            for (var_name, var) in &recipe.variables {
+                var.validate_schema(recipe_key, var_name)?;
+            }
+        }
+        Ok(())
     }
 
     /// Resolves an input query to its full command definition, returning
@@ -674,5 +784,157 @@ description = "A demo recipe"
             );
         }
         println!("   ✓ Escapes rejected clearly.\n");
+    }
+
+    #[test]
+    fn var_schema_should_reject_unknown_type() {
+        let cfg: Config = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "d"
+[recipes.demo.variables]
+port = { prompt = "Port", default = "3000", type = "date" }
+"#,
+        )
+        .expect("shape must parse; type checked at validation");
+        let err = cfg.validate_variables().expect_err("unknown type must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("demo") && msg.contains("port") && msg.contains("date"),
+            "error must name recipe + variable + bad type, got: '{msg}'");
+    }
+
+    #[test]
+    fn var_schema_should_reject_unknown_keys() {
+        let parsed: Result<Config, _> = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "d"
+[recipes.demo.variables]
+port = { prompt = "Port", default = "3000", bogus_key = "x" }
+"#,
+        );
+        let err = parsed.expect_err("unknown variable key must fail at load");
+        assert!(err.to_string().contains("bogus_key"),
+            "error must name the unknown key, got: '{err}'");
+    }
+
+    #[test]
+    fn var_schema_should_reject_empty_choices() {
+        let cfg: Config = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "d"
+[recipes.demo.variables]
+pm = { prompt = "PM", choices = [] }
+"#,
+        )
+        .expect("shape must parse");
+        let err = cfg.validate_variables().expect_err("empty choices must fail");
+        assert!(err.to_string().contains("must not be empty"), "got: '{err}'");
+    }
+
+    #[test]
+    fn var_schema_should_reject_pattern_with_non_string_type() {
+        let cfg: Config = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "d"
+[recipes.demo.variables]
+port = { prompt = "Port", type = "integer", pattern = "^[0-9]+$" }
+"#,
+        )
+        .expect("shape must parse");
+        let err = cfg.validate_variables().expect_err("pattern + integer must fail");
+        assert!(err.to_string().contains("requires type"), "got: '{err}'");
+    }
+
+    #[test]
+    fn var_schema_should_reject_invalid_regex() {
+        let cfg: Config = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "d"
+[recipes.demo.variables]
+slug = { prompt = "Slug", pattern = "([a-" }
+"#,
+        )
+        .expect("shape must parse");
+        let err = cfg.validate_variables().expect_err("invalid regex must fail");
+        assert!(err.to_string().contains("invalid pattern"), "got: '{err}'");
+    }
+
+    #[test]
+    fn var_schema_should_accept_valid_optional_keys() {
+        let cfg: Config = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "d"
+[recipes.demo.variables]
+port = { prompt = "Port", default = "3000", type = "integer", choices = ["3000", "8080"] }
+slug = { prompt = "Slug", type = "string", pattern = "^[a-z0-9-]+$", required = true }
+"#,
+        )
+        .expect("valid typed variables must parse");
+        cfg.validate_variables().expect("valid typed variables must validate");
+        assert!(cfg.recipes["demo"].variables["port"].is_typed());
+    }
+
+    #[test]
+    fn var_plain_prompt_without_typing_should_keep_working() {
+        let cfg: Config = toml::from_str(
+            r#"
+[recipes.demo]
+name = "Demo"
+description = "d"
+[recipes.demo.variables]
+name = { prompt = "Project name", default = "app" }
+"#,
+        )
+        .expect("plain variable must parse");
+        cfg.validate_variables().expect("plain variable must validate");
+        let v = &cfg.recipes["demo"].variables["name"];
+        assert!(!v.is_typed(), "untyped variable must report is_typed() == false");
+        assert!(v.validate_value("name", "anything at all!@#").is_ok());
+        assert!(v.validate_value("name", "").is_ok(), "empty stays allowed when not required");
+    }
+
+    #[test]
+    fn var_value_should_reject_bad_type_choice_pattern_and_required_empty() {
+        let int_var = Variable {
+            prompt: "Port".into(), default: Some("3000".into()),
+            var_type: Some("integer".into()), choices: None, pattern: None, required: None,
+        };
+        assert!(int_var.validate_value("port", "abc").is_err(), "non-integer must fail");
+        assert!(int_var.validate_value("port", "8080").is_ok());
+
+        let choice_var = Variable {
+            prompt: "PM".into(), default: None,
+            var_type: None, choices: Some(vec!["pnpm".into(), "bun".into()]),
+            pattern: None, required: None,
+        };
+        assert!(choice_var.validate_value("pm", "npm").is_err(), "off-list choice must fail");
+        assert!(choice_var.validate_value("pm", "pnpm").is_ok());
+
+        let pattern_var = Variable {
+            prompt: "Slug".into(), default: None,
+            var_type: Some("string".into()), choices: None,
+            pattern: Some("^[a-z0-9-]+$".into()), required: None,
+        };
+        assert!(pattern_var.validate_value("slug", "Bad Name!").is_err(), "pattern mismatch must fail");
+        assert!(pattern_var.validate_value("slug", "my-app-1").is_ok());
+
+        let req_var = Variable {
+            prompt: "Token".into(), default: None,
+            var_type: None, choices: None, pattern: None, required: Some(true),
+        };
+        assert!(req_var.validate_value("token", "").is_err(), "empty required must fail");
+        assert!(req_var.validate_value("token", "  ").is_err(), "blank required must fail");
+        assert!(req_var.validate_value("token", "x").is_ok());
     }
 }

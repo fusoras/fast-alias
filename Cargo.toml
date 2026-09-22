@@ -7,6 +7,7 @@ description = "Recipe-based project scaffolder CLI for Debian and Termux"
 [dependencies]
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
+regex = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 

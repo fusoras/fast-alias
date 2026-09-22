@@ -167,32 +167,6 @@ pub fn find_unknown_placeholders(input: &str, vars: &HashMap<String, String>) ->
     unknowns
 }
 
-/// Resolves all placeholders across a set of inputs, prompting via the provided
-/// resolver closure for any variable that has no known value yet.
-pub fn resolve_all(
-    inputs: &[String],
-    vars: &mut HashMap<String, String>,
-    defaults: &HashMap<String, String>,
-    mut resolver: impl FnMut(&str) -> String,
-) {
-    for input in inputs {
-        let unknowns = find_unknown_placeholders(input, vars);
-        for key in unknowns {
-            let value = if let Some(default) = defaults.get(&key) {
-                let answer = resolver(&key);
-                if answer.trim().is_empty() {
-                    default.clone()
-                } else {
-                    answer
-                }
-            } else {
-                resolver(&key)
-            };
-            vars.insert(key, value);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,26 +216,6 @@ mod tests {
 
         let out2 = substitute_shell("echo {{name}}", &vars);
         assert_eq!(out2, "echo 'myapp; rm -rf ~'");
-    }
-
-    #[test]
-    fn resolve_all_with_defaults_and_interactive_resolver() {
-        let inputs = vec!["{{name}}".to_string(), "{{port}}".to_string()];
-        let mut vars = HashMap::new();
-        let mut defaults = HashMap::new();
-        defaults.insert("port".to_string(), "3000".to_string());
-
-        // Resolver returns "my-app" for name, and empty string "" for port (to trigger default fallback)
-        resolve_all(&inputs, &mut vars, &defaults, |key| {
-            if key == "name" {
-                "my-app".to_string()
-            } else {
-                "".to_string()
-            }
-        });
-
-        assert_eq!(vars.get("name"), Some(&"my-app".to_string()));
-        assert_eq!(vars.get("port"), Some(&"3000".to_string()), "Empty answer must fallback to default");
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::process::Command;
 
 use crate::colors::*;
 use crate::platform::Platform;
-use crate::templating::{resolve_all, substitute, substitute_shell};
+use crate::templating::{find_unknown_placeholders, substitute, substitute_shell};
 
 #[derive(Debug, Clone)]
 pub struct NewOptions {
@@ -176,28 +176,22 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
     }
 
     // Build defaults from recipe `variables` table (prompt: label, default: value).
-    let defaults: HashMap<String, String> = recipe
-        .variables
-        .iter()
-        .filter_map(|(k, v)| v.default.clone().map(|d| (k.clone(), d)))
-        .collect();
-    let prompts: HashMap<String, String> = recipe
-        .variables
-        .iter()
-        .map(|(k, v)| (k.clone(), v.prompt.clone()))
-        .collect();
-
-    if !opts.dry_run {
-        resolve_all(&inputs, &mut vars, &defaults, |key| {
-            let label = prompts.get(key).cloned().unwrap_or_else(|| format!("Value for {key}"));
-            let default = defaults.get(key).cloned().unwrap_or_default();
-            prompt_input(&label, &default)
-        });
-    } else {
-        // In dry-run, use defaults without prompting.
-        for (k, d) in &defaults {
-            vars.entry(k.clone()).or_insert_with(|| d.clone());
-        }
+    if let Err(e) = collect_validated_vars(
+        recipe,
+        &inputs,
+        &mut vars,
+        opts.dry_run,
+        std::io::IsTerminal::is_terminal(&std::io::stdin()),
+        &mut |label, default| prompt_input(label, default),
+    ) {
+        return NewResult {
+            outcome: NewOutcome {
+                project_dir: opts.project_name.clone(),
+                installed: false,
+                register: false,
+            },
+            result: Err(e),
+        };
     }
 
     // 1. Create base
@@ -683,6 +677,92 @@ pub fn format_alias_groups(config: &Config) -> Vec<String> {
 /// Returns a human-readable "supported" marker for a recipe on the current platform.
 pub fn is_supported(_recipe: &Recipe) -> bool {
     true
+}
+
+/// Max interactive re-prompts after a validation failure before giving up.
+pub const MAX_PROMPT_RETRIES: u32 = 3;
+
+/// Collects template variables with optional typed validation.
+///
+/// - `dry_run`: fill defaults without prompting (never calls `prompt`);
+///   invalid defaults still fail fast.
+/// - `interactive` (TTY): prompt via `prompt`; a failed validation re-prompts
+///   (bounded by [`MAX_PROMPT_RETRIES`]) instead of hanging forever.
+/// - non-interactive: `FA_VAR_<KEY>` env override or default, never prompts,
+///   invalid values fail fast with the variable name in the error.
+///
+/// Untyped variables behave exactly as before.
+///
+/// Validated values flow into `{{var}}` templating unchanged.
+pub fn collect_validated_vars(
+    recipe: &Recipe,
+    inputs: &[String],
+    vars: &mut HashMap<String, String>,
+    dry_run: bool,
+    interactive: bool,
+    prompt: &mut dyn FnMut(&str, &str) -> String,
+) -> anyhow::Result<()> {
+    let defaults: HashMap<String, String> = recipe
+        .variables
+        .iter()
+        .filter_map(|(k, v)| v.default.clone().map(|d| (k.clone(), d)))
+        .collect();
+    let prompts: HashMap<String, String> = recipe
+        .variables
+        .iter()
+        .map(|(k, v)| (k.clone(), v.prompt.clone()))
+        .collect();
+
+    // Validates one collected value against its declared rules (if any).
+    let check = |key: &str, value: &str| -> anyhow::Result<()> {
+        if let Some(spec) = recipe.variables.get(key)
+            && spec.is_typed() {
+                spec.validate_value(key, value).map_err(|e| anyhow::anyhow!("{e}"))?;
+            }
+        Ok(())
+    };
+
+    if dry_run {
+        for (k, d) in &defaults {
+            check(k, d)?;
+            vars.entry(k.clone()).or_insert_with(|| d.clone());
+        }
+        return Ok(());
+    }
+
+    for input in inputs {
+        let unknowns = find_unknown_placeholders(input, vars);
+        for key in unknowns {
+            let label = prompts.get(&key).cloned().unwrap_or_else(|| format!("Value for {key}"));
+            let default = defaults.get(&key).cloned().unwrap_or_default();
+            if interactive {
+                let mut attempts = 0;
+                loop {
+                    let answer = prompt(&label, &default);
+                    let value = if answer.trim().is_empty() { default.clone() } else { answer };
+                    match check(&key, &value) {
+                        Ok(()) => {
+                            vars.insert(key.clone(), value);
+                            break;
+                        }
+                        Err(e) => {
+                            attempts += 1;
+                            if attempts > MAX_PROMPT_RETRIES {
+                                anyhow::bail!("{e} (gave up after {MAX_PROMPT_RETRIES} retries)");
+                            }
+                            println!("{BOLD_YELLOW}Invalid value:{RESET} {e} — try again.");
+                        }
+                    }
+                }
+            } else {
+                let env_key = format!("FA_VAR_{}", key.to_ascii_uppercase());
+                let value = std::env::var(&env_key).unwrap_or(default);
+                check(&key, &value)?;
+                vars.insert(key, value);
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Prompts the user for input via stdin with a label and optional default.
@@ -1390,5 +1470,165 @@ free = { command = "free -h", description = "Free memory" }
             "Escape must name the templates dir, got: '{msg}'"
         );
         println!("   ✓ Base escape rejected clearly.\n");
+    }
+
+    /// Builds a recipe with a single typed variable for validation tests.
+    fn typed_test_recipe(var: crate::config::Variable) -> Recipe {
+        let mut variables = BTreeMap::new();
+        variables.insert("port".to_string(), var);
+        Recipe {
+            name: "Test".to_string(),
+            description: "test".to_string(),
+            language: None,
+            aliases: vec![],
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables,
+            steps: vec![],
+            final_message: None,
+            pin_versions: None,
+            template_base: None,
+        }
+    }
+
+    fn int_port_var(default: &str) -> crate::config::Variable {
+        crate::config::Variable {
+            prompt: "Port".to_string(),
+            default: Some(default.to_string()),
+            var_type: Some("integer".to_string()),
+            choices: None,
+            pattern: None,
+            required: None,
+        }
+    }
+
+    #[test]
+    fn non_interactive_should_fail_fast_on_invalid_default_without_prompting() {
+        let recipe = typed_test_recipe(int_port_var("abc"));
+        let inputs = vec!["listen {{port}}".to_string()];
+        let mut vars = HashMap::new();
+        let mut calls = 0;
+        let mut prompt = |_: &str, _: &str| {
+            calls += 1;
+            "unreachable".to_string()
+        };
+        let err = collect_validated_vars(&recipe, &inputs, &mut vars, false, false, &mut prompt)
+            .expect_err("invalid default must fail fast off-TTY");
+        assert_eq!(calls, 0, "non-interactive path must never prompt (no hang)");
+        assert!(err.to_string().contains("port"), "error must name the variable, got: '{err}'");
+    }
+
+    #[test]
+    fn non_interactive_should_accept_valid_default_silently() {
+        let recipe = typed_test_recipe(int_port_var("8080"));
+        let inputs = vec!["listen {{port}}".to_string()];
+        let mut vars = HashMap::new();
+        let mut prompt = |_: &str, _: &str| panic!("must not prompt off-TTY");
+        collect_validated_vars(&recipe, &inputs, &mut vars, false, false, &mut prompt)
+            .expect("valid default must pass");
+        assert_eq!(vars.get("port"), Some(&"8080".to_string()));
+    }
+
+    #[test]
+    fn interactive_should_reprompt_on_invalid_then_accept_valid() {
+        let recipe = typed_test_recipe(crate::config::Variable {
+            prompt: "PM".to_string(),
+            default: None,
+            var_type: None,
+            choices: Some(vec!["pnpm".to_string(), "bun".to_string()]),
+            pattern: None,
+            required: None,
+        });
+        let inputs = vec!["install via {{port}}".to_string()];
+        let mut vars = HashMap::new();
+        let mut answers = vec!["npm".to_string(), "pnpm".to_string()].into_iter();
+        let mut calls = 0;
+        let mut prompt = |_: &str, _: &str| {
+            calls += 1;
+            answers.next().unwrap()
+        };
+        collect_validated_vars(&recipe, &inputs, &mut vars, false, true, &mut prompt)
+            .expect("second valid answer must be accepted");
+        assert_eq!(calls, 2, "one rejection + one acceptance");
+        assert_eq!(vars.get("port"), Some(&"pnpm".to_string()));
+    }
+
+    #[test]
+    fn interactive_should_give_up_after_max_retries() {
+        let recipe = typed_test_recipe(int_port_var(""));
+        let inputs = vec!["listen {{port}}".to_string()];
+        let mut vars = HashMap::new();
+        let mut calls = 0;
+        let mut prompt = |_: &str, _: &str| {
+            calls += 1;
+            "abc".to_string()
+        };
+        let err = collect_validated_vars(&recipe, &inputs, &mut vars, false, true, &mut prompt)
+            .expect_err("persistent invalid input must error, not hang");
+        assert_eq!(calls, MAX_PROMPT_RETRIES as usize + 1, "bounded retries, no infinite hang");
+        assert!(err.to_string().contains("port"), "got: '{err}'");
+    }
+
+    #[test]
+    fn dry_run_should_validate_defaults_without_prompting() {
+        let recipe = typed_test_recipe(int_port_var("abc"));
+        let inputs = vec!["listen {{port}}".to_string()];
+        let mut vars = HashMap::new();
+        let mut prompt = |_: &str, _: &str| panic!("dry-run must not prompt");
+        let err = collect_validated_vars(&recipe, &inputs, &mut vars, true, false, &mut prompt)
+            .expect_err("invalid default must fail even in dry-run");
+        assert!(err.to_string().contains("port"), "got: '{err}'");
+    }
+
+    #[test]
+    fn interactive_empty_answer_should_fall_back_to_default() {
+        let recipe = typed_test_recipe(int_port_var("3000"));
+        let inputs = vec!["listen {{port}}".to_string()];
+        let mut vars = HashMap::new();
+        let mut prompt = |_: &str, _: &str| String::new();
+        collect_validated_vars(&recipe, &inputs, &mut vars, false, true, &mut prompt)
+            .expect("empty answer must fall back to default");
+        assert_eq!(vars.get("port"), Some(&"3000".to_string()));
+    }
+
+    #[test]
+    fn untyped_variable_should_behave_exactly_as_before() {
+        let mut variables = BTreeMap::new();
+        variables.insert(
+            "name".to_string(),
+            crate::config::Variable {
+                prompt: "Project name".to_string(),
+                default: Some("app".to_string()),
+                var_type: None,
+                choices: None,
+                pattern: None,
+                required: None,
+            },
+        );
+        let recipe = Recipe {
+            name: "Test".to_string(),
+            description: "test".to_string(),
+            language: None,
+            aliases: vec![],
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables,
+            steps: vec![],
+            final_message: None,
+            pin_versions: None,
+            template_base: None,
+        };
+        let inputs = vec!["create {{name}}".to_string()];
+        let mut vars = HashMap::new();
+        let mut prompt = |_: &str, _: &str| panic!("must not prompt off-TTY");
+        collect_validated_vars(&recipe, &inputs, &mut vars, false, false, &mut prompt)
+            .expect("untyped default must pass untouched");
+        assert_eq!(vars.get("name"), Some(&"app".to_string()));
     }
 }

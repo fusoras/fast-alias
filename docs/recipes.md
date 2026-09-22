@@ -92,6 +92,27 @@ command = "git init"
 description = "Initialize git repository"
 ```
 
+## Variables
+
+Each entry prompts once during `fa new` (`prompt` label, `default` on empty
+input). All validation keys are optional — a plain `prompt` keeps the legacy
+free-string behavior with zero changes:
+
+```toml
+[recipes.demo.variables]
+port = { prompt = "Port", default = "3000", type = "integer", choices = ["3000", "8080"] }
+slug = { prompt = "Slug", type = "string", pattern = "^[a-z0-9-]+$", required = true }
+```
+
+- **`type`** (`string` | `integer` | `float` | `boolean`; default: free string).
+- **`choices`**: input must equal one of the listed strings (must be non-empty).
+- **`pattern`**: regex the value must match (use `^…$` to anchor; string only).
+- **`required`**: `true` rejects empty input.
+- Unknown keys, unknown types, empty `choices`, `pattern` on non-string types
+  and invalid regexes fail at config load naming recipe + variable.
+- Interactive `fa new` re-prompts (max 3 retries); non-interactive mode
+  (`FA_VAR_<NAME>` env override or default) fails fast instead of hanging.
+
 ## Step Execution (`steps`)
 
 Recipes can declare ordered shell commands executed after files are written and dependencies installed.
