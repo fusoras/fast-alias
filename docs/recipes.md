@@ -38,6 +38,7 @@ aliases     = ["mr"]
 language    = "web · typescript"
 variants    = ["pnpm", "bun", "npm"]
 pin_versions = true                                  # strip ^/~ from package.json after installs (default: false)
+final_message = "Run `cd {{name}} && cargo run` to start" # custom success message (default: Run 'cd <name>' to go to project)
 
 [recipes.my-recipe.variables]                        # prompts with defaults
 name   = { prompt = "Project name", default = "app" }

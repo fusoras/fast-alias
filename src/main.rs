@@ -459,35 +459,40 @@ fn show_command(config: &Config, section: &str, key: &str) {
 
 fn show_recipe(config: &Config, key: &str) {
     let recipe = &config.recipes[key];
-    println!("Recipe: {key}");
-    println!("Description: {}", recipe.description);
+    print!("{}", format_recipe_details(recipe, key));
+}
+
+fn format_recipe_details(recipe: &crate::config::Recipe, key: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("Recipe: {key}\n"));
+    out.push_str(&format!("Description: {}\n", recipe.description));
     if let Some(lang) = &recipe.language {
-        println!("Language: {lang}");
+        out.push_str(&format!("Language: {lang}\n"));
     }
     if !recipe.aliases.is_empty() {
-        println!("Aliases: {}", recipe.aliases.join(", "));
+        out.push_str(&format!("Aliases: {}\n", recipe.aliases.join(", ")));
     }
     if !recipe.variants.is_empty() {
-        println!("Variants: {}", recipe.variants.join(", "));
+        out.push_str(&format!("Variants: {}\n", recipe.variants.join(", ")));
     }
     if let Some(create) = &recipe.create
         && let Some(cmd) = &create.command {
-            println!("\nCreate: {cmd}");
+            out.push_str(&format!("\nCreate: {cmd}\n"));
         }
     if let Some(tooling) = &recipe.tooling {
-        println!("\nTooling:");
+        out.push_str("\nTooling:\n");
         if let Some(l) = &tooling.linter {
-            println!("  - linter: {} (script: {})", l.tool, l.script.as_deref().unwrap_or("-"));
+            out.push_str(&format!("  - linter: {} (script: {})\n", l.tool, l.script.as_deref().unwrap_or("-")));
         }
         if let Some(f) = &tooling.formatter {
-            println!("  - formatter: {} (script: {})", f.tool, f.script.as_deref().unwrap_or("-"));
+            out.push_str(&format!("  - formatter: {} (script: {})\n", f.tool, f.script.as_deref().unwrap_or("-")));
         }
         if let Some(c) = &tooling.check {
-            println!("  - check: {} (script: {})", c.tool, c.script.as_deref().unwrap_or("-"));
+            out.push_str(&format!("  - check: {} (script: {})\n", c.tool, c.script.as_deref().unwrap_or("-")));
         }
     }
     if !recipe.files.is_empty() {
-        println!("\nFiles:");
+        out.push_str("\nFiles:\n");
         for (dest, spec) in &recipe.files {
             let mode = if spec.from.is_some() {
                 "from"
@@ -496,19 +501,25 @@ fn show_recipe(config: &Config, key: &str) {
             } else {
                 "inline"
             };
-            println!("  - {dest} ({mode})");
+            out.push_str(&format!("  - {dest} ({mode})\n"));
         }
     }
     if !recipe.steps.is_empty() {
-        println!("\nSteps:");
+        out.push_str("\nSteps:\n");
         for step in &recipe.steps {
-            println!(
-                "  - {} ({})",
+            out.push_str(&format!(
+                "  - {} ({})\n",
                 step.command,
                 step.description.as_deref().unwrap_or("no description")
-            );
+            ));
         }
     }
+    let final_msg = recipe
+        .final_message
+        .as_deref()
+        .unwrap_or("Run 'cd <project-name>' to go to project");
+    out.push_str(&format!("\nFinal Message: {final_msg}\n"));
+    out
 }
 
 /// Returns the current UTC timestamp in ISO 8601 format (second precision).
@@ -713,5 +724,42 @@ mod tests {
             !formatted.contains("alias, run, -a"),
             "The `run` command must stay free for future use, not bound to the alias subcommand: got:\n{formatted}"
         );
+    }
+
+    #[test]
+    fn show_recipe_should_include_final_message_or_default_hint() {
+        println!("\n🔍 [TEST] Show Recipe — displays final_message and fallback hint");
+        let mut recipe = crate::config::Recipe {
+            name: "Test Stack".to_string(),
+            description: "Test description".to_string(),
+            aliases: vec![],
+            language: None,
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables: Default::default(),
+            steps: vec![],
+            final_message: None,
+            pin_versions: None,
+            template_base: None,
+        };
+
+        // When final_message is None, defaults to cd project-name hint
+        let default_output = format_recipe_details(&recipe, "test-stack");
+        assert!(
+            default_output.contains("Final Message: Run 'cd <project-name>' to go to project"),
+            "Output must contain default navigation hint when unset, got:\n{default_output}"
+        );
+
+        // When final_message is Some(...), displays the custom message
+        recipe.final_message = Some("Run `cd {{name}} && cargo test` to start".to_string());
+        let custom_output = format_recipe_details(&recipe, "test-stack");
+        assert!(
+            custom_output.contains("Final Message: Run `cd {{name}} && cargo test` to start"),
+            "Output must contain the custom final message, got:\n{custom_output}"
+        );
+        println!("   ✓ Both default and custom final_message displayed in show_recipe.\n");
     }
 }

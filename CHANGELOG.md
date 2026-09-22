@@ -10,6 +10,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `fa completions <shell>`: print shell completion script to stdout for `bash`, `zsh`, `fish`, `powershell`, `elvish` (via `clap_complete`, matching the `clap` CLI definition); unknown shell errors listing supported shells, exit 1.
+- `final_message` recipe option: customize the post-scaffold success message in `recipes.toml` / `recipes.d/*.toml` with automatic variable substitution (`{{name}}`, `{name}`).
+- Neutral post-scaffold navigation hint: `Run 'cd <project-name>' to go to project` replaces the hardcoded `node --run dev` fallback.
+- `fa show`: displays `Final Message:` for recipes, showing the configured custom message or the default navigation hint.
 
 ## [v0.1.0-beta.4] - 2026-09-21
 

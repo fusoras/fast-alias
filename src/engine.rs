@@ -417,12 +417,8 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
     }
 
     println!("\n{BOLD_GREEN}Project '{}' created successfully.{RESET}", opts.project_name);
-    if let Some(msg) = &recipe.final_message {
-        println!("\n{BOLD_CYAN}[Note]{RESET} {msg}\n");
-    }
-    if !opts.no_install {
-        println!("Run `{DIM}cd {}{RESET} && {DIM}node --run dev{RESET}` to start developing.", opts.project_name);
-    }
+    let final_msg = resolve_final_message(recipe, &opts.project_name, &vars);
+    println!("{final_msg}");
     NewResult {
         outcome: NewOutcome {
             project_dir: opts.project_name.clone(),
@@ -430,6 +426,20 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
             register: !opts.dry_run,
         },
         result: Ok(()),
+    }
+}
+
+/// Formats the final post-scaffold message shown to the user upon success.
+/// If the recipe specifies a `final_message`, it is rendered with variables (`{{name}}`, `{name}`, etc.) substituted.
+/// Otherwise, returns the default neutral navigation hint: "Run `cd <name>` to go to project."
+pub fn resolve_final_message(recipe: &Recipe, project_name: &str, vars: &HashMap<String, String>) -> String {
+    if let Some(msg) = &recipe.final_message {
+        let mut rendered = substitute(msg, vars);
+        rendered = rendered.replace("{name}", project_name);
+        rendered = rendered.replace("{project_name}", project_name);
+        rendered
+    } else {
+        format!("Run `{DIM}cd {project_name}{RESET}` to go to project.")
     }
 }
 
@@ -1630,5 +1640,89 @@ free = { command = "free -h", description = "Free memory" }
         collect_validated_vars(&recipe, &inputs, &mut vars, false, false, &mut prompt)
             .expect("untyped default must pass untouched");
         assert_eq!(vars.get("name"), Some(&"app".to_string()));
+    }
+
+    #[test]
+    fn resolve_final_message_should_default_to_cd_project_name() {
+        println!("\n🔍 [TEST] Final Message — defaults to cd project-name");
+        let recipe = Recipe {
+            name: "Rust CLI".to_string(),
+            description: "Rust stack".to_string(),
+            aliases: vec![],
+            language: Some("rust".to_string()),
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables: Default::default(),
+            steps: vec![],
+            final_message: None,
+            pin_versions: None,
+            template_base: None,
+        };
+        let vars = HashMap::new();
+        let msg = resolve_final_message(&recipe, "my-app", &vars);
+        assert_eq!(
+            msg,
+            format!("Run `{DIM}cd my-app{RESET}` to go to project."),
+            "Default message must instruct to cd to project"
+        );
+        println!("   ✓ Default navigation hint matches 'Run cd <name> to go to project'.\n");
+    }
+
+    #[test]
+    fn resolve_final_message_should_use_custom_recipe_message() {
+        println!("\n🔍 [TEST] Final Message — uses custom message when specified");
+        let recipe = Recipe {
+            name: "Custom Stack".to_string(),
+            description: "Custom stack".to_string(),
+            aliases: vec![],
+            language: None,
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables: Default::default(),
+            steps: vec![],
+            final_message: Some("Run `cd {{name}} && cargo run` to start.".to_string()),
+            pin_versions: None,
+            template_base: None,
+        };
+        let mut vars = HashMap::new();
+        vars.insert("name".to_string(), "my-app".to_string());
+        let msg = resolve_final_message(&recipe, "my-app", &vars);
+        assert_eq!(
+            msg,
+            "Run `cd my-app && cargo run` to start.",
+            "Custom final_message must override default and substitute {{name}}"
+        );
+        println!("   ✓ Custom message respected and {{name}} substituted.\n");
+    }
+
+    #[test]
+    fn resolve_final_message_should_support_brace_name_fallbacks() {
+        println!("\n🔍 [TEST] Final Message — supports {{name}} and {{project_name}} placeholders");
+        let recipe = Recipe {
+            name: "Go Stack".to_string(),
+            description: "Go stack".to_string(),
+            aliases: vec![],
+            language: None,
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables: Default::default(),
+            steps: vec![],
+            final_message: Some("cd {name} && go run .".to_string()),
+            pin_versions: None,
+            template_base: None,
+        };
+        let vars = HashMap::new();
+        let msg = resolve_final_message(&recipe, "my-go-tool", &vars);
+        assert_eq!(msg, "cd my-go-tool && go run .");
+        println!("   ✓ single-brace name placeholder replaced successfully.\n");
     }
 }
