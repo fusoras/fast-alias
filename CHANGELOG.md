@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `fa show`: displays `Final Message:` for recipes, showing the configured custom message or the default navigation hint.
 - `fa recipe` (`new` / `edit` / `validate`): create or edit recipe files under `~/.config/fa/recipes.d/` opened in `$VISUAL`/`$EDITOR`; `validate` checks all config files or a single recipe by name and reports parse errors plus duplicate recipe keys. No flags, no trust prompt; new unit tests in `src/recipe.rs`.
 
+### Fixed
+
+- CLI help: `fa <command> --help` / `fa help <command>` now render that command's own help instead of always falling back to the top-level help (`render_cli_help` preserves subcommand context, e.g. `fa recipe --help`, `fa help recipe new`); top-level help keeps inline aliases.
+
 ## [v0.1.0-beta.4] - 2026-09-21
 
 ### Added

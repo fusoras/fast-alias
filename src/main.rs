@@ -258,8 +258,7 @@ fn main() -> anyhow::Result<()> {
         Ok(cli) => cli,
         Err(err) => {
             if err.kind() == clap::error::ErrorKind::DisplayHelp {
-                let help_str = Cli::command().render_help().to_string();
-                println!("{}", format_help_with_inline_aliases(&help_str));
+                println!("{}", render_cli_help(&err));
                 return Ok(());
             }
             if err.kind() == clap::error::ErrorKind::DisplayVersion {
@@ -665,6 +664,13 @@ fn format_help_with_inline_aliases(input: &str) -> String {
     out.join("\n")
 }
 
+/// Renders help text for a clap `DisplayHelp` error, preserving subcommand context
+/// (e.g. `fa help recipe`, `fa recipe --help`) and formatting visible aliases inline.
+fn render_cli_help(err: &clap::Error) -> String {
+    let help_str = err.render().to_string();
+    format_help_with_inline_aliases(&help_str)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -827,4 +833,73 @@ mod tests {
         println!("   ✓ Both default and custom final_message displayed in show_recipe.\n");
     }
 
+    #[test]
+    fn cli_help_recipe_should_render_subcommand_help() {
+        for args in [
+            &["fa", "help", "recipe"][..],
+            &["fa", "recipe", "--help"][..],
+            &["fa", "recipe", "help"][..],
+        ] {
+            let err = match Cli::try_parse_from(args) {
+                Err(e) => e,
+                Ok(_) => panic!("expected try_parse_from({args:?}) to return DisplayHelp error"),
+            };
+            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+            let output = render_cli_help(&err);
+            assert!(
+                output.contains("Manage recipe config files (new/edit/validate)"),
+                "Help output for `recipe` ({args:?}) must include recipe description, got:\n{output}"
+            );
+            assert!(
+                output.contains("Usage: fa recipe <COMMAND>"),
+                "Help output for `recipe` ({args:?}) must show usage for recipe, got:\n{output}"
+            );
+            assert!(
+                output.contains("validate"),
+                "Help output for `recipe` ({args:?}) must list `validate` subcommand, got:\n{output}"
+            );
+            assert!(
+                !output.contains("self-uninstall"),
+                "Help output for `recipe` ({args:?}) must not show top-level commands, got:\n{output}"
+            );
+        }
+    }
+
+    #[test]
+    fn cli_help_nested_subcommand_should_render_action_help() {
+        let err = match Cli::try_parse_from(["fa", "help", "recipe", "new"]) {
+            Err(e) => e,
+            Ok(_) => panic!("expected try_parse_from to return DisplayHelp error"),
+        };
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+        let output = render_cli_help(&err);
+        assert!(
+            output.contains("Create a new recipe file under recipes.d/ and open it in $EDITOR"),
+            "Help output for `recipe new` must describe action, got:\n{output}"
+        );
+        assert!(
+            output.contains("Usage: fa recipe new [NAME]"),
+            "Help output for `recipe new` must show usage, got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn cli_help_top_level_should_retain_inline_aliases() {
+        for args in [&["fa", "help"][..], &["fa", "--help"][..]] {
+            let err = match Cli::try_parse_from(args) {
+                Err(e) => e,
+                Ok(_) => panic!("expected try_parse_from({args:?}) to return DisplayHelp error"),
+            };
+            assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+            let output = render_cli_help(&err);
+            assert!(
+                output.contains("new, -n"),
+                "Top-level help ({args:?}) must contain inline alias for new: got:\n{output}"
+            );
+            assert!(
+                output.contains("alias, -a"),
+                "Top-level help ({args:?}) must contain inline alias for alias: got:\n{output}"
+            );
+        }
+    }
 }
