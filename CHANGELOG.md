@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `final_message` recipe option: customize the post-scaffold success message in `recipes.toml` / `recipes.d/*.toml` with automatic variable substitution (`{{name}}`, `{name}`).
 - Neutral post-scaffold navigation hint: `Run 'cd <project-name>' to go to project` replaces the hardcoded `node --run dev` fallback.
 - `fa show`: displays `Final Message:` for recipes, showing the configured custom message or the default navigation hint.
+- `fa recipe` (`new` / `edit` / `validate`): create or edit recipe files under `~/.config/fa/recipes.d/` opened in `$VISUAL`/`$EDITOR`; `validate` checks all config files or a single recipe by name and reports parse errors plus duplicate recipe keys. No flags, no trust prompt; new unit tests in `src/recipe.rs`.
 
 ## [v0.1.0-beta.4] - 2026-09-21
 

@@ -3,6 +3,7 @@ mod config;
 mod engine;
 mod pinning;
 mod platform;
+mod recipe;
 mod spinner;
 mod state;
 mod templating;
@@ -73,6 +74,11 @@ enum Commands {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
+    /// Manage recipe config files (new/edit/validate).
+    Recipe {
+        #[command(subcommand)]
+        action: RecipeAction,
+    },
     /// Checks GitHub Releases and updates the fa binary in-place.
     SelfUpdate {
         /// Preview the update check without replacing the binary
@@ -93,6 +99,25 @@ enum Commands {
     },
 }
 
+/// Actions under `fa recipe`: create, edit, or validate recipe config files.
+#[derive(Subcommand)]
+enum RecipeAction {
+    /// Create a new recipe file under recipes.d/ and open it in $EDITOR.
+    New {
+        /// Recipe key/file name (e.g. rust-cli). Omit for a scratch untitled file.
+        name: Option<String>,
+    },
+    /// Open an existing recipe file; omit name to list available recipes.
+    Edit {
+        name: Option<String>,
+    },
+    /// Parse every config file and report duplicate recipe keys.
+    Validate {
+        /// Recipe name to validate only that recipe. Omit to validate all files.
+        name: Option<String>,
+    },
+}
+
 /// Builtin command names and flags that should not be intercepted as direct alias invocations.
 const BUILTIN_COMMANDS: &[&str] = &[
     "new",
@@ -103,6 +128,7 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "show",
     "alias",
     "-a",
+    "recipe",
     "self-update",
     "self-uninstall",
     "update-check",
@@ -213,7 +239,19 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let (config, _source) = Config::load()?;
+    // `fa recipe` reads its config files itself, so a broken TOML must not
+    // abort the command (validate/edit need to report or open the file).
+    let is_recipe_cmd = args.len() >= 2 && args[1] == "recipe";
+    let config = match Config::load() {
+        Ok((cfg, _source)) => cfg,
+        Err(err) if is_recipe_cmd => {
+            eprintln!(
+                "warning: failed to load config ({err}); continuing with an empty catalog for `fa recipe`"
+            );
+            Config::default()
+        }
+        Err(err) => return Err(err),
+    };
 
     let args = rewrite_args(args, Some(&config));
     let cli = match Cli::try_parse_from(args) {
@@ -402,6 +440,44 @@ fn main() -> anyhow::Result<()> {
             let effective_command = crate::templating::substitute_command_args(&cmd.command, &args);
             preflight(&effective_command)?;
             run_shell(&effective_command)?;
+        }
+        Commands::Recipe { action } => {
+            let user_dir = Config::get_user_config_dir()
+                .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory (HOME not set)"))?;
+            match action {
+                RecipeAction::New { name } => {
+                    let path = recipe::recipe_new(&user_dir, name.as_deref())?;
+                    recipe::open_editor(&path)?;
+                }
+                RecipeAction::Edit { name } => match name {
+                    Some(name) => {
+                        let path = recipe::recipe_edit_path(&user_dir, &name)?;
+                        recipe::open_editor(&path)?;
+                    }
+                    None => {
+                        let list = recipe::recipe_list(&user_dir);
+                        if list.is_empty() {
+                            println!("No recipes found.");
+                        } else {
+                            println!("{BOLD_CYAN}Recipes:{RESET}");
+                            for (key, path) in list {
+                                println!("  {key:<24} {}", path.display());
+                            }
+                        }
+                    }
+                },
+                RecipeAction::Validate { name } => {
+                    let issues = recipe::recipe_issues(&user_dir, name.as_deref())?;
+                    if issues.is_empty() {
+                        println!("ok: recipe config valid");
+                    } else {
+                        for issue in &issues {
+                            eprintln!("error: {issue}");
+                        }
+                        anyhow::bail!("recipe validation failed ({} issue(s))", issues.len());
+                    }
+                }
+            }
         }
         Commands::SelfUpdate { dry_run } => {
             if dry_run {
@@ -750,4 +826,5 @@ mod tests {
         );
         println!("   ✓ Both default and custom final_message displayed in show_recipe.\n");
     }
+
 }
