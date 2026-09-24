@@ -24,11 +24,54 @@ pub(crate) fn resolve_components(
     if let Some(comp) = opts_component {
         return Ok((vec![comp.clone()], format!("component '{comp}'")));
     }
-    if let Some(default_pack) = &recipe.default {
+    if let Some(default_pack) = &recipe.default_pack {
         let pack = Config::load_pack(packs_dir, default_pack)?;
         return Ok((pack.components, format!("default pack '{default_pack}'")));
     }
     Ok((vec![], "no component or pack specified".to_string()))
+}
+
+/// Formats the available packs and components for a recipe as a human-readable list.
+pub fn format_recipe_packs_and_components(recipe: &Recipe, recipe_name: &str) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("{}[Recipe] {}{} · {}{}\n\n", BOLD_CYAN, recipe_name, RESET, DIM, recipe.description));
+
+    let packs_dir = recipe.packs_dir.as_deref().unwrap_or("packs");
+    let packs = Config::list_packs(packs_dir);
+    out.push_str(&format!("{}Available packs for '{}' ({}):{}\n", BOLD_GREEN, recipe_name, packs_dir, RESET));
+    if packs.is_empty() {
+        out.push_str(&format!("  {}(no packs found in {}){}\n", DIM, packs_dir, RESET));
+    } else {
+        for pack in &packs {
+            let comps = pack.components.join(", ");
+            out.push_str(&format!("  • {}{}{} {}(components: {}){}\n", BOLD_CYAN, pack.name, RESET, DIM, comps, RESET));
+        }
+    }
+    out.push('\n');
+
+    let templates_dir = Config::resolve_templates_dir(recipe);
+    let components = Config::list_components(recipe);
+    out.push_str(&format!("{}Available components ({}):{}\n", BOLD_GREEN, templates_dir, RESET));
+    if components.is_empty() {
+        out.push_str(&format!("  {}(no components found in {}){}\n", DIM, templates_dir, RESET));
+    } else {
+        for comp in &components {
+            out.push_str(&format!("  • {}{}{}\n", WHITE, comp, RESET));
+        }
+    }
+    out.push('\n');
+
+    if let Some(ref dp) = recipe.default_pack {
+        out.push_str(&format!("{}Default pack:{} {}\n\n", DIM, RESET, dp));
+    }
+
+    out.push_str(&format!("Run {}fa new {} <pack>{} or {}fa new {} <component>{} to install.\n", BOLD_CYAN, recipe_name, RESET, BOLD_CYAN, recipe_name, RESET));
+    out
+}
+
+/// Displays the available packs and components for a recipe.
+pub fn display_recipe_packs_and_components(recipe: &Recipe, recipe_name: &str) {
+    print!("{}", format_recipe_packs_and_components(recipe, recipe_name));
 }
 
 /// Copies all files from a resolved `CreateStep` source directory to
@@ -1038,7 +1081,7 @@ mod tests {
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -1131,7 +1174,7 @@ mod tests {
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -1345,7 +1388,7 @@ mod tests {
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
         let line = format_list_line("demo", &recipe);
         assert!(line.contains("demo"));
@@ -1374,7 +1417,7 @@ mod tests {
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
         let vars = HashMap::new();
         let msg = resolve_final_message(&recipe, "my-go-tool", &vars);
@@ -1482,7 +1525,7 @@ components = ["toggle-theme"]
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: Some("default".to_string()),
+            default_pack: Some("default".to_string()),
         };
         let (components, desc) = resolve_components(&recipe, &Some("toggle-theme".to_string()), &None).unwrap();
         assert_eq!(components, vec!["toggle-theme"]);
@@ -1510,7 +1553,7 @@ components = ["toggle-theme"]
             template_base: None,
             packs_dir: Some("packs/wc-lib".to_string()),
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
         let res = resolve_components(&recipe, &None, &Some("nonexistent-pack".to_string()));
         assert!(res.is_err(), "Must return error on missing pack");
@@ -1551,7 +1594,7 @@ components = ["toggle-theme", "btn-ally"]
             template_base: None,
             packs_dir: Some("packs/wc-lib".to_string()),
             templates_dir: None,
-            default: Some("default".to_string()),
+            default_pack: Some("default".to_string()),
         };
         let (components, desc) =
             resolve_components(&recipe, &None, &Some("wc-ui".to_string())).unwrap();
@@ -2043,7 +2086,7 @@ free = { command = "free -h", description = "Free memory" }
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         }
     }
 
@@ -2178,7 +2221,7 @@ free = { command = "free -h", description = "Free memory" }
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
         let inputs = vec!["create {{name}}".to_string()];
         let mut vars = HashMap::new();
@@ -2208,7 +2251,7 @@ free = { command = "free -h", description = "Free memory" }
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
         let vars = HashMap::new();
         let msg = resolve_final_message(&recipe, "my-app", &vars);
@@ -2240,7 +2283,7 @@ free = { command = "free -h", description = "Free memory" }
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), "my-app".to_string());
@@ -2273,11 +2316,41 @@ free = { command = "free -h", description = "Free memory" }
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
         let vars = HashMap::new();
         let msg = resolve_final_message(&recipe, "my-go-tool", &vars);
         assert_eq!(msg, "cd my-go-tool && go run .");
         println!("   ✓ single-brace name placeholder replaced successfully.\n");
+    }
+
+    #[test]
+    fn format_recipe_packs_and_components_should_render_details() {
+        let recipe = Recipe {
+            name: "wc-lib".to_string(),
+            description: "Modular components".to_string(),
+            aliases: vec![],
+            language: None,
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables: Default::default(),
+            steps: vec![],
+            final_message: None,
+            pin_versions: None,
+            template_base: None,
+            packs_dir: Some("packs/wc-lib".to_string()),
+            templates_dir: None,
+            default_pack: Some("toggle-theme".to_string()),
+        };
+        let out = format_recipe_packs_and_components(&recipe, "wc-lib");
+        assert!(out.contains("[Recipe] wc-lib"));
+        assert!(out.contains("Modular components"));
+        assert!(out.contains("Available packs for 'wc-lib'"));
+        assert!(out.contains("Default pack:"));
+        assert!(out.contains("toggle-theme"));
+        assert!(out.contains("fa new wc-lib <pack>"));
     }
 }

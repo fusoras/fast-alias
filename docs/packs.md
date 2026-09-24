@@ -30,7 +30,7 @@ name          = "Web Components Library"
 description   = "Scaffold and install modular web components"
 packs_dir     = "packs/wc-lib"
 templates_dir = "templates/wc-lib"
-default       = "default"
+# default_pack = "default" # Requires default_behavior = "default" in config.toml
 
 [[recipes.wc-lib.steps]]
 create = { from = "{{templates_dir}}/{{component}}", to = "src/components/{{component}}" }
@@ -38,9 +38,9 @@ description = "Install component files into src/components/"
 ```
 
 #### What Each Setting Does:
-- **`packs_dir`**: The folder where your pack definition files will live (under `~/.config/fa/`).
+- **`packs_dir`**: The folder where your pack definition files live (under `~/.config/fa/`).
 - **`templates_dir`**: The folder where your actual component files and folders are stored (under `~/.config/fa/`).
-- **`default`**: The pack that gets installed when you run `fa new wc-lib` without any arguments.
+- **`default_pack`**: Optional default pack name used when `default_behavior = "default"` is enabled in `~/.config/fa/config.toml`.
 - **`create`**: Tells `fa` to copy the files from `{{templates_dir}}/{{component}}` into your project's `src/components/{{component}}`.
 
 ### 1.3 Validate the Recipe
@@ -111,28 +111,45 @@ components = [
 ]
 ```
 
-### 2.3 Installing Components into Your Project
+### 2.3 Running `fa new` Without Arguments (Global Configuration)
+
+You can configure what happens when you run `fa new <recipe>` without specifying a pack or component in `~/.config/fa/config.toml`:
+
+```toml
+# ~/.config/fa/config.toml
+[packs]
+# Available modes: "list" (default), "default", "error"
+default_behavior = "list"
+```
+
+1. **`default_behavior = "list"` (Default mode)**:
+   Running `fa new wc-lib` displays a formatted list of all available packs in `packs_dir` and components in `templates_dir`:
+   ```bash
+   fa new wc-lib
+   ```
+   *Note: If a recipe specifies `default_pack` while `default_behavior` is set to `list` or `error`, `fa` reports a validation error prompting you to set `default_behavior = "default"` in `~/.config/fa/config.toml`.*
+
+2. **`default_behavior = "default"`**:
+   Automatically runs the pack specified by `default_pack = "<pack-name>"` in your recipe.
+
+3. **`default_behavior = "error"`**:
+   Immediately halts with an error requiring an explicit pack or component argument.
+
+### 2.4 Installing Components into Your Project
 
 Navigate to your target project folder and run `fa new`:
 
-#### Install the Default Pack
-Runs the pack specified by `default = "default"` in your recipe:
-```bash
-fa new wc-lib
-```
-*Copies `toggle-theme/` and `btn-ally/` directly into your project's `src/components/` directory.*
-
 #### Install a Specific Pack
-To choose a different pack, set `FA_PACK`:
+Pass the pack name as the second argument:
 ```bash
-FA_PACK=wc-ui fa new wc-lib
+fa new wc-lib wc-ui
 ```
-*Copies all three components (`toggle-theme`, `btn-ally`, `wc-modal`) into your project.*
+*Copies all components declared in `wc-ui.toml` directly into your project.*
 
 #### Install a Single Component
-To install only one specific component folder without installing an entire pack, set `FA_COMPONENT`:
+Pass the component folder name directly:
 ```bash
-FA_COMPONENT=toggle-theme fa new wc-lib
+fa new wc-lib toggle-theme
 ```
 *Copies only `toggle-theme/` into `src/components/toggle-theme/`.*
 

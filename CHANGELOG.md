@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Packs global behavior & default pack: added `~/.config/fa/config.toml` support with `packs.default_behavior` (`list`, `default`, `error`); renamed recipe field to `default_pack` (with backwards-compatible `default` alias); validated that recipes declaring `default_pack` require `default_behavior = "default"` in global config.
 - Packs system: install modular components and asset bundles into the current project via `fa new <recipe> [pack/component]` using `packs_dir`, `templates_dir`, and `[[steps]]` `create` declarations with dynamic `{{component}}` substitution; includes `docs/packs.md`.
 - `final_message` recipe option: customize the post-scaffold success message in `recipes.toml` / `recipes.d/*.toml` with automatic variable substitution (`{{name}}`, `{name}`).
 - Neutral post-scaffold navigation hint: `Run 'cd <project-name>' to go to project` replaces the hardcoded `node --run dev` fallback.

@@ -243,12 +243,40 @@ pub struct Recipe {
     pub templates_dir: Option<String>,
     /// Default pack name used when `fa new <recipe>` is called without
     /// specifying a component or pack.
+    #[serde(default, alias = "default")]
+    pub default_pack: Option<String>,
+}
+
+fn default_packs_behavior() -> String {
+    "list".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct PacksSettings {
+    /// Behavior when running `fa new <recipe>` without specifying pack or component.
+    /// Values: "list" (default) | "default" (installs recipe default_pack)
+    #[serde(default = "default_packs_behavior")]
+    pub default_behavior: String,
+}
+
+impl Default for PacksSettings {
+    fn default() -> Self {
+        Self {
+            default_behavior: default_packs_behavior(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct GlobalConfig {
     #[serde(default)]
-    pub default: Option<String>,
+    pub packs: PacksSettings,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Config {
+    #[serde(default)]
+    pub settings: GlobalConfig,
     #[serde(default)]
     pub recipes: BTreeMap<String, Recipe>,
     /// General-purpose executable commands, organized by section. Each entry
@@ -304,6 +332,15 @@ impl Config {
             Self::load_directory_into(&mut config, &xdg_d, &mut loaded_modular_files)?;
         }
 
+        let global_config_path = user_dir.join("config.toml");
+        if global_config_path.exists() {
+            let content = fs::read_to_string(&global_config_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", global_config_path.display()))?;
+            let global: GlobalConfig = toml::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("Failed to parse {}: {e}", global_config_path.display()))?;
+            config.settings = global;
+        }
+
         let source_summary = if loaded_modular_files.is_empty() {
             primary_source
         } else {
@@ -317,6 +354,7 @@ impl Config {
         config.validate_template_paths()?;
         config.validate_variables()?;
         config.validate_steps()?;
+        config.validate_packs()?;
 
         Ok((config, source_summary))
     }
@@ -574,6 +612,29 @@ impl Config {
         Ok(())
     }
 
+    /// Validates packs configuration:
+    /// 1. `settings.packs.default_behavior` must be one of: 'list', 'default', 'error'.
+    /// 2. If any recipe defines `default_pack`, `default_behavior` must be set to 'default'.
+    ///    Otherwise, it errors instructing the user to change `default_behavior = "default"` in `~/.config/fa/config.toml`.
+    pub fn validate_packs(&self) -> anyhow::Result<()> {
+        let behavior = self.settings.packs.default_behavior.as_str();
+        if !matches!(behavior, "list" | "default" | "error") {
+            anyhow::bail!(
+                "invalid packs.default_behavior '{behavior}' in config.toml; expected one of: 'list', 'default', 'error'"
+            );
+        }
+
+        for (recipe_key, recipe) in &self.recipes {
+            if let Some(ref dp) = recipe.default_pack
+                && behavior != "default" {
+                    anyhow::bail!(
+                        "recipe '{recipe_key}': 'default_pack' is set to '{dp}', but global packs behavior is '{behavior}'. Change default_behavior = \"default\" in ~/.config/fa/config.toml to enable default packs in recipes"
+                    );
+                }
+        }
+        Ok(())
+    }
+
     /// Loads a pack definition from `~/.config/fa/<packs_dir>/<name>.toml`
     /// or from a custom user directory starting with `~/`.
     /// Rejects root system paths starting with `/`.
@@ -636,6 +697,61 @@ impl Config {
         None
     }
 
+    /// Lists all packs found in `packs_dir` (resolving `~/` or `~/.config/fa/<packs_dir>`).
+    pub fn list_packs(packs_dir: &str) -> Vec<Pack> {
+        let pack_dir = if let Some(rest) = packs_dir.strip_prefix("~/") {
+            dirs_home_dir().map(|h| h.join(rest))
+        } else {
+            Self::get_user_config_dir().map(|u| u.join(packs_dir))
+        };
+        let Some(dir) = pack_dir else {
+            return Vec::new();
+        };
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return Vec::new(),
+        };
+        let mut packs = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && path.extension().and_then(|s| s.to_str()) == Some("toml")
+                && let Ok(content) = fs::read_to_string(&path)
+                && let Ok(pack) = toml::from_str::<Pack>(&content)
+            {
+                packs.push(pack);
+            }
+        }
+        packs.sort_by(|a, b| a.name.cmp(&b.name));
+        packs
+    }
+
+    /// Lists all components found in the recipe's `templates_dir`.
+    pub fn list_components(recipe: &Recipe) -> Vec<String> {
+        let templates_dir = Self::resolve_templates_dir(recipe);
+        let comp_dir = if let Some(rest) = templates_dir.strip_prefix("~/") {
+            dirs_home_dir().map(|h| h.join(rest))
+        } else {
+            Self::get_user_config_dir().map(|u| u.join(&templates_dir))
+        };
+        let Some(dir) = comp_dir else {
+            return Vec::new();
+        };
+        let entries = match fs::read_dir(&dir) {
+            Ok(e) => e,
+            Err(_) => return Vec::new(),
+        };
+        let mut components = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if !name.starts_with('.') {
+                components.push(name);
+            }
+        }
+        components.sort();
+        components
+    }
+
     /// Returns (section, command_key, &Command) for every command in the
     /// alias catalog.
     pub fn all_commands(&self) -> Vec<(&str, &String, &Command)> {
@@ -651,11 +767,11 @@ impl Config {
 
 impl Recipe {
     /// True if the recipe defines pack/component workflows (has `packs_dir`, `templates_dir`,
-    /// `default`, or steps with `create`).
+    /// `default_pack`, or steps with `create`).
     pub fn is_pack_recipe(&self) -> bool {
         self.packs_dir.is_some()
             || self.templates_dir.is_some()
-            || self.default.is_some()
+            || self.default_pack.is_some()
             || self.steps.iter().any(|s| s.create.is_some())
     }
 }
@@ -1077,5 +1193,86 @@ name = { prompt = "Project name", default = "app" }
         assert!(req_var.validate_value("token", "").is_err(), "empty required must fail");
         assert!(req_var.validate_value("token", "  ").is_err(), "blank required must fail");
         assert!(req_var.validate_value("token", "x").is_ok());
+    }
+
+    #[test]
+    fn validate_packs_should_reject_default_pack_when_behavior_is_not_default() {
+        let toml_content = r#"
+[recipes.wc-lib]
+name = "wc-lib"
+description = "Web Components"
+default_pack = "toggle-theme"
+"#;
+        let cfg: Config = toml::from_str(toml_content).unwrap();
+        // default_behavior is "list" by default
+        assert_eq!(cfg.settings.packs.default_behavior, "list");
+        let res = cfg.validate_packs();
+        assert!(res.is_err(), "Must reject default_pack when default_behavior is 'list'");
+        let err = res.unwrap_err().to_string();
+        assert!(
+            err.contains("Change default_behavior = \"default\" in ~/.config/fa/config.toml"),
+            "Error must instruct to change config.toml, got: {err}"
+        );
+    }
+
+    #[test]
+    fn validate_packs_should_allow_default_pack_when_behavior_is_default() {
+        let toml_content = r#"
+[recipes.wc-lib]
+name = "wc-lib"
+description = "Web Components"
+default_pack = "toggle-theme"
+"#;
+        let mut cfg: Config = toml::from_str(toml_content).unwrap();
+        cfg.settings.packs.default_behavior = "default".to_string();
+        assert!(cfg.validate_packs().is_ok(), "Must allow default_pack when default_behavior is 'default'");
+    }
+
+    #[test]
+    fn validate_packs_should_reject_invalid_behavior() {
+        let mut cfg = Config::default();
+        cfg.settings.packs.default_behavior = "unknown_mode".to_string();
+        let res = cfg.validate_packs();
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("expected one of: 'list', 'default', 'error'"));
+    }
+
+    #[test]
+    fn test_recipe_default_pack_rename_and_alias() {
+        let toml_new = r#"
+[recipes.test1]
+name = "Test 1"
+description = "d"
+default_pack = "my-pack"
+"#;
+        let cfg: Config = toml::from_str(toml_new).unwrap();
+        assert_eq!(cfg.recipes["test1"].default_pack.as_deref(), Some("my-pack"));
+
+        let toml_legacy = r#"
+[recipes.test2]
+name = "Test 2"
+description = "d"
+default = "my-pack"
+"#;
+        let cfg: Config = toml::from_str(toml_legacy).unwrap();
+        assert_eq!(cfg.recipes["test2"].default_pack.as_deref(), Some("my-pack"));
+    }
+
+    #[test]
+    fn test_global_config_loads_all_three_modes() {
+        let cfg_default = GlobalConfig::default();
+        assert_eq!(cfg_default.packs.default_behavior, "list");
+
+        let toml_list = "[packs]\ndefault_behavior = \"list\"";
+        let cfg_list: GlobalConfig = toml::from_str(toml_list).unwrap();
+        assert_eq!(cfg_list.packs.default_behavior, "list");
+
+        let toml_def = "[packs]\ndefault_behavior = \"default\"";
+        let cfg_def: GlobalConfig = toml::from_str(toml_def).unwrap();
+        assert_eq!(cfg_def.packs.default_behavior, "default");
+
+        let toml_err = "[packs]\ndefault_behavior = \"error\"";
+        let cfg_err: GlobalConfig = toml::from_str(toml_err).unwrap();
+        assert_eq!(cfg_err.packs.default_behavior, "error");
     }
 }

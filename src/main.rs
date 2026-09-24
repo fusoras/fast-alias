@@ -315,14 +315,34 @@ fn main() -> anyhow::Result<()> {
             let (project_name, pack_opt, comp_opt) = if recipe_def.is_pack_recipe() {
                 match name {
                     None => {
-                        let pack = std::env::var("FA_PACK").ok().or_else(|| recipe_def.default.clone());
-                        let comp = std::env::var("FA_COMPONENT").ok();
-                        if pack.is_none() && comp.is_none() {
-                            anyhow::bail!(
-                                "No pack or component specified, and recipe '{key}' has no default pack.\nRun `fa new {key} <pack>` or specify a default pack in the recipe."
-                            );
+                        let pack_env = std::env::var("FA_PACK").ok();
+                        let comp_env = std::env::var("FA_COMPONENT").ok();
+                        if pack_env.is_some() || comp_env.is_some() {
+                            (".".to_string(), pack_env, comp_env)
+                        } else {
+                            let behavior = config.settings.packs.default_behavior.as_str();
+                            match behavior {
+                                "default" => {
+                                    if let Some(ref dp) = recipe_def.default_pack {
+                                        (".".to_string(), Some(dp.clone()), None)
+                                    } else {
+                                        anyhow::bail!(
+                                            "Recipe '{key}' has no default_pack configured.\nRun `fa new {key} <pack>` or specify default_pack in the recipe."
+                                        );
+                                    }
+                                }
+                                "error" => {
+                                    anyhow::bail!(
+                                        "No pack or component specified for recipe '{key}'.\nRun `fa new {key} <pack>` or `fa new {key} <component>`."
+                                    );
+                                }
+                                _ => {
+                                    // "list" (default)
+                                    crate::engine::display_recipe_packs_and_components(recipe_def, key.as_str());
+                                    return Ok(());
+                                }
+                            }
                         }
-                        (".".to_string(), pack, comp)
                     }
                     Some(target) => {
                         let packs_dir = recipe_def.packs_dir.as_deref().unwrap_or("packs");
@@ -338,7 +358,7 @@ fn main() -> anyhow::Result<()> {
                             if comp_dir.as_ref().map(|d| d.is_dir()).unwrap_or(false) {
                                 (".".to_string(), None, Some(target))
                             } else if recipe_def.create.is_some() {
-                                (target, std::env::var("FA_PACK").ok().or_else(|| recipe_def.default.clone()), std::env::var("FA_COMPONENT").ok())
+                                (target, std::env::var("FA_PACK").ok().or_else(|| recipe_def.default_pack.clone()), std::env::var("FA_COMPONENT").ok())
                             } else {
                                 anyhow::bail!(
                                     "Pack or component '{target}' not found for recipe '{key}' in packs_dir '{packs_dir}' or templates_dir '{templates_dir}'."
@@ -864,7 +884,7 @@ mod tests {
             template_base: None,
             packs_dir: None,
             templates_dir: None,
-            default: None,
+            default_pack: None,
         };
 
         // When final_message is None, defaults to cd project-name hint
