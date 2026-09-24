@@ -19,7 +19,7 @@ panic = "abort"
 strip = "symbols"
 
 [lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "warn"
 
 [lints.clippy]
 all = "warn"

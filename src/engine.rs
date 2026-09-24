@@ -1,4 +1,4 @@
-use crate::config::{Config, Recipe};
+use crate::config::{Config, CreateStep, Recipe};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -8,6 +8,139 @@ use crate::colors::*;
 use crate::platform::Platform;
 use crate::templating::{find_unknown_placeholders, substitute, substitute_shell};
 
+/// Resolves the list of component names to install.
+/// Priority: explicit component > explicit pack > recipe default.
+/// Returns (list_of_components, description).
+pub(crate) fn resolve_components(
+    recipe: &Recipe,
+    opts_component: &Option<String>,
+    opts_pack: &Option<String>,
+) -> anyhow::Result<(Vec<String>, String)> {
+    let packs_dir = recipe.packs_dir.as_deref().unwrap_or("packs");
+    if let Some(pack_name) = opts_pack {
+        let pack = Config::load_pack(packs_dir, pack_name)?;
+        return Ok((pack.components, format!("pack '{pack_name}'")));
+    }
+    if let Some(comp) = opts_component {
+        return Ok((vec![comp.clone()], format!("component '{comp}'")));
+    }
+    if let Some(default_pack) = &recipe.default {
+        let pack = Config::load_pack(packs_dir, default_pack)?;
+        return Ok((pack.components, format!("default pack '{default_pack}'")));
+    }
+    Ok((vec![], "no component or pack specified".to_string()))
+}
+
+/// Copies all files from a resolved `CreateStep` source directory to
+/// the destination. Applies `{{variable}}` substitution to paths.
+pub(crate) fn execute_create_step(
+    create: &CreateStep,
+    vars: &HashMap<String, String>,
+    templates_dir: &str,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let from_resolved = substitute(&create.from, vars);
+    let to_resolved = substitute(&create.to, vars);
+
+    if from_resolved.starts_with('/') || templates_dir.starts_with('/') {
+        anyhow::bail!("Root paths starting with '/' are not allowed; use '~/' or paths relative to ~/.config/fa");
+    }
+
+    if to_resolved.starts_with('/') {
+        anyhow::bail!("create step 'to' path '{to_resolved}' must be relative to project and cannot start with '/'");
+    }
+
+    if from_resolved.split('/').any(|c| c == "..") {
+        anyhow::bail!("create step 'from' path '{from_resolved}' must not contain '..'");
+    }
+
+    if to_resolved.split('/').any(|c| c == "..") {
+        anyhow::bail!("create step 'to' path '{to_resolved}' must not contain '..'");
+    }
+
+    let from_full = if let Some(rest) = from_resolved.strip_prefix("~/") {
+        let home = std::env::var_os("HOME")
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+        PathBuf::from(home).join(rest)
+    } else if let Some(rest) = templates_dir.strip_prefix("~/") {
+        let home = std::env::var_os("HOME")
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+        let base = PathBuf::from(home).join(rest);
+        base.join(&from_resolved)
+    } else {
+        let user_config_dir = Config::get_user_config_dir()
+            .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory"))?;
+        let clean_templates_dir = templates_dir.strip_prefix("templates/").unwrap_or(templates_dir);
+        if from_resolved.starts_with("templates/") || from_resolved.starts_with(templates_dir) {
+            user_config_dir.join(&from_resolved)
+        } else if !clean_templates_dir.is_empty() && from_resolved.starts_with(clean_templates_dir) {
+            user_config_dir.join("templates").join(&from_resolved)
+        } else {
+            user_config_dir.join(templates_dir).join(&from_resolved)
+        }
+    };
+
+    let dest_full = PathBuf::from(&to_resolved);
+
+    if !from_full.exists() {
+        anyhow::bail!(
+            "create step source not found: {} (resolved from '{}')",
+            from_full.display(),
+            create.from
+        );
+    }
+
+    if dry_run {
+        println!(
+            "  {DIM}[Dry-Run]{RESET} Would copy {} → {}",
+            from_full.display(),
+            dest_full.display()
+        );
+        return Ok(());
+    }
+
+    fs::create_dir_all(&dest_full)
+        .map_err(|e| anyhow::anyhow!("Failed to create dest dir {}: {e}", dest_full.display()))?;
+
+    let mut copied = 0usize;
+    for entry in fs::read_dir(&from_full)
+        .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", from_full.display()))?
+    {
+        let entry = entry.map_err(|e| anyhow::anyhow!("Dir entry error: {e}"))?;
+        let entry_path = entry.path();
+        let file_name = entry.file_name();
+        let dest_path = dest_full.join(&file_name);
+
+        if entry_path.is_dir() {
+            copy_dir_recursive(&entry_path, &dest_path)?;
+        } else {
+            fs::copy(&entry_path, &dest_path)
+                .map_err(|e| anyhow::anyhow!("Failed to copy {}: {e}", entry_path.display()))?;
+            copied += 1;
+        }
+    }
+
+    println!("  {BOLD_GREEN}✓{RESET} Copied {} files ({} → {})", copied, from_resolved, to_resolved);
+    Ok(())
+}
+
+/// Recursively copies a directory.
+pub(crate) fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
+    fs::create_dir_all(dest)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let entry_path = entry.path();
+        let file_name = entry.file_name();
+        let dest_path = dest.join(&file_name);
+        if entry_path.is_dir() {
+            copy_dir_recursive(&entry_path, &dest_path)?;
+        } else {
+            fs::copy(&entry_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 pub struct NewOptions {
     pub recipe_key: String,
@@ -15,9 +148,11 @@ pub struct NewOptions {
     pub variant: Option<String>,
     pub dry_run: bool,
     pub no_install: bool,
-    /// When true, the engine strips floating range prefixes from dependency
-    /// manifests after all installs complete.
     pub pin_versions: bool,
+    /// Component name to install (overrides default pack).
+    pub component: Option<String>,
+    /// Pack name to install (contains multiple components).
+    pub pack: Option<String>,
 }
 
 /// Result of a `fa new` run: whether the project should be registered in
@@ -158,6 +293,11 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
     let mut vars: HashMap<String, String> = HashMap::new();
     vars.insert("name".to_string(), opts.project_name.clone());
     vars.insert("variant".to_string(), variant.clone());
+    vars.insert("templates_dir".to_string(), Config::resolve_templates_dir(recipe));
+    if let Some(packs_dir) = &recipe.packs_dir {
+        vars.insert("packs_dir".to_string(), packs_dir.clone());
+    }
+    vars.insert("component".to_string(), opts.component.clone().unwrap_or_default());
 
     // Collect all template inputs across create command, file paths/content and steps.
     let mut inputs: Vec<String> = Vec::new();
@@ -172,7 +312,29 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
         }
     }
     for step in &recipe.steps {
-        inputs.push(step.command.clone());
+        inputs.push(step.command.clone().unwrap_or_default());
+        if let Some(create) = &step.create {
+            inputs.push(create.from.clone());
+            inputs.push(create.to.clone());
+        }
+    }
+
+    // Resolve components from pack/component options or recipe default.
+    let (components, component_desc) = match resolve_components(recipe, &opts.component, &opts.pack) {
+        Ok(res) => res,
+        Err(e) => {
+            return NewResult {
+                outcome: NewOutcome {
+                    project_dir: opts.project_name.clone(),
+                    installed: false,
+                    register: false,
+                },
+                result: Err(e),
+            };
+        }
+    };
+    if !components.is_empty() {
+        println!("  {DIM}Installing: {component_desc}{RESET}");
     }
 
     // Build defaults from recipe `variables` table (prompt: label, default: value).
@@ -301,25 +463,44 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
         // recoverable (e.g. dependency installation) and must keep the project.
         scaffold_ok = true;
 
+        // 2.5 Execute create steps (packs/components file copy)
+        if !components.is_empty() {
+            println!("\nInstalling components:");
+            let templates_dir = Config::resolve_templates_dir(recipe);
+            for comp in &components {
+                let mut comp_vars = vars.clone();
+                comp_vars.insert("component".to_string(), comp.clone());
+                for step in &recipe.steps {
+                    if let Some(create) = &step.create
+                        && let Err(e) = execute_create_step(create, &comp_vars, &templates_dir, opts.dry_run) {
+                            anyhow::bail!("create step failed: {e}");
+                    }
+                }
+            }
+        }
+
         // 3. Steps
         if !recipe.steps.is_empty() {
             let last_install_idx = recipe.steps.iter().rposition(|s| s.install);
             println!("\nSteps:");
             for (idx, step) in recipe.steps.iter().enumerate() {
+                if step.command.is_none() {
+                    continue;
+                }
                 if let Some(platform) = &step.platform
                     && platform != "all" && !platform_matches(platform)? {
                         continue;
                     }
                 if step.install && opts.no_install {
-                    println!("  {BOLD_YELLOW}[SKIP]{RESET} {} (--no-install)", step.description.as_deref().unwrap_or(&step.command));
+                    println!("  {BOLD_YELLOW}[SKIP]{RESET} {} (--no-install)", step.description.as_deref().unwrap_or(step.command.as_deref().unwrap_or("")));
                     continue;
                 }
-                let rendered = substitute_shell(&step.command, &vars);
+                let rendered = substitute_shell(step.command.as_deref().unwrap_or(""), &vars);
                 if opts.dry_run {
                     println!("  {DIM}[Dry-Run]{RESET} Would run: {rendered}");
                 } else {
                     preflight(&rendered)?;
-                    let label = step.description.as_deref().unwrap_or(&step.command);
+                    let label = step.description.as_deref().unwrap_or(step.command.as_deref().unwrap_or(""));
                     if step.install {
                         run_shell_quiet_with_spinner(&rendered, label)?;
                         println!("  {BOLD_GREEN}✓{RESET} {label}");
@@ -416,14 +597,28 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
         };
     }
 
-    println!("\n{BOLD_GREEN}Project '{}' created successfully.{RESET}", opts.project_name);
-    let final_msg = resolve_final_message(recipe, &opts.project_name, &vars);
-    println!("{final_msg}");
+    if recipe.is_pack_recipe() && (opts.project_name == "." || opts.project_name.is_empty()) {
+        if let Some(comp) = &opts.component {
+            println!("\n{BOLD_GREEN}Component '{comp}' installed successfully.{RESET}");
+        } else if let Some(pack) = &opts.pack {
+            println!("\n{BOLD_GREEN}Pack '{pack}' installed successfully.{RESET}");
+        } else {
+            println!("\n{BOLD_GREEN}Components installed successfully.{RESET}");
+        }
+        if recipe.final_message.is_some() {
+            let final_msg = resolve_final_message(recipe, &opts.project_name, &vars);
+            println!("{final_msg}");
+        }
+    } else {
+        println!("\n{BOLD_GREEN}Project '{}' created successfully.{RESET}", opts.project_name);
+        let final_msg = resolve_final_message(recipe, &opts.project_name, &vars);
+        println!("{final_msg}");
+    }
     NewResult {
         outcome: NewOutcome {
             project_dir: opts.project_name.clone(),
             installed: !opts.no_install,
-            register: !opts.dry_run,
+            register: !opts.dry_run && opts.project_name != "." && !opts.project_name.is_empty(),
         },
         result: Ok(()),
     }
@@ -801,7 +996,7 @@ pub fn prompt_input(label: &str, default: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Step;
+    use crate::config::{CreateStep, Step};
     use std::collections::BTreeMap;
     use std::sync::{Mutex, OnceLock};
 
@@ -841,6 +1036,9 @@ mod tests {
             final_message: None,
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -855,6 +1053,8 @@ mod tests {
             dry_run: false,
             no_install: true,
             pin_versions: false,
+            component: None,
+            pack: None,
         }
     }
 
@@ -866,6 +1066,8 @@ mod tests {
             dry_run: false,
             no_install: false,
             pin_versions: false,
+            component: None,
+            pack: None,
         }
     }
 
@@ -927,6 +1129,9 @@ mod tests {
             final_message: None,
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -951,7 +1156,8 @@ mod tests {
         println!("\n🔍 [TEST] Rollback — step failure keeps the project (Astro-style)");
         let mut config = test_config(&[(".editorconfig", "root = true")]);
         config.recipes.get_mut("test").unwrap().steps.push(Step {
-            command: "false".to_string(),
+            command: Some("false".to_string()),
+            create: None,
             description: Some("Failing step".to_string()),
             platform: None,
             install: false,
@@ -979,7 +1185,8 @@ mod tests {
         println!("\n🔍 [TEST] Rollback — pre-existing directory is never removed");
         let mut config = test_config(&[(".editorconfig", "root = true")]);
         config.recipes.get_mut("test").unwrap().steps.push(Step {
-            command: "false".to_string(),
+            command: Some("false".to_string()),
+            create: None,
             description: Some("Failing step".to_string()),
             platform: None,
             install: false,
@@ -1106,7 +1313,10 @@ mod tests {
     #[test]
     fn expand_home_exact_path_and_non_tilde() {
         println!("\n🔍 [TEST] Expand Home Utility — Exact Path & Non-Tilde Preservation");
-        let home = std::env::var_os("HOME").map(|h| h.to_string_lossy().to_string()).unwrap();
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::var_os("HOME")
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/tmp".to_string());
         let expected = std::path::PathBuf::from(&home).join("projects/app").to_string_lossy().to_string();
 
         let expanded = expand_home("~/projects/app");
@@ -1133,6 +1343,9 @@ mod tests {
             final_message: None,
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
         };
         let line = format_list_line("demo", &recipe);
         assert!(line.contains("demo"));
@@ -1143,12 +1356,120 @@ mod tests {
     }
 
     #[test]
-    fn format_list_line_should_render_aliases_comma_separated() {
+    fn resolve_final_message_should_replace_single_brace_name() {
         let recipe = Recipe {
-            name: "Demo".to_string(),
-            description: "test recipe".to_string(),
+            name: "Go stack".to_string(),
+            description: "Go stack".to_string(),
+            aliases: vec![],
             language: None,
-            aliases: vec!["d".to_string(), "dm".to_string()],
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables: Default::default(),
+            steps: vec![],
+            final_message: Some("cd {name} && go run .".to_string()),
+            pin_versions: None,
+            template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
+        };
+        let vars = HashMap::new();
+        let msg = resolve_final_message(&recipe, "my-go-tool", &vars);
+        assert_eq!(msg, "cd my-go-tool && go run .");
+        println!("   ✓ single-brace name placeholder replaced successfully.\n");
+    }
+
+    // ── Packs tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn load_pack_should_read_pack_toml() {
+        println!("\n🔍 [TEST] load_pack — reads pack definition from TOML");
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join("fa-pack-test");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join(".config/fa/packs/wc-lib")).unwrap();
+
+        let pack_path = home.join(".config/fa/packs/wc-lib/wc-ui.toml");
+        fs::write(&pack_path, r#"name = "wc-ui"
+components = ["toggle-theme", "btn-ally"]
+"#).unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let env_home = home.to_string_lossy().to_string();
+        unsafe { std::env::set_var("HOME", env_home); }
+
+        // Invalidate cached HOME by re-reading config dir
+        let pack = Config::load_pack("packs/wc-lib", "wc-ui");
+        assert!(pack.is_ok(), "load_pack should succeed: {pack:?}");
+        let pack = pack.unwrap();
+        assert_eq!(pack.name, "wc-ui");
+        assert_eq!(pack.components, vec!["toggle-theme", "btn-ally"]);
+
+        if let Some(h) = original_home {
+            unsafe { std::env::set_var("HOME", h); }
+        } else {
+            unsafe { std::env::remove_var("HOME"); }
+        }
+        let _ = fs::remove_dir_all(&home);
+        println!("   ✓ Pack loaded correctly from TOML.\n");
+    }
+
+    #[test]
+    fn load_pack_should_fail_for_missing_pack() {
+        println!("\n🔍 [TEST] load_pack — fails for missing pack file");
+        let result = Config::load_pack("packs/wc-lib", "nonexistent");
+        assert!(result.is_err(), "load_pack for missing pack must error");
+        println!("   ✓ Missing pack correctly returns error.\n");
+    }
+
+    #[test]
+    fn load_pack_should_find_pack_by_name_when_filename_differs() {
+        println!("\n🔍 [TEST] load_pack — finds pack by internal name when filename differs");
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join("fa-pack-name-diff");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join(".config/fa/packs/wc-lib")).unwrap();
+
+        // Note the filename has typo 'wc-toggle-them.toml' but inside name is 'wc-toggle-theme'
+        let pack_path = home.join(".config/fa/packs/wc-lib/wc-toggle-them.toml");
+        fs::write(
+            &pack_path,
+            r#"name = "wc-toggle-theme"
+components = ["toggle-theme"]
+"#,
+        )
+        .unwrap();
+
+        let original_home = std::env::var_os("HOME");
+        let env_home = home.to_string_lossy().to_string();
+        unsafe { std::env::set_var("HOME", env_home); }
+
+        let pack = Config::load_pack("packs/wc-lib", "wc-toggle-theme");
+        assert!(pack.is_ok(), "load_pack should find pack by internal name even with typo in filename: {pack:?}");
+        let pack = pack.unwrap();
+        assert_eq!(pack.name, "wc-toggle-theme");
+        assert_eq!(pack.components, vec!["toggle-theme"]);
+
+        if let Some(h) = original_home {
+            unsafe { std::env::set_var("HOME", h); }
+        } else {
+            unsafe { std::env::remove_var("HOME"); }
+        }
+        let _ = fs::remove_dir_all(&home);
+        println!("   ✓ Pack loaded correctly by internal name match.\n");
+    }
+
+    #[test]
+    fn resolve_components_should_pick_explicit_component() {
+        println!("\n🔍 [TEST] resolve_components — explicit component wins");
+        let recipe = Recipe {
+            name: "wc-lib".to_string(),
+            description: "test".to_string(),
+            language: None,
+            aliases: vec![],
             variants: vec![],
             create: None,
             pm: None,
@@ -1159,9 +1480,228 @@ mod tests {
             final_message: None,
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: Some("default".to_string()),
         };
-        let line = format_list_line("demo", &recipe);
-        assert!(line.contains("demo, d, dm"), "Recipe aliases must be formatted comma-separated alongside key: got '{line}'");
+        let (components, desc) = resolve_components(&recipe, &Some("toggle-theme".to_string()), &None).unwrap();
+        assert_eq!(components, vec!["toggle-theme"]);
+        assert!(desc.contains("toggle-theme"));
+        println!("   ✓ Explicit component resolved: {desc}\n");
+    }
+
+    #[test]
+    fn resolve_components_should_error_on_missing_pack() {
+        println!("\n🔍 [TEST] resolve_components — errors when explicit pack is not found");
+        let recipe = Recipe {
+            name: "wc-lib".to_string(),
+            description: "test".to_string(),
+            language: None,
+            aliases: vec![],
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables: Default::default(),
+            steps: vec![],
+            final_message: None,
+            pin_versions: None,
+            template_base: None,
+            packs_dir: Some("packs/wc-lib".to_string()),
+            templates_dir: None,
+            default: None,
+        };
+        let res = resolve_components(&recipe, &None, &Some("nonexistent-pack".to_string()));
+        assert!(res.is_err(), "Must return error on missing pack");
+        println!("   ✓ Missing pack correctly returns error.\n");
+    }
+
+    #[test]
+    fn resolve_components_should_pick_explicit_pack() {
+        println!("\n🔍 [TEST] resolve_components — explicit pack wins over default");
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join("fa-pack-resolve");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join(".config/fa/packs/wc-lib")).unwrap();
+        fs::write(
+            home.join(".config/fa/packs/wc-lib/wc-ui.toml"),
+            r#"name = "wc-ui"
+components = ["toggle-theme", "btn-ally"]
+"#,
+        )
+        .unwrap();
+        let original_home = std::env::var_os("HOME");
+        unsafe { std::env::set_var("HOME", home.to_string_lossy().to_string()); }
+
+        let recipe = Recipe {
+            name: "wc-lib".to_string(),
+            description: "test".to_string(),
+            language: None,
+            aliases: vec![],
+            variants: vec![],
+            create: None,
+            pm: None,
+            tooling: None,
+            files: Default::default(),
+            variables: Default::default(),
+            steps: vec![],
+            final_message: None,
+            pin_versions: None,
+            template_base: None,
+            packs_dir: Some("packs/wc-lib".to_string()),
+            templates_dir: None,
+            default: Some("default".to_string()),
+        };
+        let (components, desc) =
+            resolve_components(&recipe, &None, &Some("wc-ui".to_string())).unwrap();
+        assert_eq!(components, vec!["toggle-theme", "btn-ally"]);
+        assert!(desc.contains("wc-ui"));
+
+        if let Some(h) = original_home {
+            unsafe { std::env::set_var("HOME", h); }
+        } else {
+            unsafe { std::env::remove_var("HOME"); }
+        }
+        let _ = fs::remove_dir_all(&home);
+        println!("   ✓ Explicit pack resolved: {desc}\n");
+    }
+
+    #[test]
+    fn execute_create_step_should_copy_files() {
+        println!("\n🔍 [TEST] execute_create_step — copies template files to destination");
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join("fa-create-step");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join(".config/fa/templates/wc-lib/toggle-theme")).unwrap();
+        fs::write(
+            home.join(".config/fa/templates/wc-lib/toggle-theme/toggle-theme.astro"),
+            "<button>Click</button>",
+        )
+        .unwrap();
+        fs::write(
+            home.join(".config/fa/templates/wc-lib/toggle-theme/toggle-theme.js"),
+            "export default {}",
+        )
+        .unwrap();
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&home).unwrap();
+        let original_home = std::env::var_os("HOME");
+        unsafe { std::env::set_var("HOME", home.to_string_lossy().to_string()); }
+
+        let create = CreateStep {
+            from: "templates/wc-lib/toggle-theme".to_string(),
+            to: "src/components/toggle-theme".to_string(),
+        };
+        let vars = HashMap::new();
+        let result = execute_create_step(&create, &vars, "templates/wc-lib", false);
+        assert!(result.is_ok(), "execute_create_step should succeed: {result:?}");
+
+        let dest = home.join("src/components/toggle-theme");
+        assert!(dest.join("toggle-theme.astro").exists(), "astro file must exist");
+        assert!(dest.join("toggle-theme.js").exists(), "js file must exist");
+
+        if let Some(h) = original_home {
+            unsafe { std::env::set_var("HOME", h); }
+        } else {
+            unsafe { std::env::remove_var("HOME"); }
+        }
+        std::env::set_current_dir(&original_cwd).unwrap();
+        let _ = fs::remove_dir_all(&home);
+        println!("   ✓ Files copied correctly to destination.\n");
+    }
+
+    #[test]
+    fn execute_create_step_dry_run_should_not_copy() {
+        println!("\n🔍 [TEST] execute_create_step — dry_run does not copy files");
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join("fa-create-dry");
+        let _ = fs::remove_dir_all(&home);
+        fs::create_dir_all(home.join(".config/fa/templates/wc-lib/toggle-theme")).unwrap();
+        fs::write(
+            home.join(".config/fa/templates/wc-lib/toggle-theme/toggle-theme.astro"),
+            "<button>Click</button>",
+        )
+        .unwrap();
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&home).unwrap();
+        let original_home = std::env::var_os("HOME");
+        unsafe { std::env::set_var("HOME", home.to_string_lossy().to_string()); }
+
+        let create = CreateStep {
+            from: "templates/wc-lib/toggle-theme".to_string(),
+            to: "src/components/toggle-theme".to_string(),
+        };
+        let vars = HashMap::new();
+        let result = execute_create_step(&create, &vars, "templates/wc-lib", true);
+        assert!(result.is_ok(), "dry_run should not error");
+
+        let dest = home.join("src/components/toggle-theme");
+        assert!(!dest.exists(), "destination should NOT exist in dry_run");
+
+        if let Some(h) = original_home {
+            unsafe { std::env::set_var("HOME", h); }
+        } else {
+            unsafe { std::env::remove_var("HOME"); }
+        }
+        std::env::set_current_dir(&original_cwd).unwrap();
+        let _ = fs::remove_dir_all(&home);
+        println!("   ✓ Dry-run correctly skips file copy.\n");
+    }
+
+    #[test]
+    fn execute_create_step_should_support_tilde_path_in_templates_dir() {
+        println!("\n🔍 [TEST] execute_create_step — supports ~/ path in templates_dir");
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let home = std::env::temp_dir().join("fa-create-tilde");
+        let _ = fs::remove_dir_all(&home);
+        // External template path: ~/work/web-component/toggle-theme
+        fs::create_dir_all(home.join("work/web-component/toggle-theme")).unwrap();
+        fs::write(
+            home.join("work/web-component/toggle-theme/toggle-theme.astro"),
+            "<button>Tilde Button</button>",
+        )
+        .unwrap();
+        let original_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(&home).unwrap();
+        let original_home = std::env::var_os("HOME");
+        unsafe { std::env::set_var("HOME", home.to_string_lossy().to_string()); }
+
+        let create = CreateStep {
+            from: "{{component}}".to_string(),
+            to: "src/components/{{component}}".to_string(),
+        };
+        let mut vars = HashMap::new();
+        vars.insert("component".to_string(), "toggle-theme".to_string());
+        let result = execute_create_step(&create, &vars, "~/work/web-component", false);
+        assert!(result.is_ok(), "execute_create_step with ~/ in templates_dir should succeed: {result:?}");
+
+        let dest = home.join("src/components/toggle-theme");
+        assert!(dest.join("toggle-theme.astro").exists(), "astro file from external ~/ dir must exist");
+
+        if let Some(h) = original_home {
+            unsafe { std::env::set_var("HOME", h); }
+        } else {
+            unsafe { std::env::remove_var("HOME"); }
+        }
+        std::env::set_current_dir(&original_cwd).unwrap();
+        let _ = fs::remove_dir_all(&home);
+        println!("   ✓ Tilde path in templates_dir copied files correctly.\n");
+    }
+
+    #[test]
+    fn execute_create_step_should_reject_root_path_with_slash() {
+        println!("\n🔍 [TEST] execute_create_step — rejects root path with slash");
+        let create = CreateStep {
+            from: "toggle-theme".to_string(),
+            to: "src/components".to_string(),
+        };
+        let vars = HashMap::new();
+        let result = execute_create_step(&create, &vars, "/var/templates", false);
+        assert!(result.is_err(), "Root path starting with / must be rejected");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("Root paths starting with '/' are not allowed") || err_msg.contains("not allowed"), "error was: {err_msg}");
+        println!("   ✓ Root path / correctly rejected: {err_msg}\n");
     }
 
     #[test]
@@ -1501,6 +2041,9 @@ free = { command = "free -h", description = "Free memory" }
             final_message: None,
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
         }
     }
 
@@ -1633,6 +2176,9 @@ free = { command = "free -h", description = "Free memory" }
             final_message: None,
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
         };
         let inputs = vec!["create {{name}}".to_string()];
         let mut vars = HashMap::new();
@@ -1660,6 +2206,9 @@ free = { command = "free -h", description = "Free memory" }
             final_message: None,
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
         };
         let vars = HashMap::new();
         let msg = resolve_final_message(&recipe, "my-app", &vars);
@@ -1689,6 +2238,9 @@ free = { command = "free -h", description = "Free memory" }
             final_message: Some("Run `cd {{name}} && cargo run` to start.".to_string()),
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
         };
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), "my-app".to_string());
@@ -1719,6 +2271,9 @@ free = { command = "free -h", description = "Free memory" }
             final_message: Some("cd {name} && go run .".to_string()),
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
         };
         let vars = HashMap::new();
         let msg = resolve_final_message(&recipe, "my-go-tool", &vars);

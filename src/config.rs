@@ -39,6 +39,14 @@ pub struct Create {
     pub template_dir: Option<String>,
 }
 
+/// A file-copy step: copies a template directory to a destination.
+/// Used by the packs system to deploy web components.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CreateStep {
+    pub from: String,
+    pub to: String,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Pm {
     pub install: Option<BTreeMap<String, String>>,
@@ -60,7 +68,9 @@ pub struct Tooling {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Step {
-    pub command: String,
+    #[serde(default)]
+    pub command: Option<String>,
+    pub create: Option<CreateStep>,
     pub description: Option<String>,
     pub platform: Option<String>,
     #[serde(default)]
@@ -172,6 +182,14 @@ impl Variable {
     }
 }
 
+/// Pack definition: a named group of components.
+/// Lives in `~/.config/fa/<packs_dir>/<name>.toml`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Pack {
+    pub name: String,
+    pub components: Vec<String>,
+}
+
 /// Executable command declared in the alias catalog, invoked via `fa alias <name>`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Command {
@@ -215,6 +233,18 @@ pub struct Recipe {
     /// user of manual follow-ups (e.g. "edit 'src/config.ts'").
     #[serde(default)]
     pub final_message: Option<String>,
+    /// Directory (relative to ~/.config/fa/) where pack definitions live.
+    /// Packs are .toml files listing components to install together.
+    #[serde(default)]
+    pub packs_dir: Option<String>,
+    /// Directory (relative to ~/.config/fa/) where component templates live.
+    /// Overrides the default templates/ directory for this recipe's create steps.
+    #[serde(default)]
+    pub templates_dir: Option<String>,
+    /// Default pack name used when `fa new <recipe>` is called without
+    /// specifying a component or pack.
+    #[serde(default)]
+    pub default: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -286,6 +316,7 @@ impl Config {
 
         config.validate_template_paths()?;
         config.validate_variables()?;
+        config.validate_steps()?;
 
         Ok((config, source_summary))
     }
@@ -394,6 +425,18 @@ impl Config {
                     )
                 })?;
             }
+            if let Some(td) = &recipe.templates_dir
+                && td.starts_with('/') {
+                    anyhow::bail!(
+                        "recipe '{recipe_key}': root paths starting with '/' are not allowed in templates_dir ('{td}'); use '~/' or paths relative to ~/.config/fa"
+                    );
+                }
+            if let Some(pd) = &recipe.packs_dir
+                && pd.starts_with('/') {
+                    anyhow::bail!(
+                        "recipe '{recipe_key}': root paths starting with '/' are not allowed in packs_dir ('{pd}'); use '~/' or paths relative to ~/.config/fa"
+                    );
+                }
             for (dest, spec) in &recipe.files {
                 for value in [&spec.from, &spec.template].into_iter().flatten() {
                     Self::resolve_rel(recipe.template_base.as_deref(), value).map_err(|e| {
@@ -495,6 +538,93 @@ impl Config {
         Ok(())
     }
 
+    /// Validates that every `[[steps]]` has either `command` or `create`
+    /// (not both, not neither).
+    pub fn validate_steps(&self) -> anyhow::Result<()> {
+        for (recipe_key, recipe) in &self.recipes {
+            for (idx, step) in recipe.steps.iter().enumerate() {
+                let has_command = step.command.is_some();
+                let has_create = step.create.is_some();
+                if !has_command && !has_create {
+                    anyhow::bail!(
+                        "recipe '{recipe_key}' step {idx}: must have either 'command' or 'create'"
+                    );
+                }
+                if has_command && has_create {
+                    anyhow::bail!(
+                        "recipe '{recipe_key}' step {idx}: cannot have both 'command' and 'create'"
+                    );
+                }
+                if let Some(create) = &step.create {
+                    if create.from.starts_with('/') {
+                        anyhow::bail!(
+                            "recipe '{recipe_key}' step {idx}: root paths starting with '/' are not allowed in create.from ('{}'); use '~/' or paths relative to ~/.config/fa",
+                            create.from
+                        );
+                    }
+                    if create.to.starts_with('/') {
+                        anyhow::bail!(
+                            "recipe '{recipe_key}' step {idx}: create.to path ('{}') must be relative to project and cannot start with '/'",
+                            create.to
+                        );
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Loads a pack definition from `~/.config/fa/<packs_dir>/<name>.toml`
+    /// or from a custom user directory starting with `~/`.
+    /// Rejects root system paths starting with `/`.
+    /// Returns the `Pack` struct with its component list.
+    pub fn load_pack(packs_dir: &str, pack_name: &str) -> anyhow::Result<Pack> {
+        if packs_dir.starts_with('/') {
+            anyhow::bail!("Root paths starting with '/' are not allowed; use '~/' or paths relative to ~/.config/fa");
+        }
+        let pack_dir = if let Some(rest) = packs_dir.strip_prefix("~/") {
+            let home = dirs_home_dir()
+                .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory (HOME not set)"))?;
+            home.join(rest)
+        } else {
+            let Some(user_dir) = Self::get_user_config_dir() else {
+                anyhow::bail!("Cannot determine home directory (HOME not set)");
+            };
+            user_dir.join(packs_dir)
+        };
+        let pack_path = pack_dir.join(format!("{pack_name}.toml"));
+        if pack_path.exists() {
+            let content = fs::read_to_string(&pack_path)
+                .map_err(|e| anyhow::anyhow!("Failed to read pack {}: {e}", pack_path.display()))?;
+            let pack: Pack = toml::from_str(&content)
+                .map_err(|e| anyhow::anyhow!("Failed to parse pack {pack_name}: {e}"))?;
+            return Ok(pack);
+        }
+
+        // Fallback: scan pack_dir for any *.toml where internal pack.name == pack_name
+        if let Ok(entries) = fs::read_dir(&pack_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file()
+                    && path.extension().and_then(|s| s.to_str()) == Some("toml")
+                    && let Ok(content) = fs::read_to_string(&path)
+                    && let Ok(pack) = toml::from_str::<Pack>(&content)
+                    && pack.name == pack_name
+                {
+                    return Ok(pack);
+                }
+            }
+        }
+
+        anyhow::bail!("Pack '{pack_name}' not found at {}", pack_path.display());
+    }
+
+    /// Returns the effective templates directory for a recipe.
+    /// Falls back to the default `~/.config/fa/templates/`.
+    pub fn resolve_templates_dir(recipe: &Recipe) -> String {
+        recipe.templates_dir.clone().unwrap_or_else(|| "templates".to_string())
+    }
+
     /// Resolves an input query to its full command definition, returning
     /// `(section, command_key, &Command)`.
     pub fn resolve_command(&self, query: &str) -> Option<(String, String, &Command)> {
@@ -516,6 +646,17 @@ impl Config {
             }
         }
         out
+    }
+}
+
+impl Recipe {
+    /// True if the recipe defines pack/component workflows (has `packs_dir`, `templates_dir`,
+    /// `default`, or steps with `create`).
+    pub fn is_pack_recipe(&self) -> bool {
+        self.packs_dir.is_some()
+            || self.templates_dir.is_some()
+            || self.default.is_some()
+            || self.steps.iter().any(|s| s.create.is_some())
     }
 }
 

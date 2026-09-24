@@ -38,8 +38,8 @@ enum Commands {
     New {
         /// Recipe name or alias (e.g. my-recipe)
         recipe: String,
-        /// Project directory name
-        name: String,
+        /// Project directory name (or pack/component name for pack recipes)
+        name: Option<String>,
         /// Toolchain variant (e.g. pnpm, bun, npm)
         #[arg(short, long)]
         variant: Option<String>,
@@ -308,13 +308,61 @@ fn main() -> anyhow::Result<()> {
             if !dry_run {
                 ensure_trusted()?;
             }
+            let recipe_def = config.recipes.get(key.as_str()).ok_or_else(|| {
+                anyhow::anyhow!("Recipe '{key}' not found in configuration")
+            })?;
+
+            let (project_name, pack_opt, comp_opt) = if recipe_def.is_pack_recipe() {
+                match name {
+                    None => {
+                        let pack = std::env::var("FA_PACK").ok().or_else(|| recipe_def.default.clone());
+                        let comp = std::env::var("FA_COMPONENT").ok();
+                        if pack.is_none() && comp.is_none() {
+                            anyhow::bail!(
+                                "No pack or component specified, and recipe '{key}' has no default pack.\nRun `fa new {key} <pack>` or specify a default pack in the recipe."
+                            );
+                        }
+                        (".".to_string(), pack, comp)
+                    }
+                    Some(target) => {
+                        let packs_dir = recipe_def.packs_dir.as_deref().unwrap_or("packs");
+                        if Config::load_pack(packs_dir, &target).is_ok() {
+                            (".".to_string(), Some(target), None)
+                        } else {
+                            let templates_dir = Config::resolve_templates_dir(recipe_def);
+                            let comp_dir = if let Some(rest) = templates_dir.strip_prefix("~/") {
+                                crate::config::dirs_home_dir().map(|h| h.join(rest).join(&target))
+                            } else {
+                                Config::get_user_config_dir().map(|u| u.join(&templates_dir).join(&target))
+                            };
+                            if comp_dir.as_ref().map(|d| d.is_dir()).unwrap_or(false) {
+                                (".".to_string(), None, Some(target))
+                            } else if recipe_def.create.is_some() {
+                                (target, std::env::var("FA_PACK").ok().or_else(|| recipe_def.default.clone()), std::env::var("FA_COMPONENT").ok())
+                            } else {
+                                anyhow::bail!(
+                                    "Pack or component '{target}' not found for recipe '{key}' in packs_dir '{packs_dir}' or templates_dir '{templates_dir}'."
+                                );
+                            }
+                        }
+                    }
+                }
+            } else {
+                let Some(proj) = name else {
+                    anyhow::bail!("Missing required argument <NAME>. Run `fa new {key} <project-name>`");
+                };
+                (proj, std::env::var("FA_PACK").ok(), std::env::var("FA_COMPONENT").ok())
+            };
+
             let opts = NewOptions {
                 recipe_key: key.clone(),
-                project_name: name,
+                project_name,
                 variant,
                 dry_run,
                 no_install,
-                pin_versions: config.recipes.get(key.as_str()).and_then(|r| r.pin_versions).unwrap_or(false),
+                pin_versions: recipe_def.pin_versions.unwrap_or(false),
+                component: comp_opt,
+                pack: pack_opt,
             };
             let new_result = run_new(&config, &opts);
 
@@ -572,7 +620,7 @@ fn format_recipe_details(recipe: &crate::config::Recipe, key: &str) -> String {
         for step in &recipe.steps {
             out.push_str(&format!(
                 "  - {} ({})\n",
-                step.command,
+                step.command.as_deref().unwrap_or("no command"),
                 step.description.as_deref().unwrap_or("no description")
             ));
         }
@@ -814,6 +862,9 @@ mod tests {
             final_message: None,
             pin_versions: None,
             template_base: None,
+            packs_dir: None,
+            templates_dir: None,
+            default: None,
         };
 
         // When final_message is None, defaults to cd project-name hint
@@ -900,6 +951,27 @@ mod tests {
                 output.contains("alias, -a"),
                 "Top-level help ({args:?}) must contain inline alias for alias: got:\n{output}"
             );
+        }
+    }
+
+    #[test]
+    fn cli_new_pack_recipe_should_parse_optional_target() {
+        let cli = Cli::try_parse_from(["fa", "new", "wc-lib"]).expect("fa new wc-lib should parse without name");
+        match cli.command {
+            Some(Commands::New { recipe, name, .. }) => {
+                assert_eq!(recipe, "wc-lib");
+                assert_eq!(name, None);
+            }
+            _ => panic!("Expected Commands::New"),
+        }
+
+        let cli = Cli::try_parse_from(["fa", "new", "wc-lib", "wc-toggle-theme"]).expect("fa new wc-lib wc-toggle-theme should parse");
+        match cli.command {
+            Some(Commands::New { recipe, name, .. }) => {
+                assert_eq!(recipe, "wc-lib");
+                assert_eq!(name, Some("wc-toggle-theme".to_string()));
+            }
+            _ => panic!("Expected Commands::New"),
         }
     }
 }
