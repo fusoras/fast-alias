@@ -346,7 +346,7 @@ fn main() -> anyhow::Result<()> {
                     }
                     Some(target) => {
                         let packs_dir = recipe_def.packs_dir.as_deref().unwrap_or("packs");
-                        if Config::load_pack(packs_dir, &target).is_ok() {
+                        if Config::find_pack(Some(recipe_def), packs_dir, &target).is_ok() {
                             (".".to_string(), Some(target), None)
                         } else {
                             let templates_dir = Config::resolve_templates_dir(recipe_def);
@@ -885,6 +885,7 @@ mod tests {
             packs_dir: None,
             templates_dir: None,
             default_pack: None,
+            packs: Default::default(),
         };
 
         // When final_message is None, defaults to cd project-name hint

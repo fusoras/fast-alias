@@ -183,10 +183,24 @@ impl Variable {
 }
 
 /// Pack definition: a named group of components.
-/// Lives in `~/.config/fa/<packs_dir>/<name>.toml`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+/// Can live in `~/.config/fa/<packs_dir>/<name>.toml`, multi-pack TOML files,
+/// or directly inline in `[recipes.<name>.packs.<pack_name>]`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Pack {
     pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    pub components: Vec<String>,
+}
+
+/// Inline pack definition inside a recipe.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
+pub struct PackDefinition {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
     pub components: Vec<String>,
 }
 
@@ -245,6 +259,9 @@ pub struct Recipe {
     /// specifying a component or pack.
     #[serde(default, alias = "default")]
     pub default_pack: Option<String>,
+    /// Optional inline packs defined directly inside the recipe.
+    #[serde(default)]
+    pub packs: BTreeMap<String, PackDefinition>,
 }
 
 fn default_packs_behavior() -> String {
@@ -271,6 +288,134 @@ impl Default for PacksSettings {
 pub struct GlobalConfig {
     #[serde(default)]
     pub packs: PacksSettings,
+}
+
+/// Parses pack definitions from a TOML string. Supports:
+/// 1. `[packs.<name>]` tables
+/// 2. `[[packs]]` array of tables
+/// 3. Top-level tables where each table contains `components = [...]`
+/// 4. Root table containing `components = [...]` (single pack file)
+pub fn parse_packs_from_toml(content: &str, file_stem: &str) -> Vec<Pack> {
+    let Ok(val) = content.parse::<toml::Value>() else {
+        return Vec::new();
+    };
+
+    let Some(table) = val.as_table() else {
+        return Vec::new();
+    };
+
+    // Case 1: `packs` key exists
+    if let Some(packs_val) = table.get("packs") {
+        // 1a: Table of packs: [packs.<name>]
+        if let Some(packs_table) = packs_val.as_table() {
+            let mut packs = Vec::new();
+            for (key, sub_val) in packs_table {
+                if let Some(sub_table) = sub_val.as_table() {
+                    let name = sub_table
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(key)
+                        .to_string();
+                    let desc = sub_table
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let components = extract_components(sub_table);
+                    packs.push(Pack {
+                        name,
+                        description: desc,
+                        components,
+                    });
+                }
+            }
+            return packs;
+        }
+
+        // 1b: Array of packs: [[packs]]
+        if let Some(packs_array) = packs_val.as_array() {
+            let mut packs = Vec::new();
+            for item in packs_array {
+                if let Some(sub_table) = item.as_table() {
+                    let name = sub_table
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(file_stem)
+                        .to_string();
+                    let desc = sub_table
+                        .get("description")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let components = extract_components(sub_table);
+                    packs.push(Pack {
+                        name,
+                        description: desc,
+                        components,
+                    });
+                }
+            }
+            return packs;
+        }
+    }
+
+    // Case 2: Root level has `components` (single pack file)
+    if table.contains_key("components") {
+        let name = table
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or(file_stem)
+            .to_string();
+        let desc = table
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let components = extract_components(table);
+        return vec![Pack {
+            name,
+            description: desc,
+            components,
+        }];
+    }
+
+    // Case 3: Top-level tables where each table has `components`
+    let mut top_packs = Vec::new();
+    for (key, sub_val) in table {
+        if let Some(sub_table) = sub_val.as_table()
+            && sub_table.contains_key("components")
+        {
+            let name = sub_table
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or(key)
+                .to_string();
+            let desc = sub_table
+                .get("description")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let components = extract_components(sub_table);
+            top_packs.push(Pack {
+                name,
+                description: desc,
+                components,
+            });
+        }
+    }
+    if !top_packs.is_empty() {
+        return top_packs;
+    }
+
+    Vec::new()
+}
+
+fn extract_components(table: &toml::map::Map<String, toml::Value>) -> Vec<String> {
+    table
+        .get("components")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|val| val.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -635,11 +780,32 @@ impl Config {
         Ok(())
     }
 
-    /// Loads a pack definition from `~/.config/fa/<packs_dir>/<name>.toml`
-    /// or from a custom user directory starting with `~/`.
-    /// Rejects root system paths starting with `/`.
-    /// Returns the `Pack` struct with its component list.
-    pub fn load_pack(packs_dir: &str, pack_name: &str) -> anyhow::Result<Pack> {
+    /// Finds a pack definition from either:
+    /// 1. The recipe's inline `[recipes.<name>.packs.<pack_name>]`
+    /// 2. A `<pack_name>.toml` file in `packs_dir`
+    /// 3. A multi-pack TOML file in `packs_dir` (e.g. `packs.toml` or any `.toml` containing `[packs.<name>]` or `[<name>]`)
+    pub fn find_pack(recipe: Option<&Recipe>, packs_dir: &str, pack_name: &str) -> anyhow::Result<Pack> {
+        // 1. Check inline recipe packs
+        if let Some(r) = recipe {
+            if let Some(def) = r.packs.get(pack_name) {
+                return Ok(Pack {
+                    name: def.name.clone().unwrap_or_else(|| pack_name.to_string()),
+                    description: def.description.clone(),
+                    components: def.components.clone(),
+                });
+            }
+            for (key, def) in &r.packs {
+                if def.name.as_deref() == Some(pack_name) {
+                    return Ok(Pack {
+                        name: key.clone(),
+                        description: def.description.clone(),
+                        components: def.components.clone(),
+                    });
+                }
+            }
+        }
+
+        // 2. Check packs_dir
         if packs_dir.starts_with('/') {
             anyhow::bail!("Root paths starting with '/' are not allowed; use '~/' or paths relative to ~/.config/fa");
         }
@@ -653,31 +819,67 @@ impl Config {
             };
             user_dir.join(packs_dir)
         };
+
+        // Try exact filename first
         let pack_path = pack_dir.join(format!("{pack_name}.toml"));
-        if pack_path.exists() {
-            let content = fs::read_to_string(&pack_path)
-                .map_err(|e| anyhow::anyhow!("Failed to read pack {}: {e}", pack_path.display()))?;
-            let pack: Pack = toml::from_str(&content)
-                .map_err(|e| anyhow::anyhow!("Failed to parse pack {pack_name}: {e}"))?;
-            return Ok(pack);
+        if pack_path.is_file()
+            && let Ok(content) = fs::read_to_string(&pack_path)
+        {
+            let stem = pack_path.file_stem().and_then(|s| s.to_str()).unwrap_or(pack_name);
+            let parsed = parse_packs_from_toml(&content, stem);
+            if let Some(found) = parsed.into_iter().find(|p| p.name == pack_name) {
+                return Ok(found);
+            }
         }
 
-        // Fallback: scan pack_dir for any *.toml where internal pack.name == pack_name
+        // Scan all .toml files in pack_dir (including multi-pack files)
         if let Ok(entries) = fs::read_dir(&pack_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.is_file()
                     && path.extension().and_then(|s| s.to_str()) == Some("toml")
                     && let Ok(content) = fs::read_to_string(&path)
-                    && let Ok(pack) = toml::from_str::<Pack>(&content)
-                    && pack.name == pack_name
                 {
-                    return Ok(pack);
+                    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                    let parsed = parse_packs_from_toml(&content, stem);
+                    if let Some(found) = parsed.into_iter().find(|p| p.name == pack_name) {
+                        return Ok(found);
+                    }
                 }
             }
         }
 
         anyhow::bail!("Pack '{pack_name}' not found at {}", pack_path.display());
+    }
+
+    /// Loads a pack definition from `~/.config/fa/<packs_dir>/<name>.toml`
+    /// or from a custom user directory starting with `~/`.
+    #[allow(dead_code)]
+    pub fn load_pack(packs_dir: &str, pack_name: &str) -> anyhow::Result<Pack> {
+        Self::find_pack(None, packs_dir, pack_name)
+    }
+
+    /// Lists all packs for a recipe, combining inline packs with packs found in `packs_dir`.
+    pub fn list_recipe_packs(recipe: &Recipe) -> Vec<Pack> {
+        let mut map: BTreeMap<String, Pack> = BTreeMap::new();
+
+        // 1. Inline packs
+        for (key, def) in &recipe.packs {
+            let name = def.name.clone().unwrap_or_else(|| key.clone());
+            map.insert(name.clone(), Pack {
+                name,
+                description: def.description.clone(),
+                components: def.components.clone(),
+            });
+        }
+
+        // 2. Packs from packs_dir
+        let packs_dir = recipe.packs_dir.as_deref().unwrap_or("packs");
+        for pack in Self::list_packs(packs_dir) {
+            map.entry(pack.name.clone()).or_insert(pack);
+        }
+
+        map.into_values().collect()
     }
 
     /// Returns the effective templates directory for a recipe.
@@ -711,19 +913,20 @@ impl Config {
             Ok(e) => e,
             Err(_) => return Vec::new(),
         };
-        let mut packs = Vec::new();
+        let mut map: BTreeMap<String, Pack> = BTreeMap::new();
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_file()
                 && path.extension().and_then(|s| s.to_str()) == Some("toml")
                 && let Ok(content) = fs::read_to_string(&path)
-                && let Ok(pack) = toml::from_str::<Pack>(&content)
             {
-                packs.push(pack);
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+                for pack in parse_packs_from_toml(&content, stem) {
+                    map.entry(pack.name.clone()).or_insert(pack);
+                }
             }
         }
-        packs.sort_by(|a, b| a.name.cmp(&b.name));
-        packs
+        map.into_values().collect()
     }
 
     /// Lists all components found in the recipe's `templates_dir`.
@@ -767,11 +970,12 @@ impl Config {
 
 impl Recipe {
     /// True if the recipe defines pack/component workflows (has `packs_dir`, `templates_dir`,
-    /// `default_pack`, or steps with `create`).
+    /// `default_pack`, inline `packs`, or steps with `create`).
     pub fn is_pack_recipe(&self) -> bool {
         self.packs_dir.is_some()
             || self.templates_dir.is_some()
             || self.default_pack.is_some()
+            || !self.packs.is_empty()
             || self.steps.iter().any(|s| s.create.is_some())
     }
 }
@@ -1274,5 +1478,79 @@ default = "my-pack"
         let toml_err = "[packs]\ndefault_behavior = \"error\"";
         let cfg_err: GlobalConfig = toml::from_str(toml_err).unwrap();
         assert_eq!(cfg_err.packs.default_behavior, "error");
+    }
+
+    #[test]
+    fn test_parse_packs_multi_pack_table() {
+        let toml_str = r#"
+[packs.default]
+description = "Default UI bundle"
+components = ["toggle-theme", "btn-ally"]
+
+[packs.wc-ui]
+description = "Full UI bundle"
+components = ["toggle-theme", "btn-ally", "wc-modal"]
+"#;
+        let packs = parse_packs_from_toml(toml_str, "packs");
+        assert_eq!(packs.len(), 2, "Must parse 2 packs from [packs.<name>] table");
+        assert_eq!(packs[0].name, "default");
+        assert_eq!(packs[0].components, vec!["toggle-theme", "btn-ally"]);
+        assert_eq!(packs[1].name, "wc-ui");
+        assert_eq!(packs[1].components, vec!["toggle-theme", "btn-ally", "wc-modal"]);
+    }
+
+    #[test]
+    fn test_parse_packs_array_of_tables() {
+        let toml_str = r#"
+[[packs]]
+name = "default"
+components = ["toggle-theme"]
+
+[[packs]]
+name = "full"
+components = ["toggle-theme", "wc-modal"]
+"#;
+        let packs = parse_packs_from_toml(toml_str, "packs");
+        assert_eq!(packs.len(), 2, "Must parse 2 packs from [[packs]] array");
+        assert_eq!(packs[0].name, "default");
+        assert_eq!(packs[1].name, "full");
+    }
+
+    #[test]
+    fn test_parse_packs_top_level_tables() {
+        let toml_str = r#"
+[default]
+components = ["toggle-theme"]
+
+[wc-ui]
+components = ["toggle-theme", "btn-ally"]
+"#;
+        let packs = parse_packs_from_toml(toml_str, "packs");
+        assert_eq!(packs.len(), 2, "Must parse 2 packs from top-level tables");
+        assert_eq!(packs[0].name, "default");
+        assert_eq!(packs[1].name, "wc-ui");
+    }
+
+    #[test]
+    fn test_recipe_inline_packs() {
+        let toml_str = r#"
+[recipes.wc-lib]
+name = "Web Components"
+description = "Modular components"
+
+[recipes.wc-lib.packs.default]
+components = ["toggle-theme"]
+
+[recipes.wc-lib.packs.wc-ui]
+components = ["toggle-theme", "btn-ally"]
+"#;
+        let cfg: Config = toml::from_str(toml_str).unwrap();
+        let recipe = &cfg.recipes["wc-lib"];
+        assert_eq!(recipe.packs.len(), 2);
+        assert!(recipe.is_pack_recipe(), "Recipe with inline packs must be recognized as pack recipe");
+
+        let pack = Config::find_pack(Some(recipe), "nonexistent_dir", "wc-ui").unwrap();
+        assert_eq!(pack.name, "wc-ui");
+        assert_eq!(pack.components, vec!["toggle-theme", "btn-ally"]);
     }
 }
