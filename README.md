@@ -24,19 +24,32 @@ curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.
 
 ### Quick CLI Overview
 
-| Command | Description | Notes |
-|---|---|---|
-| `fa alias <name>` | Runs a general-purpose alias from the `[aliases]` catalog | Accepts canonical name or declared alias; `fa -a <name>` is shorthand |
-| `fa new <recipe> <name>` | Scaffolds a new project from the recipe into directory `<name>` | `-v` / `--variant` to pick a toolchain variant, `-d` / `--dry-run` to preview, `--no-install` to skip dependencies |
-| `fa list` | Displays available recipes for current platform | `-sh` / `--show-hidden` to display unsupported recipes |
-| `fa search <query>` | Searches recipes by name, alias, language, or variant | Same single-line format as `list` |
-| `fa show <recipe>` | Displays full recipe description, tooling, files, and steps | Accepts recipe name or alias |
-| `fa sync` | Fetches the latest recipe catalog from the repository | `-d` / `--dry-run` to preview |
-| `fa self-update` | Checks GitHub Releases and updates `fa` binary in-place | `-d` / `--dry-run` to preview update check |
-| `fa self-uninstall` | Safely removes `fa` binary executable, state, and config directories | `--yes` / `-y` to confirm deletion, `--no` / `-n` to keep state/config |
+> [!TIP]
+> **Getting Help for Any Command**:
+> You can inspect usage and flags for any command or subcommand at any time by appending `--help` or `-h` (or using `fa help <command>`):
+> ```bash
+> fa --list --help          # or: fa -l -h
+> fa --new --help           # or: fa -n -h
+> fa --recipe --help        # or: fa -r -h
+> fa --template add --help  # or: fa -t add -h
+> ```
+
+| Command (Long) | Short | Description | Notes & Flags |
+|---|---|---|---|
+| `fa --new <recipe> <name>` | `fa -n` | Scaffolds a new project from recipe into directory `<name>` | `-v` / `--variant`, `-d` / `--dry-run`, `--no-install` |
+| `fa --list [category]` | `fa -l` | Displays available recipes, aliases, or packs | Filter: `recipes` (`-r`), `aliases` (`-a`), `packs` (`-p`); `-s` / `--show-hidden` |
+| `fa --search <query>` | `fa -se` | Searches recipes by name, alias, language, or variant | Single-line match overview |
+| `fa --show <target>` | `fa -sh` | Displays full recipe description, tooling, files, and steps | Accepts recipe name or alias |
+| `fa --alias <name> [args...]` | `fa -a` | Runs a general-purpose command alias from `[aliases]` | Direct `fa <name>` also supported |
+| `fa --recipe <action>` | `fa -r` | Manages recipe configuration files (`new`, `edit`, `validate`) | Subcommands: `new`, `edit`, `validate` |
+| `fa --template add <recipe> <path>...` | `fa -t` | Copies files or folders into a recipe's template directory | `-f` / `--force` to overwrite without confirmation |
+| `fa --self-update` | — | Checks GitHub Releases and updates `fa` binary in-place | `-d` / `--dry-run` to preview update check |
+| `fa --self-uninstall` | — | Safely removes `fa` binary executable, state, and config directories | `-y` / `--yes`, `-n` / `--no`, `-d` / `--dry-run` |
+| `fa --version` | `fa -v` | Displays version and checks for updates in background | Cached update notifications |
+| `fa --help` | `fa -h` | Displays CLI help | — |
 
 > [!NOTE]
-> **Short flags:** `fa -n <recipe> <name>` is shorthand for `fa new <recipe> <name>`, and `fa -a <name>` for `fa alias <name>`. Inside the `new` subcommand, dry-run is `-d` / `--dry-run` (not `-n`).
+> **Command Style**: In documentation and examples, `fa` uses the explicit long form (`fa --new`, `fa --list`, etc.) for teaching clarity. In your daily shell workflow, use the ultra-fast short flags (`fa -n`, `fa -l`, `fa -se`, `fa -sh`, `fa -r`, `fa -t`, `fa -a`). Native commands always use `--` or `-`, leaving all un-prefixed words exclusively available for your own custom aliases without naming collisions.
 
 ---
 
@@ -85,12 +98,13 @@ free = { command = "free -h", description = "Show available memory" }
 ```
 
 ```bash
-fa alias deploy   # run by canonical name (recommended)
-fa -a dep         # run by alias shorthand (recommended)
+fa --alias deploy   # run by canonical name (recommended)
+fa -a dep           # run by alias shorthand (recommended)
+fa deploy           # direct shorthand invocation
 ```
 
 > [!TIP]
-> **Usage recommendation:** prefer `fa alias <name>` or `fa -a <name>`. Direct `fa <name>` is quick but a future native command with same name would take precedence.
+> **Usage recommendation:** prefer `fa --alias <name>` or `fa -a <name>`. Direct `fa <name>` is quick but a future native command with same name would take precedence.
 
 ### Positional Arguments & Passthrough
 
@@ -114,7 +128,7 @@ Aliases accept parameters and arguments dynamically:
 ### Rules to remember
 
 - **Case-insensitive matching**: Names and aliases ignore case (e.g. if defined as `dep`, `fa dep`, `fa DEP`, and `fa -a Dep` work identically).
-- `fa list` shows scaffold recipes under **Recipes** and general-purpose commands under **Aliases** (ordered by section); `fa show <alias>` prints the command that would run.
+- `fa --list` shows scaffold recipes under **Recipes**, packs under **Packs**, and general-purpose commands under **Aliases** (ordered by section); `fa --show <recipe>` prints full details.
 - The same `[TRUST]` confirmation that guards recipe steps also guards command aliases from your config files.
 
 ## Declaring a recipe

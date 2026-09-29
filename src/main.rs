@@ -8,6 +8,7 @@ mod spinner;
 mod state;
 mod templating;
 mod update;
+mod template;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
@@ -34,7 +35,7 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Scaffold a new project from a recipe into a directory.
-    #[command(visible_aliases = ["-n"])]
+    #[command(name = "--new", visible_alias = "-n")]
     New {
         /// Recipe name or alias (e.g. my-recipe)
         recipe: String,
@@ -50,23 +51,37 @@ enum Commands {
         #[arg(long)]
         no_install: bool,
     },
-    /// List available recipes.
-    #[command(visible_aliases = ["-l"])]
+    /// List available recipes, aliases, or packs.
+    #[command(name = "--list", visible_alias = "-l")]
     List {
         /// Display unsupported recipes too
         #[arg(short = 's', long)]
         show_hidden: bool,
+        /// Filter by category: recipes (r), aliases (a), packs (p)
+        #[arg(value_name = "CATEGORY")]
+        filter: Option<String>,
+        /// Filter: show only recipes
+        #[arg(short = 'r', long = "recipes")]
+        recipes: bool,
+        /// Filter: show only aliases
+        #[arg(short = 'a', long = "aliases")]
+        aliases: bool,
+        /// Filter: show only packs
+        #[arg(short = 'p', long = "packs")]
+        packs: bool,
     },
     /// Search recipes by name, alias, language, or variant.
+    #[command(name = "--search", visible_alias = "-se")]
     Search {
         query: String,
     },
     /// Show full details of a recipe.
+    #[command(name = "--show", visible_alias = "-sh")]
     Show {
         recipe: String,
     },
     /// Run an executable command declared in the recipe catalog.
-    #[command(visible_aliases = ["-a"])]
+    #[command(name = "--alias", visible_alias = "-a")]
     Alias {
         /// Command name or alias (e.g. cloudflare-pages, fpages)
         name: String,
@@ -75,17 +90,26 @@ enum Commands {
         args: Vec<String>,
     },
     /// Manage recipe config files (new/edit/validate).
+    #[command(name = "--recipe", visible_alias = "-r")]
     Recipe {
         #[command(subcommand)]
         action: RecipeAction,
     },
+    /// Manage recipe templates (add files/folders).
+    #[command(name = "--template", visible_alias = "-t")]
+    Template {
+        #[command(subcommand)]
+        action: TemplateAction,
+    },
     /// Checks GitHub Releases and updates the fa binary in-place.
+    #[command(name = "--self-update")]
     SelfUpdate {
         /// Preview the update check without replacing the binary
         #[arg(short, long)]
         dry_run: bool,
     },
     /// Uninstalls the fa executable and state/config directories from the system.
+    #[command(name = "--self-uninstall")]
     SelfUninstall {
         /// Automatically confirm removal of configuration and state directories
         #[arg(short = 'y', long)]
@@ -118,19 +142,40 @@ enum RecipeAction {
     },
 }
 
+/// Actions under `fa template`: add files or folders into recipe templates.
+#[derive(Subcommand)]
+enum TemplateAction {
+    /// Add files or folders into a recipe's template directory.
+    Add {
+        /// Target recipe name
+        recipe: String,
+        /// Source files or folders to copy into template
+        #[arg(required = true)]
+        paths: Vec<std::path::PathBuf>,
+        /// Overwrite existing files without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+}
+
 /// Builtin command names and flags that should not be intercepted as direct alias invocations.
 const BUILTIN_COMMANDS: &[&str] = &[
-    "new",
+    "--new",
     "-n",
-    "list",
+    "--list",
     "-l",
-    "search",
-    "show",
-    "alias",
+    "--search",
+    "-se",
+    "--show",
+    "-sh",
+    "--alias",
     "-a",
-    "recipe",
-    "self-update",
-    "self-uninstall",
+    "--recipe",
+    "-r",
+    "--template",
+    "-t",
+    "--self-update",
+    "--self-uninstall",
     "update-check",
     "help",
     "--help",
@@ -140,29 +185,16 @@ const BUILTIN_COMMANDS: &[&str] = &[
 ];
 
 /// Rewrites CLI arguments:
-/// 1. Short-flag aliases (`fa -n <recipe> <name>` -> `fa new ...`, `fa -a <cmd>` -> `fa alias <cmd>`).
-/// 2. Direct alias invocations (`fa <alias_name>` -> `fa alias <alias_name>`).
+/// Intercepts direct alias invocations (`fa <alias_name>` -> `fa --alias <alias_name>`).
 fn rewrite_args(mut args: Vec<String>, config: Option<&Config>) -> Vec<String> {
     if args.len() >= 2 {
-        match args[1].as_str() {
-            "-n" => {
-                args[1] = "new".to_string();
-                return args;
-            }
-            "-a" => {
-                args[1] = "alias".to_string();
-                return args;
-            }
-            _ => {}
-        }
-
         let first = args[1].as_str();
         if !BUILTIN_COMMANDS.contains(&first)
             && !first.starts_with('-')
             && let Some(cfg) = config
             && cfg.resolve_command(first).is_some()
         {
-            args.insert(1, "alias".to_string());
+            args.insert(1, "--alias".to_string());
         }
     }
     args
@@ -409,32 +441,102 @@ fn main() -> anyhow::Result<()> {
 
             new_result.result?;
         }
-        Commands::List { show_hidden } => {
-            let mut recipes = Vec::new();
-            for (key, recipe) in &config.recipes {
-                if !show_hidden && !is_supported(recipe) {
-                    continue;
+        Commands::List {
+            show_hidden,
+            filter,
+            recipes,
+            aliases,
+            packs,
+        } => {
+            let filter_lower = filter.as_deref().map(|s| s.to_lowercase());
+            let mut show_recipes = recipes;
+            let mut show_aliases = aliases;
+            let mut show_packs = packs;
+
+            if let Some(f) = &filter_lower {
+                match f.as_str() {
+                    "recipes" | "recipe" | "r" => show_recipes = true,
+                    "aliases" | "alias" | "a" => show_aliases = true,
+                    "packs" | "pack" | "p" => show_packs = true,
+                    other => {
+                        anyhow::bail!(
+                            "Unknown filter '{other}'. Expected one of: recipes (r), aliases (a), packs (p)"
+                        );
+                    }
                 }
-                if !is_scaffold_recipe(recipe) {
-                    continue;
-                }
-                recipes.push(format_list_line(key, recipe));
             }
-            if !recipes.is_empty() {
-                println!("{BOLD_CYAN}Recipes:{RESET}");
-                println!("  {DIM}Usage: fa new <recipe> <name>{RESET}");
-                println!();
-                for line in &recipes {
-                    println!("  {line}");
+
+            // If no specific filter or flag is enabled, default to recipes and aliases
+            if !show_recipes && !show_aliases && !show_packs {
+                show_recipes = true;
+                show_aliases = true;
+            }
+
+            if show_recipes {
+                let mut recipe_lines = Vec::new();
+                for (key, recipe) in &config.recipes {
+                    if !show_hidden && !is_supported(recipe) {
+                        continue;
+                    }
+                    if !is_scaffold_recipe(recipe) {
+                        continue;
+                    }
+                    recipe_lines.push(format_list_line(key, recipe));
+                }
+                if !recipe_lines.is_empty() {
+                    println!("{BOLD_CYAN}Recipes:{RESET}");
+                    println!("  {DIM}Usage: fa --new <recipe> <name>  (or: fa -n){RESET}");
+                    println!();
+                    for line in &recipe_lines {
+                        println!("  {line}");
+                    }
                 }
             }
-            let commands = format_alias_groups(&config);
-            if !commands.is_empty() {
-                println!("\n{BOLD_CYAN}Aliases:{RESET}");
-                println!("  {DIM}Usage: fa alias <name>{RESET}");
-                println!();
-                for line in commands {
-                    println!("{line}");
+
+            if show_packs {
+                let mut found_any = false;
+                for (key, recipe) in &config.recipes {
+                    let recipe_packs = Config::list_recipe_packs(recipe);
+                    if recipe_packs.is_empty() {
+                        continue;
+                    }
+                    if !found_any {
+                        if show_recipes {
+                            println!();
+                        }
+                        println!("{BOLD_CYAN}Packs:{RESET}");
+                        found_any = true;
+                    }
+                    let packs_dir = recipe.packs_dir.as_deref().unwrap_or("packs");
+                    println!("  {WHITE}{key}{RESET} {DIM}({packs_dir}):{RESET}");
+                    for pack in recipe_packs {
+                        if let Some(desc) = &pack.description {
+                            println!("    • {BOLD_CYAN}{}{RESET} · {desc}", pack.name);
+                        } else {
+                            println!("    • {BOLD_CYAN}{}{RESET}", pack.name);
+                        }
+                        let comps = pack.components.join(", ");
+                        println!("      {DIM}components: {comps}{RESET}");
+                    }
+                }
+                if !found_any && !show_recipes && !show_aliases {
+                    println!("{BOLD_CYAN}Packs:{RESET}");
+                    println!("  {DIM}No packs found in configuration.{RESET}");
+                }
+            }
+
+            if show_aliases {
+                let commands = format_alias_groups(&config);
+                if !commands.is_empty() {
+                    if show_recipes || show_packs {
+                        println!();
+                    }
+                    println!("{BOLD_CYAN}Aliases:{RESET}");
+                    println!("  {DIM}Usage: fa <name>  (or: fa -a <name>){RESET}");
+                    println!();
+                    for line in commands {
+                        println!("{line}");
+                    }
                 }
             }
         }
@@ -472,7 +574,7 @@ fn main() -> anyhow::Result<()> {
             }
             if !recipes.is_empty() {
                 println!("{BOLD_CYAN}Recipes:{RESET}");
-                println!("  {DIM}Usage: fa new <recipe> <name>{RESET}");
+                println!("  {DIM}Usage: fa --new <recipe> <name>  (or: fa -n){RESET}");
                 println!();
                 for line in &recipes {
                     println!("  {line}");
@@ -483,7 +585,7 @@ fn main() -> anyhow::Result<()> {
                     println!();
                 }
                 println!("{BOLD_CYAN}Aliases:{RESET}");
-                println!("  {DIM}Usage: fa alias <name>{RESET}");
+                println!("  {DIM}Usage: fa <name>  (or: fa -a <name>){RESET}");
                 println!();
                 for line in &commands {
                     println!("  {line}");
@@ -546,6 +648,11 @@ fn main() -> anyhow::Result<()> {
                 }
             }
         }
+        Commands::Template { action } => match action {
+            TemplateAction::Add { recipe, paths, force } => {
+                template::run_template_add(&recipe, &paths, force)?;
+            }
+        },
         Commands::SelfUpdate { dry_run } => {
             if dry_run {
                 println!("{BOLD_YELLOW}=== DRY-RUN MODE ACTIVE: No binary changes will be made ==={RESET}");
@@ -682,48 +789,67 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// Formats subcommand aliases inline in help text (e.g. `new, -n`, `alias, run, -a`).
+/// Formats subcommand aliases inline in help text (e.g. `new, --new, -n`, `alias, --alias, -a`).
 fn format_help_with_inline_aliases(input: &str) -> String {
     let mut out = Vec::new();
-    let mut in_commands = false;
+    let mut lines = input.lines().peekable();
 
-    for line in input.lines() {
+    while let Some(line) = lines.next() {
         if line.trim() == "Commands:" {
-            in_commands = true;
             out.push(line.to_string());
-            continue;
-        }
-        if in_commands && (line.trim() == "Options:" || line.trim().is_empty()) {
-            in_commands = false;
-        }
-
-        if in_commands && line.starts_with("  ") {
-            let trimmed = line.trim_start();
-            let mut parts = trimmed.split_whitespace();
-            if let Some(cmd_name) = parts.next() {
-                let rest = trimmed[cmd_name.len()..].trim_start();
-                let mut aliases = Vec::new();
-                let mut clean_rest = rest.to_string();
-
-                if let Some(alias_start) = rest.rfind(" [alias: ") {
-                    let alias_str = &rest[alias_start + 9..rest.len() - 1];
-                    aliases.push(alias_str.to_string());
-                    clean_rest = rest[..alias_start].trim_end().to_string();
-                } else if let Some(alias_start) = rest.rfind(" [aliases: ") {
-                    let alias_str = &rest[alias_start + 11..rest.len() - 1];
-                    aliases.extend(alias_str.split(", ").map(|s| s.to_string()));
-                    clean_rest = rest[..alias_start].trim_end().to_string();
+            let mut cmd_entries = Vec::new();
+            while let Some(&next_line) = lines.peek() {
+                if next_line.trim() == "Options:" || next_line.trim().is_empty() {
+                    break;
                 }
+                let cur_line = lines.next().unwrap();
+                if cur_line.starts_with("  ") {
+                    let trimmed = cur_line.trim_start();
+                    let mut parts = trimmed.split_whitespace();
+                    if let Some(cmd_name) = parts.next() {
+                        let rest = trimmed[cmd_name.len()..].trim_start();
+                        let mut aliases = Vec::new();
+                        let mut clean_rest = rest.to_string();
 
-                let mut full_name = cmd_name.to_string();
-                if !aliases.is_empty() {
-                    full_name.push_str(", ");
-                    full_name.push_str(&aliases.join(", "));
+                        if let Some(alias_start) = rest.rfind(" [alias: ") {
+                            let alias_str = &rest[alias_start + 9..rest.len() - 1];
+                            aliases.push(alias_str.to_string());
+                            clean_rest = rest[..alias_start].trim_end().to_string();
+                        } else if let Some(alias_start) = rest.rfind(" [aliases: ") {
+                            let alias_str = &rest[alias_start + 11..rest.len() - 1];
+                            aliases.extend(alias_str.split(", ").map(|s| s.to_string()));
+                            clean_rest = rest[..alias_start].trim_end().to_string();
+                        }
+
+                        let mut full_name = cmd_name.to_string();
+                        if !aliases.is_empty() {
+                            full_name.push_str(", ");
+                            full_name.push_str(&aliases.join(", "));
+                        }
+
+                        cmd_entries.push((full_name, clean_rest));
+                        continue;
+                    }
                 }
-
-                out.push(format!("  {full_name:<16}{clean_rest}"));
-                continue;
+                cmd_entries.push((String::new(), cur_line.to_string()));
             }
+
+            let max_name_len = cmd_entries
+                .iter()
+                .map(|(name, _)| name.len())
+                .max()
+                .unwrap_or(16);
+
+            for (name, rest) in cmd_entries {
+                if name.is_empty() {
+                    out.push(rest);
+                } else if rest.is_empty() {
+                    out.push(format!("  {name}"));
+                } else {
+                    out.push(format!("  {name:<width$}  {rest}", width = max_name_len));
+                }
+            }
+            continue;
         }
 
         out.push(line.to_string());
@@ -741,6 +867,28 @@ fn render_cli_help(err: &clap::Error) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn test_unprefixed_commands_must_not_be_builtins() {
+        let unprefixed = [
+            vec!["fa", "new", "my-recipe"],
+            vec!["fa", "list"],
+            vec!["fa", "search", "react"],
+            vec!["fa", "show", "react"],
+            vec!["fa", "recipe", "new"],
+            vec!["fa", "template", "add", "rec", "file.txt"],
+            vec!["fa", "alias", "status"],
+        ];
+
+        for args in unprefixed {
+            assert!(
+                Cli::try_parse_from(&args).is_err(),
+                "Unprefixed command '{:?}' must NOT be a native builtin subcommand",
+                args
+            );
+        }
+    }
+
     use super::*;
 
     #[test]
@@ -757,14 +905,23 @@ mod tests {
     }
 
     #[test]
-    fn rewrite_args_should_rewrite_short_flags() {
-        let args = vec!["fa".to_string(), "-n".to_string(), "recipe".to_string(), "myapp".to_string()];
-        let rewritten = rewrite_args(args, None);
-        assert_eq!(rewritten, vec!["fa", "new", "recipe", "myapp"]);
+    fn cli_short_flags_should_parse_to_commands() {
+        let cli = Cli::try_parse_from(["fa", "-n", "recipe", "myapp"]).unwrap();
+        match cli.command {
+            Some(Commands::New { recipe, name, .. }) => {
+                assert_eq!(recipe, "recipe");
+                assert_eq!(name, Some("myapp".to_string()));
+            }
+            _ => panic!("Expected Commands::New"),
+        }
 
-        let args = vec!["fa".to_string(), "-a".to_string(), "status".to_string()];
-        let rewritten = rewrite_args(args, None);
-        assert_eq!(rewritten, vec!["fa", "alias", "status"]);
+        let cli = Cli::try_parse_from(["fa", "-a", "status"]).unwrap();
+        match cli.command {
+            Some(Commands::Alias { name, .. }) => {
+                assert_eq!(name, "status");
+            }
+            _ => panic!("Expected Commands::Alias"),
+        }
     }
 
     #[test]
@@ -785,29 +942,45 @@ mod tests {
         // Canonical alias name
         let args = vec!["fa".to_string(), "status".to_string()];
         let rewritten = rewrite_args(args, Some(&config));
-        assert_eq!(rewritten, vec!["fa", "alias", "status"]);
+        assert_eq!(rewritten, vec!["fa", "--alias", "status"]);
 
         // Short alias
         let args = vec!["fa".to_string(), "st".to_string()];
         let rewritten = rewrite_args(args, Some(&config));
-        assert_eq!(rewritten, vec!["fa", "alias", "st"]);
+        assert_eq!(rewritten, vec!["fa", "--alias", "st"]);
 
         // Builtin commands must NOT be rewritten
-        let args = vec!["fa".to_string(), "new".to_string(), "recipe".to_string(), "app".to_string()];
+        let args = vec!["fa".to_string(), "--new".to_string(), "recipe".to_string(), "app".to_string()];
         let rewritten = rewrite_args(args, Some(&config));
-        assert_eq!(rewritten, vec!["fa", "new", "recipe", "app"]);
+        assert_eq!(rewritten, vec!["fa", "--new", "recipe", "app"]);
+
+        // Custom alias using a previously colliding word like "new" IS rewritten to --alias
+        let mut custom_cmds = std::collections::BTreeMap::new();
+        custom_cmds.insert(
+            "new".to_string(),
+            crate::config::Command {
+                command: "git switch -c".to_string(),
+                description: Some("New branch".to_string()),
+                platform: None,
+                aliases: vec![],
+            },
+        );
+        config.aliases.insert("custom".to_string(), custom_cmds);
+        let args = vec!["fa".to_string(), "new".to_string(), "feature".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(rewritten, vec!["fa", "--alias", "new", "feature"]);
     }
 
     #[test]
     fn cli_alias_should_accept_passthrough_arguments() {
         let args = vec![
             "fa".to_string(),
-            "alias".to_string(),
+            "--alias".to_string(),
             "avif".to_string(),
             "in.jpg".to_string(),
             "out.avif".to_string(),
         ];
-        let cli = Cli::try_parse_from(args).expect("fa alias should accept passthrough arguments");
+        let cli = Cli::try_parse_from(args).expect("fa --alias should accept passthrough arguments");
         match cli.command {
             Some(Commands::Alias { name, args }) => {
                 assert_eq!(name, "avif");
@@ -841,7 +1014,7 @@ mod tests {
         let rewritten = rewrite_args(args, Some(&config));
         assert_eq!(
             rewritten,
-            vec!["fa", "alias", "avif", "ticket.jpeg", "ticket.avif"]
+            vec!["fa", "--alias", "avif", "ticket.jpeg", "ticket.avif"]
         );
     }
 
@@ -851,16 +1024,20 @@ mod tests {
         let raw_help = cmd.render_help().to_string();
         let formatted = format_help_with_inline_aliases(&raw_help);
         assert!(
-            formatted.contains("new, -n"),
-            "Help output must display inline subcommand short aliases (new, -n): got:\n{formatted}"
+            formatted.contains("--new, -n"),
+            "Help output must display inline subcommand short aliases (--new, -n): got:\n{formatted}"
         );
         assert!(
-            formatted.contains("alias, -a"),
-            "Help output must display inline subcommand aliases (alias, -a): got:\n{formatted}"
+            formatted.contains("--alias, -a"),
+            "Help output must display inline subcommand aliases (--alias, -a): got:\n{formatted}"
         );
         assert!(
-            !formatted.contains("alias, run, -a"),
-            "The `run` command must stay free for future use, not bound to the alias subcommand: got:\n{formatted}"
+            !formatted.contains("-lList"),
+            "Help output must not fuse alias with description (-lList): got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("-seSearch"),
+            "Help output must not fuse alias with description (-seSearch): got:\n{formatted}"
         );
     }
 
@@ -908,9 +1085,9 @@ mod tests {
     #[test]
     fn cli_help_recipe_should_render_subcommand_help() {
         for args in [
-            &["fa", "help", "recipe"][..],
-            &["fa", "recipe", "--help"][..],
-            &["fa", "recipe", "help"][..],
+            &["fa", "help", "--recipe"][..],
+            &["fa", "--recipe", "--help"][..],
+            &["fa", "-r", "--help"][..],
         ] {
             let err = match Cli::try_parse_from(args) {
                 Err(e) => e,
@@ -920,26 +1097,26 @@ mod tests {
             let output = render_cli_help(&err);
             assert!(
                 output.contains("Manage recipe config files (new/edit/validate)"),
-                "Help output for `recipe` ({args:?}) must include recipe description, got:\n{output}"
+                "Help output for `--recipe` ({args:?}) must include recipe description, got:\n{output}"
             );
             assert!(
-                output.contains("Usage: fa recipe <COMMAND>"),
-                "Help output for `recipe` ({args:?}) must show usage for recipe, got:\n{output}"
+                output.contains("Usage: fa --recipe <COMMAND>"),
+                "Help output for `--recipe` ({args:?}) must show usage for recipe, got:\n{output}"
             );
             assert!(
                 output.contains("validate"),
-                "Help output for `recipe` ({args:?}) must list `validate` subcommand, got:\n{output}"
+                "Help output for `--recipe` ({args:?}) must list `validate` subcommand, got:\n{output}"
             );
             assert!(
                 !output.contains("self-uninstall"),
-                "Help output for `recipe` ({args:?}) must not show top-level commands, got:\n{output}"
+                "Help output for `--recipe` ({args:?}) must not show top-level commands, got:\n{output}"
             );
         }
     }
 
     #[test]
     fn cli_help_nested_subcommand_should_render_action_help() {
-        let err = match Cli::try_parse_from(["fa", "help", "recipe", "new"]) {
+        let err = match Cli::try_parse_from(["fa", "help", "--recipe", "new"]) {
             Err(e) => e,
             Ok(_) => panic!("expected try_parse_from to return DisplayHelp error"),
         };
@@ -947,11 +1124,11 @@ mod tests {
         let output = render_cli_help(&err);
         assert!(
             output.contains("Create a new recipe file under recipes.d/ and open it in $EDITOR"),
-            "Help output for `recipe new` must describe action, got:\n{output}"
+            "Help output for `--recipe new` must describe action, got:\n{output}"
         );
         assert!(
-            output.contains("Usage: fa recipe new [NAME]"),
-            "Help output for `recipe new` must show usage, got:\n{output}"
+            output.contains("Usage: fa --recipe new [NAME]"),
+            "Help output for `--recipe new` must show usage, got:\n{output}"
         );
     }
 
@@ -965,19 +1142,27 @@ mod tests {
             assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
             let output = render_cli_help(&err);
             assert!(
-                output.contains("new, -n"),
-                "Top-level help ({args:?}) must contain inline alias for new: got:\n{output}"
+                output.contains("--new, -n"),
+                "Top-level help ({args:?}) must contain inline alias for --new: got:\n{output}"
             );
             assert!(
-                output.contains("alias, -a"),
-                "Top-level help ({args:?}) must contain inline alias for alias: got:\n{output}"
+                output.contains("--alias, -a"),
+                "Top-level help ({args:?}) must contain inline alias for --alias: got:\n{output}"
+            );
+            assert!(
+                !output.contains("-lList"),
+                "Help output must not fuse alias with description (-lList): got:\n{output}"
+            );
+            assert!(
+                !output.contains("-seSearch"),
+                "Help output must not fuse alias with description (-seSearch): got:\n{output}"
             );
         }
     }
 
     #[test]
     fn cli_new_pack_recipe_should_parse_optional_target() {
-        let cli = Cli::try_parse_from(["fa", "new", "wc-lib"]).expect("fa new wc-lib should parse without name");
+        let cli = Cli::try_parse_from(["fa", "--new", "wc-lib"]).expect("fa --new wc-lib should parse without name");
         match cli.command {
             Some(Commands::New { recipe, name, .. }) => {
                 assert_eq!(recipe, "wc-lib");
@@ -986,13 +1171,92 @@ mod tests {
             _ => panic!("Expected Commands::New"),
         }
 
-        let cli = Cli::try_parse_from(["fa", "new", "wc-lib", "wc-toggle-theme"]).expect("fa new wc-lib wc-toggle-theme should parse");
+        let cli = Cli::try_parse_from(["fa", "-n", "wc-lib", "wc-toggle-theme"]).expect("fa -n wc-lib wc-toggle-theme should parse");
         match cli.command {
             Some(Commands::New { recipe, name, .. }) => {
                 assert_eq!(recipe, "wc-lib");
                 assert_eq!(name, Some("wc-toggle-theme".to_string()));
             }
             _ => panic!("Expected Commands::New"),
+        }
+    }
+
+    #[test]
+    fn cli_template_add_should_parse_recipe_and_paths() {
+        let cli = Cli::try_parse_from(["fa", "--template", "add", "my-stack", "file.txt", "dir/"])
+            .expect("fa --template add should parse");
+        match cli.command {
+            Some(Commands::Template {
+                action: TemplateAction::Add { recipe, paths, force },
+            }) => {
+                assert_eq!(recipe, "my-stack");
+                assert_eq!(paths, vec![std::path::PathBuf::from("file.txt"), std::path::PathBuf::from("dir/")]);
+                assert!(!force);
+            }
+            _ => panic!("Expected Commands::Template"),
+        }
+    }
+
+    #[test]
+    fn cli_template_add_force_flag_should_parse() {
+        let cli = Cli::try_parse_from(["fa", "-t", "add", "my-stack", "file.txt", "-f"])
+            .expect("fa -t add -f should parse");
+        match cli.command {
+            Some(Commands::Template {
+                action: TemplateAction::Add { recipe, paths, force },
+            }) => {
+                assert_eq!(recipe, "my-stack");
+                assert_eq!(paths, vec![std::path::PathBuf::from("file.txt")]);
+                assert!(force);
+            }
+            _ => panic!("Expected Commands::Template"),
+        }
+    }
+
+    #[test]
+    fn test_builtin_commands_parse_with_prefixed_and_short_flags() {
+        assert!(Cli::try_parse_from(["fa", "--new", "my-recipe"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "-n", "my-recipe"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "--list"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "-l"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "--search", "test"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "-se", "test"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "--show", "test"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "-sh", "test"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "--recipe", "validate"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "-r", "validate"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "--template", "add", "rec", "file.txt"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "-t", "add", "rec", "file.txt"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "--alias", "cmd"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "-a", "cmd"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "--self-update"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "--self-uninstall"]).is_ok());
+    }
+
+    #[test]
+    fn test_list_filter_cli_parsing() {
+        let cli = Cli::try_parse_from(["fa", "--list", "recipes"]).unwrap();
+        match cli.command {
+            Some(Commands::List { filter, .. }) => {
+                assert_eq!(filter, Some("recipes".to_string()));
+            }
+            _ => panic!("Expected Commands::List"),
+        }
+
+        let cli = Cli::try_parse_from(["fa", "-l", "-r"]).unwrap();
+        match cli.command {
+            Some(Commands::List { recipes, .. }) => {
+                assert!(recipes);
+            }
+            _ => panic!("Expected Commands::List"),
+        }
+
+        let cli = Cli::try_parse_from(["fa", "-l", "-p"]).unwrap();
+        match cli.command {
+            Some(Commands::List { packs, .. }) => {
+                assert!(packs);
+            }
+            _ => panic!("Expected Commands::List"),
         }
     }
 }
