@@ -1,6 +1,61 @@
 # Recipe Structure & Configuration
 
-The **declarative catalog** of `fa` lives in your personal config directory. It defines the recipes for scaffolding projects: their human-readable descriptions, language/category, variants, create strategy, package-manager commands, tooling, files to generate, and post-install steps.
+The **declarative catalog** of `fa` lives in `~/.config/fa/`. It defines recipes for scaffolding projects: their human-readable descriptions, language/category, variants, create strategy, package-manager commands, tooling, files to generate, and post-install steps.
+
+---
+
+## Quickstart: Minimal Recipe
+
+The fastest way to create a recipe is using the CLI command:
+
+```bash
+fa recipe new my-stack
+```
+
+This automatically scaffolds `~/.config/fa/recipes.d/my-stack.toml` and opens it in your default `$EDITOR`.
+
+Configure the minimal functional recipe:
+
+```toml
+[recipes.my-stack]
+name        = "My Stack"
+description = "Minimal project scaffold"
+
+[recipes.my-stack.files]
+"README.md" = { inline = "# {{name}}\nScaffolded with fast-alias." }
+
+[[recipes.my-stack.steps]]
+command     = "git init"
+description = "Initialize git repository"
+```
+
+Run it immediately with:
+```bash
+fa new my-stack my-project
+```
+
+> [!TIP]
+> **Recommended Pattern**:
+> - For static templates or files longer than 40 lines, avoid `inline`. Place template files under `~/.config/fa/templates/<recipe>/` and use [`template_base`](#template-base-template_base).
+> - Keep configurations modular by declaring one recipe per file in `~/.config/fa/recipes.d/*.toml`.
+
+---
+
+## Detailed Features & Reference
+
+- [Configuration File Resolution](#configuration-file-resolution)
+- [State Management (`~/.local/state/fa/state.toml`)](#state-management-localstatefastatetoml)
+- [Full Recipe Schema](#full-recipe-schema)
+- [Template Base (`template_base`)](#template-base-template_base)
+- [File Generation (`files`)](#file-generation-files)
+- [Variables](#variables)
+- [Step Execution (`steps`)](#step-execution-steps)
+- [Variants](#variants)
+- [Version Pinning (`pin_versions`)](#version-pinning-pin_versions)
+- [Alias Governance](#alias-governance)
+- [General-Purpose Aliases (`[aliases]`)](#general-purpose-aliases-aliases)
+
+---
 
 ## Configuration File Resolution
 
@@ -28,7 +83,9 @@ path = "/home/user/projects/myapp"
 installed = true
 ```
 
-## Recipe Schema (`recipes.toml`)
+## Full Recipe Schema
+
+Comprehensive recipe reference illustrating all available directives:
 
 ```toml
 [recipes.my-recipe]
@@ -63,6 +120,11 @@ check     = { tool = "tsc", script = "check" }
 ".editorconfig"      = { inline = "root = true ..." }
 "src/pages/{{name}}.ts" = { template = "templates/page.ts.tpl" }
 
+[[recipes.my-recipe.steps]]                          # post-install commands
+command = "git init"
+description = "Initialize git repository"
+```
+
 ## Template Base (`template_base`)
 
 Recipes with many template files can declare an optional base directory once instead of repeating it in every spec:
@@ -88,41 +150,6 @@ Rules:
 - Absolute paths, `..` escapes and empty paths fail fast in `Config::load` with `must stay inside ~/.config/fa/templates/` naming `recipe`/`file`.
 - **Compatibility**: when `template_base` is unset (`None`, the default), every spec resolves exactly as before — `from = "templates/X"` and `from = "X"` keep resolving to `~/.config/fa/templates/X` byte-identically.
 
-[[recipes.my-recipe.steps]]                          # post-install commands
-command = "git init"
-description = "Initialize git repository"
-```
-
-## Variables
-
-Each entry prompts once during `fa new` (`prompt` label, `default` on empty
-input). All validation keys are optional — a plain `prompt` keeps the legacy
-free-string behavior with zero changes:
-
-```toml
-[recipes.demo.variables]
-port = { prompt = "Port", default = "3000", type = "integer", choices = ["3000", "8080"] }
-slug = { prompt = "Slug", type = "string", pattern = "^[a-z0-9-]+$", required = true }
-```
-
-- **`type`** (`string` | `integer` | `float` | `boolean`; default: free string).
-- **`choices`**: input must equal one of the listed strings (must be non-empty).
-- **`pattern`**: regex the value must match (use `^…$` to anchor; string only).
-- **`required`**: `true` rejects empty input.
-- Unknown keys, unknown types, empty `choices`, `pattern` on non-string types
-  and invalid regexes fail at config load naming recipe + variable.
-- Interactive `fa new` re-prompts (max 3 retries); non-interactive mode
-  (`FA_VAR_<NAME>` env override or default) fails fast instead of hanging.
-
-## Step Execution (`steps`)
-
-Recipes can declare ordered shell commands executed after files are written and dependencies installed.
-- **Command**: Shell command to run (with `{{var}}` templating).
-- **Description**: Human-readable label shown before execution.
-- **Platform** (Optional): Restrict a step to a specific platform (`debian`, `termux`).
-- **Prompt/Confirm** (Optional): Interactive confirmation before running.
-- **Dry-Run Safety**: In `--dry-run` mode, `fa` prints `[Dry-Run] Would run: <command>` without executing.
-
 ## File Generation (`files`)
 
 Each key is the destination path (templatable with `{{var}}`). Value is one of:
@@ -138,6 +165,32 @@ Each key is the destination path (templatable with `{{var}}`). Value is one of:
 - Any file longer than 40 lines must be moved to `~/.config/fa/templates/<recipe-name>/` and referenced with `{ from = "templates/<recipe-name>/<file>" }`. Template files are read from disk at runtime (no Rust code changes needed).
 - Short files (`.gitkeep`, minimal configs, small components) may stay inline.
 - Special cases that must stay inline beyond 40 lines require explicit user approval before proceeding.
+
+## Variables
+
+Each entry prompts once during `fa new` (`prompt` label, `default` on empty input). All validation keys are optional — a plain `prompt` keeps the legacy free-string behavior with zero changes:
+
+```toml
+[recipes.demo.variables]
+port = { prompt = "Port", default = "3000", type = "integer", choices = ["3000", "8080"] }
+slug = { prompt = "Slug", type = "string", pattern = "^[a-z0-9-]+$", required = true }
+```
+
+- **`type`** (`string` | `integer` | `float` | `boolean`; default: free string).
+- **`choices`**: input must equal one of the listed strings (must be non-empty).
+- **`pattern`**: regex the value must match (use `^…$` to anchor; string only).
+- **`required`**: `true` rejects empty input.
+- Unknown keys, unknown types, empty `choices`, `pattern` on non-string types and invalid regexes fail at config load naming recipe + variable.
+- Interactive `fa new` re-prompts (max 3 retries); non-interactive mode (`FA_VAR_<NAME>` env override or default) fails fast instead of hanging.
+
+## Step Execution (`steps`)
+
+Recipes can declare ordered shell commands executed after files are written and dependencies installed.
+- **Command**: Shell command to run (with `{{var}}` templating).
+- **Description**: Human-readable label shown before execution.
+- **Platform** (Optional): Restrict a step to a specific platform (`debian`, `termux`).
+- **Prompt/Confirm** (Optional): Interactive confirmation before running.
+- **Dry-Run Safety**: In `--dry-run` mode, `fa` prints `[Dry-Run] Would run: <command>` without executing.
 
 ## Variants
 

@@ -6,23 +6,68 @@ It decouples **where files are stored** (`templates/`) from **how they are group
 
 ---
 
-## 1. Creating the Recipe File
+## Quickstart: Minimal Packs Recipe (Inline)
 
-Every pack workflow starts with a recipe configuration file in `~/.config/fa/recipes.d/`.
+The fastest and most minimalist way to use packs without creating extra directories or files is defining packs **inline** inside your recipe.
 
-### 1.1 Scaffold the Recipe
-
-Use the built-in `fa recipe new` command:
+Scaffold a new recipe file with:
 
 ```bash
 fa recipe new wc-lib
 ```
 
-This creates a new file at `~/.config/fa/recipes.d/wc-lib.toml` and opens it in your default `$EDITOR`.
+This creates `~/.config/fa/recipes.d/wc-lib.toml` and opens it in your default `$EDITOR`.
 
-### 1.2 Write the Recipe Configuration
+Configure it with inline packs:
 
-Replace the file content with the following configuration:
+```toml
+[recipes.wc-lib]
+name          = "Web Components"
+description   = "Scaffold and install modular web components"
+templates_dir = "templates/wc-lib"
+
+[recipes.wc-lib.packs.default]
+description   = "Default component bundle"
+components    = ["toggle-theme", "btn-ally"]
+
+[[recipes.wc-lib.steps]]
+create        = { from = "{{templates_dir}}/{{component}}", to = "src/components/{{component}}" }
+description   = "Install component files into src/components/"
+```
+
+Your component folders live inside `~/.config/fa/templates/wc-lib/<component-name>/`.
+
+Install them into your project:
+
+```bash
+fa new wc-lib          # Lists available packs and components (or runs default if configured)
+fa new wc-lib default  # Installs the 'default' pack bundle
+fa new wc-lib btn-ally # Installs only the 'btn-ally' component
+```
+
+> [!TIP]
+> **Recommended Organization**:
+> For larger component libraries, we recommend decoupling packs into a dedicated folder (`~/.config/fa/packs/<recipe>/`). See [Option A: One Pack per File](#option-a-one-pack-per-file-default) and [Recommended Directory Layout](#31-recommended-layout-separated-packs--templates).
+
+---
+
+## Detailed Features & Reference
+
+- [Recipe File Configuration with External Packs](#1-creating-the-recipe-file-with-external-packs)
+- [What is a Component? (Atomic folder structure)](#21-what-is-a-component)
+- [What is a Pack? (Organization options)](#22-what-is-a-pack)
+  - [Option A: One Pack per File (Default)](#option-a-one-pack-per-file-default)
+  - [Option B: Multiple Packs in a Single TOML File](#option-b-multiple-packs-in-a-single-toml-file)
+  - [Option C: Inline Packs in Recipe Files](#option-c-inline-packs-in-recipe-files)
+- [Global Behavior Configuration (`default_behavior`)](#23-running-fa-new-without-arguments-global-configuration)
+- [Installing Components into Your Project](#24-installing-components-into-your-project)
+- [Directory Layouts (Separated vs Inside Templates)](#3-directory-layouts)
+
+---
+
+## 1. Creating the Recipe File with External Packs
+
+When you prefer separate pack files, configure `packs_dir` in your recipe file (`~/.config/fa/recipes.d/wc-lib.toml`):
 
 ```toml
 [recipes.wc-lib]
@@ -37,15 +82,12 @@ create = { from = "{{templates_dir}}/{{component}}", to = "src/components/{{comp
 description = "Install component files into src/components/"
 ```
 
-#### What Each Setting Does:
-- **`packs_dir`**: The folder where your pack definition files live (under `~/.config/fa/`).
-- **`templates_dir`**: The folder where your actual component files and folders are stored (under `~/.config/fa/`).
+- **`packs_dir`**: The folder where your pack definition files live (under `~/.config/fa/`). Always namespace this per recipe (e.g., `packs/wc-lib/`) so different recipes can each have a `default.toml` without naming collisions.
+- **`templates_dir`**: The folder where your component source folders are stored (under `~/.config/fa/`).
 - **`default_pack`**: Optional default pack name used when `default_behavior = "default"` is enabled in `~/.config/fa/config.toml`.
-- **`create`**: Tells `fa` to copy the files from `{{templates_dir}}/{{component}}` into your project's `src/components/{{component}}`.
+- **`create`**: Copies component files from `{{templates_dir}}/{{component}}` into your project's `src/components/{{component}}`.
 
-### 1.3 Validate the Recipe
-
-Check that your recipe syntax is valid:
+Validate the recipe syntax anytime with:
 
 ```bash
 fa recipe validate wc-lib
@@ -76,13 +118,19 @@ For example, inside `~/.config/fa/templates/wc-lib/`:
     └── wc-modal.js
 ```
 
-Any files you put inside that folder (e.g. `.astro`, `.js`, `.css`, `.ts`) will be copied as-is into your project.
+Any files you put inside that folder will be copied as-is into your project.
+
+> [!TIP]
+> **Zero-Maintenance & Atomic Components**:
+> - Whenever you build a new component, simply create a new folder under `~/.config/fa/templates/wc-lib/<component-name>/`. You **never** need to touch Rust code or edit your recipe.
+> - Keep component folders atomic: include only the files necessary for that component, and avoid relative imports pointing outside the folder so each component can be installed independently.
 
 ### 2.2 What is a Pack?
 
-A pack is a small `.toml` file located inside your `packs_dir` (`~/.config/fa/packs/wc-lib/`).
+A pack defines a named bundle that lists which component folders belong together. `fa` offers complete flexibility for organizing packs:
 
-It defines a named bundle that lists which component folders belong together:
+#### Option A: One Pack per File (Default)
+Create small `.toml` files inside `packs_dir` (`~/.config/fa/packs/wc-lib/`):
 
 ```bash
 mkdir -p ~/.config/fa/packs/wc-lib
@@ -99,7 +147,7 @@ components = [
 ]
 ```
 
-You can create additional packs to group different sets of components. For example, a larger UI pack (`~/.config/fa/packs/wc-lib/wc-ui.toml`):
+You can create additional packs to group different sets of components (e.g., `~/.config/fa/packs/wc-lib/wc-ui.toml`):
 
 ```toml
 # ~/.config/fa/packs/wc-lib/wc-ui.toml
@@ -110,6 +158,64 @@ components = [
     "wc-modal",
 ]
 ```
+
+#### Option B: Multiple Packs in a Single TOML File
+Instead of creating multiple `.toml` files, you can define multiple packs inside a single file (such as `~/.config/fa/packs/wc-lib/packs.toml` or any `.toml` file in `packs_dir`). All three styles are supported:
+
+**1. Table of packs (`[packs.<name>]`)**:
+```toml
+# ~/.config/fa/packs/wc-lib/packs.toml
+[packs.default]
+description = "Default starter components"
+components = ["toggle-theme", "btn-ally"]
+
+[packs.wc-ui]
+description = "Complete UI components pack"
+components = ["toggle-theme", "btn-ally", "wc-modal"]
+```
+
+**2. Array of tables (`[[packs]]`)**:
+```toml
+[[packs]]
+name = "default"
+components = ["toggle-theme", "btn-ally"]
+
+[[packs]]
+name = "wc-ui"
+components = ["toggle-theme", "btn-ally", "wc-modal"]
+```
+
+**3. Top-level tables (`[<pack_name>]`)**:
+```toml
+[default]
+components = ["toggle-theme", "btn-ally"]
+
+[wc-ui]
+components = ["toggle-theme", "btn-ally", "wc-modal"]
+```
+
+#### Option C: Inline Packs in Recipe Files
+You don't even need a separate `packs_dir` folder if you want to declare packs directly inside your recipe file (`~/.config/fa/recipes.d/wc-lib.toml`):
+
+```toml
+[recipes.wc-lib]
+name = "Web Components Library"
+description = "Modular components"
+templates_dir = "templates/wc-lib"
+
+[recipes.wc-lib.packs.default]
+description = "Default bundle"
+components = ["toggle-theme", "btn-ally"]
+
+[recipes.wc-lib.packs.wc-ui]
+description = "Full UI bundle"
+components = ["toggle-theme", "btn-ally", "wc-modal"]
+
+[[recipes.wc-lib.steps]]
+create = { from = "{{templates_dir}}/{{component}}", to = "src/components/{{component}}" }
+```
+
+To include a new or existing component in any pack, simply add its folder name to the `components = [...]` array in the corresponding pack definition.
 
 ### 2.3 Running `fa new` Without Arguments (Global Configuration)
 
@@ -214,18 +320,3 @@ If you prefer to keep everything inside `templates/`, change `packs_dir` in your
         └── wc-lib/                  # Pack TOML files
             └── default.toml
 ```
-
----
-
-## 4. Recommendations & Best Practices
-
-1. **How to Add New Components (Zero-Maintenance)**:
-   Whenever you build a new component, just create a new folder under `~/.config/fa/templates/wc-lib/<component-name>/` and put its files inside. You **never** need to touch Rust code or modify your recipe file.
-2. **Add to Packs When Needed**:
-   To include your new component in an existing pack, simply add its folder name to the `components = [...]` array in that pack's `.toml` file.
-3. **Keep Component Folders Atomic**:
-   Each component folder should contain only the files necessary for that component. Avoid relative imports pointing outside the component folder so each component can be installed independently.
-4. **Namespace Packs Per Recipe**:
-   Always place pack files inside a subfolder matching the recipe name (e.g. `packs/wc-lib/` and `packs/rust-lib/`). This ensures two recipes can both have a `default.toml` without conflicts.
-5. **Distinctive Naming**:
-   Use clear, descriptive names for recipes and packs (such as `wc-lib`, `wc-ui`, `ds-buttons`). Avoid generic names like `app`, `pack`, or `components`.
