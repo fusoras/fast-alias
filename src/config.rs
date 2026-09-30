@@ -21,6 +21,16 @@ language = "shell"
 hello = { command = "echo 'Hello from fa!'", description = "Example alias" }
 "##;
 
+/// Global configuration template, written to `~/.config/fa/config.toml`
+/// when initializing the example configuration directory.
+pub const EXAMPLE_GLOBAL_CONFIG: &str = r##"[packs]
+# Behavior when running `fa --new <recipe>` without specifying a pack or component:
+# "list" (default) -> displays all available packs and components
+# "default" -> automatically installs the pack specified in `default_pack` in the recipe
+# "error" -> raises an error requiring an explicit pack or component
+default_behavior = "list"
+"##;
+
 /// File generation specification. Each entry is one of:
 /// - `{ from = "templates/my-recipe/.prettierrc" }`   copy static file
 /// - `{ inline = "..." }`                          write content verbatim
@@ -513,6 +523,11 @@ impl Config {
         let example_path = user_dir.join("recipes.toml");
         fs::write(&example_path, EXAMPLE_CONFIG)
             .map_err(|e| anyhow::anyhow!("Failed to write {}: {e}", example_path.display()))?;
+        let global_config_path = user_dir.join("config.toml");
+        if !global_config_path.exists() {
+            fs::write(&global_config_path, EXAMPLE_GLOBAL_CONFIG)
+                .map_err(|e| anyhow::anyhow!("Failed to write {}: {e}", global_config_path.display()))?;
+        }
         let mut state = crate::state::State::load();
         state.trust(&example_path.to_string_lossy());
         state.save()?;
@@ -1552,5 +1567,25 @@ components = ["toggle-theme", "btn-ally"]
         let pack = Config::find_pack(Some(recipe), "nonexistent_dir", "wc-ui").unwrap();
         assert_eq!(pack.name, "wc-ui");
         assert_eq!(pack.components, vec!["toggle-theme", "btn-ally"]);
+    }
+
+    #[test]
+    fn test_provision_example_creates_config_toml_with_english_comments() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let count = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let user_dir = std::env::temp_dir().join(format!("fa-test-prov-{}-{}", std::process::id(), count));
+        let _ = fs::remove_dir_all(&user_dir);
+
+        Config::provision_example(&user_dir).unwrap();
+
+        let config_toml_path = user_dir.join("config.toml");
+        assert!(config_toml_path.exists(), "provision_example must create config.toml");
+
+        let content = fs::read_to_string(&config_toml_path).unwrap();
+        assert!(content.contains("[packs]"));
+        assert!(content.contains("default_behavior = \"list\""));
+        assert!(content.contains("# Behavior when running"));
+        assert!(!content.contains("Comportamiento"));
     }
 }
