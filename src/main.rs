@@ -9,6 +9,7 @@ mod state;
 mod templating;
 mod update;
 mod template;
+mod schema;
 
 use clap::{CommandFactory, Parser, Subcommand};
 
@@ -121,6 +122,11 @@ enum Commands {
         #[arg(short = 'd', long = "dry-run")]
         dry_run: bool,
     },
+    /// Display subcommands for a namespaced alias group.
+    #[command(name = "--namespace-help", hide = true)]
+    NamespaceHelp {
+        namespace: String,
+    },
 }
 
 /// Actions under `fa recipe`: create, edit, or validate recipe config files.
@@ -130,6 +136,9 @@ enum RecipeAction {
     New {
         /// Recipe key/file name (e.g. rust-cli). Omit for a scratch untitled file.
         name: Option<String>,
+        /// Recipe scaffold type (e.g. standard, pack, alias). Defaults to clean minimal scaffold.
+        #[arg(value_name = "TYPE")]
+        recipe_type: Option<String>,
     },
     /// Open an existing recipe file; omit name to list available recipes.
     Edit {
@@ -139,6 +148,14 @@ enum RecipeAction {
     Validate {
         /// Recipe name to validate only that recipe. Omit to validate all files.
         name: Option<String>,
+    },
+    /// Remove a recipe TOML file under recipes.d/ (leaves templates and packs intact).
+    Rm {
+        /// Recipe name to remove
+        name: String,
+        /// Confirm removal without prompting
+        #[arg(short = 'y', long)]
+        yes: bool,
     },
 }
 
@@ -182,21 +199,106 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "-h",
     "--version",
     "-v",
+    "--namespace-help",
 ];
 
 /// Rewrites CLI arguments:
-/// Intercepts direct alias invocations (`fa <alias_name>` -> `fa --alias <alias_name>`).
+/// 1. Expands Git-style sub-command aliases and shell commands declared in `config.toml` `[alias]`.
+/// 2. Rewrites namespaced command invocations (`fa <ns> <subcmd>` -> `fa --alias "<ns> <subcmd>"`).
+/// 3. Intercepts direct flat alias invocations (`fa <alias_name>` -> `fa --alias <alias_name>`).
 fn rewrite_args(mut args: Vec<String>, config: Option<&Config>) -> Vec<String> {
+    let Some(cfg) = config else {
+        return args;
+    };
+
+    // 1. Expand Git-style sub-command aliases from config.toml [alias]
+    let mut depth = 0;
+    while args.len() >= 2 && depth < 5 {
+        let word = args[1].as_str();
+        if let Some(target) = cfg.settings.alias.get(word) {
+            let target = target.trim();
+            if target.starts_with('!') {
+                // Shell command alias: rewrite to `fa --alias <word> <args...>`
+                args.insert(1, "--alias".to_string());
+                return args;
+            } else {
+                let tokens: Vec<String> = target.split_whitespace().map(String::from).collect();
+                if tokens.is_empty() {
+                    break;
+                }
+                args.remove(1);
+                for (i, token) in tokens.into_iter().enumerate() {
+                    args.insert(1 + i, token);
+                }
+                depth += 1;
+            }
+        } else {
+            break;
+        }
+    }
+
+    // 2. Namespaced command invocation check ([aliases.":<name>"])
+    if args.len() >= 2 {
+        let first = args[1].as_str();
+        let ns_key = if first.starts_with(':') {
+            first.to_string()
+        } else {
+            format!(":{first}")
+        };
+
+        if let Some(commands) = cfg.aliases.get(&ns_key) {
+            let raw_ns = ns_key.strip_prefix(':').unwrap_or(&ns_key).to_string();
+
+            // Check if an explicit subcommand or help flag is provided
+            if args.len() >= 3 {
+                let second = args[2].as_str();
+                if second == "help" || second == "--help" || second == "-h" {
+                    args.remove(1); // removes <ns>
+                    args.remove(1); // removes help argument
+                    args.insert(1, "--namespace-help".to_string());
+                    args.insert(2, raw_ns);
+                    return args;
+                } else if !second.starts_with('-') {
+                    // Subcommand provided: `fa <ns> <subcmd> [args...]`
+                    args.remove(1); // removes <ns>
+                    let sub = args.remove(1); // removes <subcmd>
+                    args.insert(1, "--alias".to_string());
+                    args.insert(2, format!("{raw_ns} {sub}"));
+                    return args;
+                }
+            }
+
+            // Either no subcommand provided (`fa <ns>`) or next argument is a flag (`fa <ns> -v`):
+            // Check if a root command exists within the namespace matching the namespace name.
+            if crate::config::find_command(commands, &raw_ns).is_some() {
+                args.remove(1); // removes <ns>
+                args.insert(1, "--alias".to_string());
+                args.insert(2, format!("{raw_ns} {raw_ns}"));
+                return args;
+            } else {
+                // No root command: fallback to namespace help
+                args.remove(1); // removes <ns>
+                while args.len() > 1 && (args[1] == "--help" || args[1] == "-h" || args[1] == "help") {
+                    args.remove(1);
+                }
+                args.insert(1, "--namespace-help".to_string());
+                args.insert(2, raw_ns);
+                return args;
+            }
+        }
+    }
+
+    // 3. Direct flat alias check from recipes catalog (recipes.toml / recipes.d/*.toml)
     if args.len() >= 2 {
         let first = args[1].as_str();
         if !BUILTIN_COMMANDS.contains(&first)
             && !first.starts_with('-')
-            && let Some(cfg) = config
             && cfg.resolve_command(first).is_some()
         {
             args.insert(1, "--alias".to_string());
         }
     }
+
     args
 }
 
@@ -603,7 +705,12 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Alias { name, args } => {
             let (_section, _key, cmd) = config.resolve_command(&name).ok_or_else(|| {
-                anyhow::anyhow!("Unknown command '{name}'. Run `fa list` to see available aliases.")
+                if let Some((ns, _)) = name.split_once(' ') {
+                    let raw_ns = ns.strip_prefix(':').unwrap_or(ns);
+                    anyhow::anyhow!("Unknown command '{name}'. Run `fa {raw_ns}` to see available subcommands.")
+                } else {
+                    anyhow::anyhow!("Unknown command '{name}'. Run `fa list` to see available aliases.")
+                }
             })?;
             ensure_trusted()?;
             let effective_command = crate::templating::substitute_command_args(&cmd.command, &args);
@@ -614,8 +721,8 @@ fn main() -> anyhow::Result<()> {
             let user_dir = Config::get_user_config_dir()
                 .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory (HOME not set)"))?;
             match action {
-                RecipeAction::New { name } => {
-                    let path = recipe::recipe_new(&user_dir, name.as_deref())?;
+                RecipeAction::New { name, recipe_type } => {
+                    let path = recipe::recipe_new(&user_dir, name.as_deref(), recipe_type.as_deref())?;
                     recipe::open_editor(&path)?;
                 }
                 RecipeAction::Edit { name } => match name {
@@ -636,14 +743,42 @@ fn main() -> anyhow::Result<()> {
                     }
                 },
                 RecipeAction::Validate { name } => {
-                    let issues = recipe::recipe_issues(&user_dir, name.as_deref())?;
+                    let (issues, has_errors) = recipe::recipe_diagnostics(&user_dir, name.as_deref())?;
                     if issues.is_empty() {
-                        println!("ok: recipe config valid");
+                        println!("{}ok: recipe config valid{}", BOLD_GREEN, RESET);
                     } else {
                         for issue in &issues {
-                            eprintln!("error: {issue}");
+                            match issue.severity {
+                                recipe::IssueSeverity::Error => eprintln!("{}{}{}", BOLD_RED, issue, RESET),
+                                recipe::IssueSeverity::Warning => eprintln!("{}{}{}", BOLD_YELLOW, issue, RESET),
+                                recipe::IssueSeverity::Notice => eprintln!("{}{}{}", BOLD_CYAN, issue, RESET),
+                            }
                         }
-                        anyhow::bail!("recipe validation failed ({} issue(s))", issues.len());
+                        if has_errors {
+                            anyhow::bail!("recipe validation failed");
+                        } else {
+                            println!("{}ok: recipe config valid (with warnings){}", BOLD_GREEN, RESET);
+                        }
+                    }
+                }
+                RecipeAction::Rm { name, yes } => {
+                    use std::io::IsTerminal;
+                    let should_delete = if yes || !std::io::stdin().is_terminal() {
+                        true
+                    } else {
+                        prompt_yes_no(&format!("Remove recipe '{name}' (TOML file only)?"), false)
+                    };
+
+                    if should_delete {
+                        let removed = recipe::recipe_rm(&user_dir, &name)?;
+                        println!(
+                            "{}Removed recipe file {}{} (templates and packs preserved)",
+                            BOLD_GREEN,
+                            removed.display(),
+                            RESET
+                        );
+                    } else {
+                        println!("Aborted.");
                     }
                 }
             }
@@ -673,9 +808,33 @@ fn main() -> anyhow::Result<()> {
                 std::process::exit(1);
             }
         }
+        Commands::NamespaceHelp { namespace } => {
+            display_namespace_help(&config, &namespace);
+        }
     }
 
     Ok(())
+}
+
+fn display_namespace_help(config: &Config, namespace: &str) {
+    let ns_key = if namespace.starts_with(':') {
+        namespace.to_string()
+    } else {
+        format!(":{namespace}")
+    };
+    let raw_ns = ns_key.strip_prefix(':').unwrap_or(&ns_key);
+
+    let Some(commands) = config.aliases.get(&ns_key) else {
+        eprintln!("{BOLD_RED}Unknown namespace '{raw_ns}'.{RESET}");
+        return;
+    };
+
+    println!("{BOLD_CYAN}Namespace {WHITE}:{raw_ns}{RESET}:");
+    println!("  {DIM}Usage: fa {raw_ns} <command> [args...]{RESET}\n");
+    println!("{BOLD_CYAN}Commands:{RESET}");
+    for (command_key, command) in commands {
+        println!("  {}", crate::engine::format_command_line(command_key, command));
+    }
 }
 
 fn show_command(config: &Config, section: &str, key: &str) {
@@ -1019,6 +1178,147 @@ mod tests {
     }
 
     #[test]
+    fn test_rewrite_args_git_style_aliases_from_config() {
+        let mut config = Config::default();
+        config.settings.alias.insert("rn".to_string(), "--recipe new".to_string());
+        config.settings.alias.insert("n".to_string(), "--new".to_string());
+        config.settings.alias.insert("st".to_string(), "--list".to_string());
+        config.settings.alias.insert("ac".to_string(), "!git add -A && git commit -m".to_string());
+
+        // 1. Native multi-token alias: `fa rn my-app` -> `fa --recipe new my-app`
+        let args = vec!["fa".to_string(), "rn".to_string(), "my-app".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(
+            rewritten,
+            vec!["fa", "--recipe", "new", "my-app"],
+            "rn must expand to --recipe new"
+        );
+
+        // 2. Native single-token alias: `fa n my-recipe my-proj` -> `fa --new my-recipe my-proj`
+        let args = vec!["fa".to_string(), "n".to_string(), "my-recipe".to_string(), "my-proj".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(
+            rewritten,
+            vec!["fa", "--new", "my-recipe", "my-proj"],
+            "n must expand to --new"
+        );
+
+        // 3. Native alias with no extra args: `fa st` -> `fa --list`
+        let args = vec!["fa".to_string(), "st".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(rewritten, vec!["fa", "--list"]);
+
+        // 4. Git-style shell alias with '!': `fa ac "feat: init"` -> `fa --alias ac "feat: init"`
+        let args = vec!["fa".to_string(), "ac".to_string(), "feat: init".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(
+            rewritten,
+            vec!["fa", "--alias", "ac", "feat: init"],
+            "Shell alias prefixed with '!' must be rewritten to --alias <name>"
+        );
+    }
+
+    #[test]
+    fn test_rewrite_args_namespaced_aliases() {
+        let toml_content = r#"
+[aliases.":skills"]
+skills = { command = "tabernaculo status", description = "Root skills command" }
+ls = { command = "bunx tabernaculo list", description = "List skills" }
+add = { command = "bunx tabernaculo add", description = "Add skill", aliases = ["a"] }
+
+[aliases.":docker"]
+up = { command = "docker compose up -d" }
+down = { command = "docker compose down" }
+"#;
+        let config: Config = toml::from_str(toml_content).expect("Should parse namespaced aliases");
+
+        // 1. fa skills ls -> fa --alias "skills ls"
+        let args = vec!["fa".to_string(), "skills".to_string(), "ls".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--alias", "skills ls"]
+        );
+
+        // 2. fa :skills ls -> fa --alias "skills ls"
+        let args = vec!["fa".to_string(), ":skills".to_string(), "ls".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--alias", "skills ls"]
+        );
+
+        // 3. fa skills add my-skill -> fa --alias "skills add" my-skill
+        let args = vec![
+            "fa".to_string(),
+            "skills".to_string(),
+            "add".to_string(),
+            "my-skill".to_string(),
+        ];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--alias", "skills add", "my-skill"]
+        );
+
+        // 4. fa skills -> fa --alias "skills skills" (root command exists)
+        let args = vec!["fa".to_string(), "skills".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--alias", "skills skills"]
+        );
+
+        // 4b. fa skills -v -> fa --alias "skills skills" -v
+        let args = vec!["fa".to_string(), "skills".to_string(), "-v".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--alias", "skills skills", "-v"]
+        );
+
+        // 5. fa docker -> fa --namespace-help docker (no root command, displays help)
+        let args = vec!["fa".to_string(), "docker".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--namespace-help", "docker"]
+        );
+
+        // 5b. fa :docker -> fa --namespace-help docker
+        let args = vec!["fa".to_string(), ":docker".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--namespace-help", "docker"]
+        );
+
+        // 5c. fa docker --help -> fa --namespace-help docker
+        let args = vec!["fa".to_string(), "docker".to_string(), "--help".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--namespace-help", "docker"]
+        );
+
+        // 5d. fa docker help -> fa --namespace-help docker
+        let args = vec!["fa".to_string(), "docker".to_string(), "help".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--namespace-help", "docker"]
+        );
+
+        // 6. Isolation check: fa ls must NOT be rewritten as an alias since ls is namespaced
+        let args = vec!["fa".to_string(), "ls".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "ls"]
+        );
+    }
+
+    #[test]
+    fn test_namespace_help_command_parsing() {
+        let cli = Cli::try_parse_from(["fa", "--namespace-help", "docker"]).expect("Should parse --namespace-help");
+        match cli.command {
+            Some(Commands::NamespaceHelp { namespace }) => assert_eq!(namespace, "docker"),
+            _ => panic!("Expected Commands::NamespaceHelp"),
+        }
+    }
+
+
+    #[test]
     fn cli_help_should_include_visible_aliases_for_short_flags() {
         let mut cmd = Cli::command();
         let raw_help = cmd.render_help().to_string();
@@ -1257,6 +1557,33 @@ mod tests {
                 assert!(packs);
             }
             _ => panic!("Expected Commands::List"),
+        }
+    }
+
+    #[test]
+    fn test_recipe_rm_cli_parsing() {
+        let cli = Cli::try_parse_from(["fa", "--recipe", "rm", "my-stack", "-y"])
+            .expect("fa --recipe rm my-stack -y should parse");
+        match cli.command {
+            Some(Commands::Recipe {
+                action: RecipeAction::Rm { name, yes },
+            }) => {
+                assert_eq!(name, "my-stack");
+                assert!(yes);
+            }
+            _ => panic!("Expected RecipeAction::Rm"),
+        }
+
+        let cli = Cli::try_parse_from(["fa", "-r", "rm", "other-stack"])
+            .expect("fa -r rm other-stack should parse");
+        match cli.command {
+            Some(Commands::Recipe {
+                action: RecipeAction::Rm { name, yes },
+            }) => {
+                assert_eq!(name, "other-stack");
+                assert!(!yes);
+            }
+            _ => panic!("Expected RecipeAction::Rm"),
         }
     }
 }

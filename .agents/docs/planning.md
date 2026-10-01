@@ -22,10 +22,12 @@
 - `template_rel` normalization: `from`/`template` with or without `templates/` prefix resolve equally; traversal/absolute rejected with a friendly error
 - Release asset names single-sourced from `resolve_asset_name` (`src/update.rs`), kept in sync with `install.sh` / `release.yml`
 - Branch workflow: `feature/*` for complex, direct to `develop` for tiny
+- TOML UX enhancements: JSON Schema generation (`schema/recipe.schema.json` & fallback `~/.local/state/fa/recipe.schema.json`), clean minimal recipe scaffolding (`fa -r new <name>`), and `alias` scaffold preset (`fa -r new <name> alias`)
+- Git-style `[alias]` in `~/.config/fa/config.toml`: native multi-token and single-token expansions alongside `!` shell commands
+- Namespaced command aliases (`[aliases.":<namespace>"]`): isolated command namespaces with `fa <namespace> <command>` syntax, root command execution (`fa <namespace>`), automatic help fallback, and strict isolation preventing leakage into global aliases
 
 ## Next 🔲
 
-- `recipes.local.toml` machine override (gitignored): optional machine-specific configuration loaded after `recipes.d/` with highest priority (topgrade `.local.toml` pattern)
 - Commands drift: `docs/commands.md` + `README.md` document `fa sync`, `fa alias --dry-run`, and `$PAGER` paging — none exist in `Commands` (`src/main.rs`); implement or remove from docs
 - Pinning beyond Node: `pin_versions` only handles `package.json`; decide TOML-declared per-ecosystem rules vs keep Node-only
 
@@ -33,9 +35,11 @@
 
 Cross-referenced against similar tools (copier, chezmoi, cargo-generate, mise, just, topgrade, nix templates, hygen, cookiecutter). Filtered through project principles: no new command flags (TOML toggles), dumb engine, lightweight deps, Debian + Termux.
 
-### Quick wins (S — candidate next betas)
+### TOML Authoring UX & Assistance (S/M — planned)
 
-- `recipes.local.toml` machine override (gitignored), same load pattern as `recipes.d/` (topgrade `.local.toml`)
+- **JSON Schema for TOML editor integration**: generate/export JSON Schema (`~/.config/fa/schema/recipe.json`) with `#:schema` header support for in-editor autocomplete, hover documentation, and real-time linting in VS Code / Taplo / Neovim / Helix.
+- **Enhanced CLI diagnostics in `fa --recipe validate`**: "Did you mean?" suggestions using Levenshtein distance for typos on keys/properties, plus semantic consistency checks (unresolved template paths, orphan variables in templates, `default_pack` vs `default_behavior` mismatches).
+- **Contextual recipe scaffolds (`fa --recipe new`)**: support specialized recipe scaffolding (e.g. standard project vs component/pack library preset) with comprehensive inline guidance and comments.
 
 ### Differentiators (M — core of medium-term roadmap)
 
@@ -52,6 +56,7 @@ Cross-referenced against similar tools (copier, chezmoi, cargo-generate, mise, j
 
 ### Rejected (violates principles)
 
+- `recipes.local.toml` machine override → discarded per user decision; keep configurations in `recipes.d/` or dotfiles
 - Shell completions (dynamic or static scripts) → unnecessary maintenance overhead; commands are short and direct
 - Per-invocation long flags (`--ts --eslint…`) → breaks Short Commands; use TOML toggles
 - JS plugin ecosystems (yeoman/nx/plop custom actions) → heavy deps, not lightweight

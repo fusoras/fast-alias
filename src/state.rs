@@ -32,11 +32,15 @@ pub struct State {
 }
 
 impl State {
+    /// Returns the state directory path (~/.local/state/fa).
+    pub fn state_dir() -> Option<PathBuf> {
+        let home = std::env::var_os("HOME")?;
+        Some(PathBuf::from(home).join(".local/state/fa"))
+    }
+
     /// Returns the state file path (~/.local/state/fa/state.toml).
     pub fn state_path() -> Option<PathBuf> {
-        let home = std::env::var_os("HOME")?;
-        let path = PathBuf::from(home).join(".local/state/fa").join(STATE_FILE);
-        Some(path)
+        Self::state_dir().map(|d| d.join(STATE_FILE))
     }
 
     /// True if the given config file path has already been trusted by the user.

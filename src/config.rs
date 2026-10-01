@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 /// First-run example configuration, written to `~/.config/fa/recipes.toml`
 /// when the user config directory does not exist. The user can delete it;
 /// an empty catalog then shows no recipes and no aliases.
-pub const EXAMPLE_CONFIG: &str = r##"# fa example configuration
+pub const EXAMPLE_CONFIG: &str = r##"#:schema https://raw.githubusercontent.com/fusoras/fast-alias/main/schema/recipe.schema.json
+# fa example configuration
 # Edit this file or add more .toml files under recipes.d/ to define your own
 # recipes and aliases. Templates referenced as `from = "templates/<path>"`
 # are resolved from ~/.config/fa/templates/<path>.
@@ -29,6 +30,26 @@ pub const EXAMPLE_GLOBAL_CONFIG: &str = r##"[packs]
 # "default" -> automatically installs the pack specified in `default_pack` in the recipe
 # "error" -> raises an error requiring an explicit pack or component
 default_behavior = "list"
+
+[alias]
+# Command aliases (Git style)
+# Native fa command shortcuts:
+n = "--new"
+l = "--list"
+r = "--recipe"
+rn = "--recipe new"
+rv = "--recipe validate"
+re = "--recipe edit"
+rm = "--recipe rm"
+t = "--template"
+sh = "--show"
+se = "--search"
+
+# External shell command shortcuts start with '!':
+# ac = "!git add -A && git commit -m"
+# st = "!git status"
+# b = "!git branch"
+# s = "!git switch"
 "##;
 
 /// File generation specification. Each entry is one of:
@@ -298,6 +319,46 @@ impl Default for PacksSettings {
 pub struct GlobalConfig {
     #[serde(default)]
     pub packs: PacksSettings,
+    #[serde(default, alias = "aliases")]
+    pub alias: BTreeMap<String, String>,
+}
+
+/// Parses `config.toml` into [`GlobalConfig`], supporting standard quoted TOML
+/// as well as Git-style unquoted alias lines (e.g. `b = branch`, `ac = !git add...`).
+pub fn parse_global_config(content: &str) -> anyhow::Result<GlobalConfig> {
+    if let Ok(cfg) = toml::from_str::<GlobalConfig>(content) {
+        return Ok(cfg);
+    }
+
+    // Lenient fallback for Git-style unquoted alias values (e.g. b = branch, ac = !git add...)
+    let mut normalized = String::with_capacity(content.len() + 64);
+    let mut in_alias_section = false;
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') {
+            in_alias_section = trimmed == "[alias]" || trimmed == "[aliases]";
+            normalized.push_str(line);
+            normalized.push('\n');
+            continue;
+        }
+
+        if in_alias_section && let Some((key, val)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let val = val.trim();
+            if !val.starts_with('"') && !val.starts_with('\'') && !val.is_empty() {
+                let escaped = val.replace('\\', "\\\\").replace('"', "\\\"");
+                normalized.push_str(&format!("{key} = \"{escaped}\"\n"));
+                continue;
+            }
+        }
+
+        normalized.push_str(line);
+        normalized.push('\n');
+    }
+
+    toml::from_str::<GlobalConfig>(&normalized)
+        .map_err(|e| anyhow::anyhow!("Failed to parse config.toml: {e}"))
 }
 
 /// Parses pack definitions from a TOML string. Supports:
@@ -457,6 +518,28 @@ impl Config {
         }
     }
 
+    /// Synchronizes Git-style shell aliases (prefixed with '!') from `settings.alias`
+    /// into `self.aliases["config"]`.
+    pub fn sync_config_aliases(&mut self) {
+        for (alias_key, target) in &self.settings.alias {
+            let target = target.trim();
+            if let Some(shell_cmd) = target.strip_prefix('!') {
+                self.aliases
+                    .entry("config".to_string())
+                    .or_default()
+                    .insert(
+                        alias_key.clone(),
+                        Command {
+                            command: shell_cmd.trim().to_string(),
+                            description: Some(format!("Git-style shell alias '{alias_key}'")),
+                            platform: None,
+                            aliases: vec![],
+                        },
+                    );
+            }
+        }
+    }
+
     /// Loads the user configuration from `~/.config/fa/recipes.toml` and
     /// `~/.config/fa/recipes.d/*.toml`. On first run (no config directory yet)
     /// it provisions an example configuration so the user always has a starting
@@ -467,6 +550,9 @@ impl Config {
 
         if !user_dir.exists() {
             Self::provision_example(&user_dir)?;
+        }
+        if let Some(state_dir) = crate::state::State::state_dir() {
+            let _ = crate::schema::ensure_schema_file(&state_dir);
         }
 
         let mut config = Self::default();
@@ -491,9 +577,10 @@ impl Config {
         if global_config_path.exists() {
             let content = fs::read_to_string(&global_config_path)
                 .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", global_config_path.display()))?;
-            let global: GlobalConfig = toml::from_str(&content)
+            let global: GlobalConfig = parse_global_config(&content)
                 .map_err(|e| anyhow::anyhow!("Failed to parse {}: {e}", global_config_path.display()))?;
             config.settings = global;
+            config.sync_config_aliases();
         }
 
         let source_summary = if loaded_modular_files.is_empty() {
@@ -528,9 +615,12 @@ impl Config {
             fs::write(&global_config_path, EXAMPLE_GLOBAL_CONFIG)
                 .map_err(|e| anyhow::anyhow!("Failed to write {}: {e}", global_config_path.display()))?;
         }
+        if let Some(state_dir) = crate::state::State::state_dir() {
+            let _ = crate::schema::ensure_schema_file(&state_dir);
+        }
         let mut state = crate::state::State::load();
         state.trust(&example_path.to_string_lossy());
-        state.save()?;
+        let _ = state.save();
         println!(
             "{}Initialized example config at {}{}",
             crate::colors::BOLD_GREEN,
@@ -905,12 +995,53 @@ impl Config {
 
     /// Resolves an input query to its full command definition, returning
     /// `(section, command_key, &Command)`.
+    ///
+    /// Supports:
+    /// - Flat aliases in standard sections (e.g. `[aliases.git]`, `[aliases.general]`)
+    /// - Namespaced subcommands (e.g. `skills ls` or `:skills ls` from `[aliases.":skills"]`)
+    /// - Namespaced root commands (e.g. `skills` or `:skills` when `[aliases.":skills"]` contains `skills`)
+    /// - Preserves strict isolation: subcommands inside `:namespace` do NOT leak to flat queries.
     pub fn resolve_command(&self, query: &str) -> Option<(String, String, &Command)> {
+        let trimmed = query.trim();
+
+        // 1. Compound namespaced query: "<ns> <subcommand>" or ":<ns> <subcommand>"
+        if let Some((ns_part, subcmd_part)) = trimmed.split_once(' ') {
+            let ns_key = if ns_part.starts_with(':') {
+                ns_part.to_string()
+            } else {
+                format!(":{ns_part}")
+            };
+            if let Some(commands) = self.aliases.get(&ns_key)
+                && let Some((key, command)) = find_command(commands, subcmd_part)
+            {
+                return Some((ns_key, key.clone(), command));
+            }
+            return None;
+        }
+
+        // 2. Query in standard (non-namespaced) sections
         for (section, commands) in &self.aliases {
-            if let Some((key, command)) = find_command(commands, query) {
+            if section.starts_with(':') {
+                continue; // Isolated: commands in namespaced sections do not leak to flat queries
+            }
+            if let Some((key, command)) = find_command(commands, trimmed) {
                 return Some((section.clone(), key.clone(), command));
             }
         }
+
+        // 3. Namespace root command invocation: query equals namespace name (e.g. "skills" or ":skills")
+        let ns_key = if trimmed.starts_with(':') {
+            trimmed.to_string()
+        } else {
+            format!(":{trimmed}")
+        };
+        let raw_ns = ns_key.strip_prefix(':').unwrap_or(&ns_key);
+        if let Some(commands) = self.aliases.get(&ns_key)
+            && let Some((key, command)) = find_command(commands, raw_ns)
+        {
+            return Some((ns_key, key.clone(), command));
+        }
+
         None
     }
 
@@ -1001,7 +1132,7 @@ pub fn dirs_home_dir() -> Option<PathBuf> {
 }
 
 /// Finds a command by its canonical key or any alias (case-insensitive).
-fn find_command<'a>(
+pub(crate) fn find_command<'a>(
     commands: &'a BTreeMap<String, Command>,
     query: &str,
 ) -> Option<(&'a String, &'a Command)> {
@@ -1587,5 +1718,123 @@ components = ["toggle-theme", "btn-ally"]
         assert!(content.contains("default_behavior = \"list\""));
         assert!(content.contains("# Behavior when running"));
         assert!(!content.contains("Comportamiento"));
+        assert!(content.contains("[alias]"));
+        assert!(content.contains("rn = \"--recipe new\""));
+    }
+
+    #[test]
+    fn test_parse_global_config_git_style_and_toml_style() {
+        let git_style = r#"
+[packs]
+default_behavior = "list"
+
+[alias]
+    b = branch
+    s = switch
+    st = status
+    ac = !git add -A && git commit -m
+"#;
+        let global = parse_global_config(git_style).expect("Git-style unquoted aliases must parse");
+        assert_eq!(global.alias.get("b"), Some(&"branch".to_string()));
+        assert_eq!(global.alias.get("s"), Some(&"switch".to_string()));
+        assert_eq!(global.alias.get("st"), Some(&"status".to_string()));
+        assert_eq!(global.alias.get("ac"), Some(&"!git add -A && git commit -m".to_string()));
+
+        let toml_style = r#"
+[alias]
+rn = "--recipe new"
+ac = "!git add -A && git commit -m"
+"#;
+        let global_toml = parse_global_config(toml_style).expect("Standard quoted TOML aliases must parse");
+        assert_eq!(global_toml.alias.get("rn"), Some(&"--recipe new".to_string()));
+        assert_eq!(global_toml.alias.get("ac"), Some(&"!git add -A && git commit -m".to_string()));
+
+        // Test sync_config_aliases populates config.aliases["config"] for '!' shell aliases
+        let mut config = Config::default();
+        config.settings = global;
+        config.sync_config_aliases();
+        assert!(config.aliases.contains_key("config"));
+        let ac_cmd = &config.aliases["config"]["ac"];
+        assert_eq!(ac_cmd.command, "git add -A && git commit -m");
+        assert_eq!(
+            config.resolve_command("ac").map(|(_, k, c)| (k, c.command.as_str())),
+            Some(("ac".to_string(), "git add -A && git commit -m"))
+        );
+    }
+
+    #[test]
+    fn test_resolve_command_namespaced_subcommands_and_isolation() {
+        let toml_content = r#"
+[aliases.":skills"]
+skills = { command = "tabernaculo status", description = "Root skills command" }
+ls = { command = "bunx tabernaculo list", description = "List skills" }
+add = { command = "bunx tabernaculo add", description = "Add skill", aliases = ["a"] }
+
+[aliases.":docker"]
+up = { command = "docker compose up -d" }
+down = { command = "docker compose down" }
+
+[aliases.general]
+free = { command = "free -h" }
+"#;
+        let config: Config = toml::from_str(toml_content).expect("Should parse namespaced aliases");
+
+        // 1. Explicit subcommands via space
+        let res = config.resolve_command("skills ls");
+        assert!(res.is_some(), "skills ls must resolve");
+        let (sec, key, cmd) = res.unwrap();
+        assert_eq!(sec, ":skills");
+        assert_eq!(key, "ls");
+        assert_eq!(cmd.command, "bunx tabernaculo list");
+
+        // 2. Colon prefix in query
+        let res = config.resolve_command(":skills ls");
+        assert!(res.is_some(), ":skills ls must resolve");
+        let (sec, key, _) = res.unwrap();
+        assert_eq!(sec, ":skills");
+        assert_eq!(key, "ls");
+
+        // 3. Subcommand alias resolution
+        let res = config.resolve_command("skills a");
+        assert!(res.is_some(), "skills a must resolve to add");
+        let (_, key, _) = res.unwrap();
+        assert_eq!(key, "add");
+
+        // 4. Root command invocation (same name as namespace)
+        let res = config.resolve_command("skills");
+        assert!(res.is_some(), "skills must resolve to root command in :skills");
+        let (sec, key, cmd) = res.unwrap();
+        assert_eq!(sec, ":skills");
+        assert_eq!(key, "skills");
+        assert_eq!(cmd.command, "tabernaculo status");
+
+        // 5. Namespace without matching root command must return None on root query
+        assert!(
+            config.resolve_command("docker").is_none(),
+            "docker has no root command, must return None"
+        );
+        assert!(config.resolve_command(":docker").is_none());
+
+        // 6. Strict Isolation: Subcommands in :namespace must NOT leak into flat root namespace
+        assert!(
+            config.resolve_command("ls").is_none(),
+            "ls is namespaced in :skills and must NOT leak to flat query"
+        );
+        assert!(
+            config.resolve_command("add").is_none(),
+            "add is namespaced in :skills and must NOT leak to flat query"
+        );
+        assert!(
+            config.resolve_command("up").is_none(),
+            "up is namespaced in :docker and must NOT leak to flat query"
+        );
+
+        // 7. General non-namespaced aliases still work normally
+        let res = config.resolve_command("free");
+        assert!(res.is_some(), "free in general section must resolve");
+        let (sec, key, _) = res.unwrap();
+        assert_eq!(sec, "general");
+        assert_eq!(key, "free");
     }
 }
+

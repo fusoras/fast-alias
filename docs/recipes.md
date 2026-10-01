@@ -9,14 +9,19 @@ The **declarative catalog** of `fa` lives in `~/.config/fa/`. It defines recipes
 The fastest way to create a recipe is using the CLI command:
 
 ```bash
-fa recipe new my-stack
+fa --recipe new my-stack            # Clean minimal recipe scaffold (or: fa -r new ...)
+fa --recipe new my-stack standard   # Guided standard scaffold with commented examples
+fa --recipe new wc-lib pack         # Component/pack library preset
+fa --recipe new shortcuts alias     # Basic command alias catalog preset
 ```
 
-This automatically scaffolds `~/.config/fa/recipes.d/my-stack.toml` and opens it in your default `$EDITOR`.
+This automatically scaffolds `~/.config/fa/recipes.d/my-stack.toml`, links the official JSON schema (`#:schema https://raw.githubusercontent.com/fusoras/fast-alias/main/schema/recipe.schema.json`) for editor autocompletion and diagnostics (with local fallback in `~/.local/state/fa/recipe.schema.json`), and opens it in your default `$EDITOR`.
 
 Configure the minimal functional recipe:
 
 ```toml
+#:schema https://raw.githubusercontent.com/fusoras/fast-alias/main/schema/recipe.schema.json
+
 [recipes.my-stack]
 name        = "My Stack"
 description = "Minimal project scaffold"
@@ -234,3 +239,25 @@ du   = { command = "du -sh */", description = "Size per folder" }
 - **Platform** (optional): restrict to `debian`/`termux`.
 - **Dry-run**: `fa alias <name> [args] --dry-run` prints the resolved command without executing it.
 - **Modularity**: sections can live in separate files, e.g. `recipes.d/git.toml` containing only `[aliases.git]`.
+
+### Namespaced Aliases (`[aliases.":<namespace>"]`)
+
+Prefixing a section name with `:` creates an **isolated command namespace**. Commands inside a namespace are called with `fa <namespace> <command>` and never leak into the root alias list, preventing collisions with general tools:
+
+```toml
+[aliases.":skills"]
+skills = { command = "tabernaculo status", description = "Show skills status" }
+ls     = { command = "bunx tabernaculo list", description = "List installed skills" }
+add    = { command = "bunx tabernaculo add {{1}}", description = "Add a skill" }
+
+[aliases.":docker"]
+up   = { command = "docker compose up -d", description = "Start containers" }
+down = { command = "docker compose down", description = "Stop containers" }
+```
+
+- **Invocation**: `fa skills ls` (or `fa :skills ls`) executes `bunx tabernaculo list`.
+- **Root Command Execution**: When `fa <namespace>` is run without subcommands:
+  - If a command with the same name exists inside the namespace (`skills`), it executes immediately (`tabernaculo status`).
+  - If no command matches the namespace name (e.g. `fa docker`), it automatically displays the namespace help and available subcommands.
+- **Strict Isolation**: Subcommands like `ls` or `up` are unreachable via `fa ls` or `fa up`, ensuring complete independence.
+

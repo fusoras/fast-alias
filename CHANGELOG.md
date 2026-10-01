@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Namespaced command aliases (`[aliases.":<namespace>"]`): group commands under isolated `:`-prefixed namespace sections called with multi-word syntax (`fa <namespace> <command>` or `fa :<namespace> <command>`). Invoking `fa <namespace>` directly executes the root command if one with the same name exists (`skills = { ... }`), or prints the namespace's available subcommands and usage help if not. Commands inside a namespace are strictly isolated and never collide with global root aliases.
+- Git-style `[alias]` in `~/.config/fa/config.toml`: configure custom native command shortcuts (`rn = "--recipe new"`, `st = "--list"`) and external shell commands prefixed with `!` (`ac = "!git add -A && git commit -m"`).
+- Clean minimal recipe scaffolds & alias preset: `fa --recipe new <name>` now generates an ultra-clean 8-line scaffold by default; preserved `standard` and `pack` templates and added the `alias` preset (`fa -r new <name> alias`) for fast alias catalog scaffolding.
 - Strict prefixed native commands: all built-in commands now strictly require long (`--new`, `--list`, `--search`, `--show`, `--recipe`, `--template`, `--alias`, `--self-update`, `--self-uninstall`) or short flags (`-n`, `-l`, `-se`, `-sh`, `-r`, `-t`, `-a`), reserving all unprefixed words exclusively for user aliases to completely prevent name collisions. Subcommands (`--recipe new`, `--template add`) remain clean without prefixes.
 - `fa --list` hybrid filtering: filter catalog output by category using dedicated flags (`-r` / `--recipes`, `-a` / `--aliases`, `-p` / `--packs`) or positional arguments (`recipes`, `aliases`, `packs`), with support for combining flags (e.g. `fa -l -r -p`).
 - Packs catalog display (Option 2): `fa --list -p` formats packs showing the bundle name and description (`• <name> · <description>`) with indented components (`components: <comp1>, ...`).
