@@ -191,7 +191,8 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
           "additionalProperties": false
         },
         "platform": { "type": "string", "description": "Platform gate (e.g. 'debian' or 'termux')." },
-        "script": { "type": "string", "description": "Optional inline script." }
+        "script": { "type": "string", "description": "Optional inline script." },
+        "install": { "type": "boolean", "description": "Whether this step installs dependencies (skipped with --no-install and triggers version pinning)." }
       },
       "additionalProperties": false
     },

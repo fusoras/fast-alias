@@ -193,6 +193,7 @@ slug = { prompt = "Slug", type = "string", pattern = "^[a-z0-9-]+$", required = 
 Recipes can declare ordered shell commands executed after files are written and dependencies installed.
 - **Command**: Shell command to run (with `{{var}}` templating).
 - **Description**: Human-readable label shown before execution.
+- **Install Flag** (Optional): Set `install = true` to mark a dependency installation step. Skipped when running with `--no-install`, and triggers `pin_versions` execution after the last install step.
 - **Platform** (Optional): Restrict a step to a specific platform (`debian`, `termux`).
 - **Prompt/Confirm** (Optional): Interactive confirmation before running.
 - **Dry-Run Safety**: In `--dry-run` mode, `fa` prints `[Dry-Run] Would run: <command>` without executing.

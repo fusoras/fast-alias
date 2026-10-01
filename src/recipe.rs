@@ -389,6 +389,7 @@ const KNOWN_STEP_FIELDS: &[&str] = &[
     "platform",
     "script",
     "aliases",
+    "install",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1113,6 +1114,27 @@ default = "wc-ui"
         let msgs = issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
         assert!(msgs.contains("Did you mean 'description'"), "Must suggest 'description' for 'decription'");
         assert!(msgs.contains("Did you mean 'default_pack'"), "Must suggest 'default_pack' for 'default'");
+    }
+
+    #[test]
+    fn test_recipe_validate_accepts_install_flag_in_steps() {
+        let dir = temp_dir("val-install");
+        fs::write(
+            dir.join("recipes.toml"),
+            r#"[recipes.my-rec]
+name = "My Rec"
+description = "Valid"
+
+[[recipes.my-rec.steps]]
+command = "pnpm install"
+description = "Install dependencies"
+install = true
+"#,
+        ).unwrap();
+        let (issues, has_errors) = recipe_diagnostics(&dir, None).unwrap();
+        let msgs = issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        assert!(!has_errors, "install = true in step must be valid, but got errors:\n{msgs}");
+        assert!(issues.is_empty(), "Should have no validation issues, but got:\n{msgs}");
     }
 
     #[test]
