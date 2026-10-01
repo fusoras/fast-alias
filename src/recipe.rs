@@ -347,6 +347,46 @@ pub fn suggest_best_match<'a>(unknown: &str, candidates: &'a [&'a str]) -> Optio
     best.map(|(cand, _)| cand)
 }
 
+/// Suggests the closest match from a list of candidates for a typo.
+pub fn suggest_closest(unknown: &str, candidates: &[&str]) -> Option<String> {
+    if unknown.is_empty() || candidates.is_empty() {
+        return None;
+    }
+    let lower_unknown = unknown.to_lowercase();
+    let mut best: Option<(&str, usize)> = None;
+
+    for &cand in candidates {
+        let lower_cand = cand.to_lowercase();
+        if lower_cand == lower_unknown {
+            return Some(cand.to_string());
+        }
+
+        let dist = levenshtein(&lower_unknown, &lower_cand);
+        // Threshold: for short words (len <= 4), distance <= 2; for longer, distance <= max(3, len / 2)
+        let threshold = if lower_unknown.len() <= 4 {
+            2
+        } else {
+            (lower_unknown.len() / 2).clamp(2, 4)
+        };
+
+        let effective_dist = if lower_cand.starts_with(&lower_unknown) || lower_unknown.starts_with(&lower_cand) {
+            dist.saturating_sub(1)
+        } else {
+            dist
+        };
+
+        if dist <= threshold || lower_cand.starts_with(&lower_unknown) {
+            match best {
+                None => best = Some((cand, effective_dist)),
+                Some((_, prev_dist)) if effective_dist < prev_dist => best = Some((cand, effective_dist)),
+                _ => {}
+            }
+        }
+    }
+
+    best.map(|(cand, _)| cand.to_string())
+}
+
 const KNOWN_RECIPE_FIELDS: &[&str] = &[
     "name",
     "description",
@@ -1193,5 +1233,34 @@ description = "Echo"
         fs::write(dir.join("recipes.toml"), "[recipes.core]\nname = \"Core\"\ndescription = \"Desc\"\n").unwrap();
         let err = recipe_rm(&dir, "core").unwrap_err();
         assert!(err.to_string().contains("primary recipes.toml"), "Must refuse to delete primary recipes.toml");
+    }
+
+    #[test]
+    fn test_suggest_closest_finds_typos() {
+        assert_eq!(
+            suggest_closest("stts", &["status", "free", "gco"]),
+            Some("status".to_string()),
+            "stts must suggest status"
+        );
+        assert_eq!(
+            suggest_closest("skill", &["skills", "docker"]),
+            Some("skills".to_string()),
+            "skill must suggest skills"
+        );
+        assert_eq!(
+            suggest_closest("nxt-ts", &["next-ts", "rust-cli"]),
+            Some("next-ts".to_string()),
+            "nxt-ts must suggest next-ts"
+        );
+        assert_eq!(
+            suggest_closest("lss", &["ls", "add"]),
+            Some("ls".to_string()),
+            "lss must suggest ls"
+        );
+        assert_eq!(
+            suggest_closest("completelydifferent", &["status", "ls"]),
+            None,
+            "No suggestion for completely unrelated string"
+        );
     }
 }

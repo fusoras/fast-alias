@@ -388,7 +388,7 @@ fn main() -> anyhow::Result<()> {
     };
 
     let args = rewrite_args(args, Some(&config));
-    let cli = match Cli::try_parse_from(args) {
+    let cli = match Cli::try_parse_from(args.clone()) {
         Ok(cli) => cli,
         Err(err) => {
             if err.kind() == clap::error::ErrorKind::DisplayHelp {
@@ -398,6 +398,14 @@ fn main() -> anyhow::Result<()> {
             if err.kind() == clap::error::ErrorKind::DisplayVersion {
                 println!("{}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
+            }
+            if err.kind() == clap::error::ErrorKind::InvalidSubcommand && args.len() >= 2 {
+                let unknown = &args[1];
+                let hint = suggest_unrecognized_subcommand(unknown, &config)
+                    .map(|s| format!("\n\n{BOLD_CYAN}Did you mean?{RESET}\n    {WHITE}{s}{RESET}"))
+                    .unwrap_or_default();
+                eprintln!("error: unrecognized subcommand '{unknown}'{hint}\n\nUsage: fa [COMMAND]\n\nFor more information, try '--help'.");
+                std::process::exit(2);
             }
             err.exit();
         }
@@ -438,7 +446,7 @@ fn main() -> anyhow::Result<()> {
         } => {
             let key = config
                 .resolve_recipe_key(&recipe)
-                .ok_or_else(|| anyhow::anyhow!("Unknown recipe '{recipe}'. Run `fa list` to see available recipes."))?;
+                .ok_or_else(|| anyhow::anyhow!("{}", unknown_recipe_error(&recipe, &config)))?;
             if !dry_run {
                 ensure_trusted()?;
             }
@@ -700,17 +708,19 @@ fn main() -> anyhow::Result<()> {
             } else if let Some((section, key, _)) = config.resolve_command(&recipe) {
                 show_command(&config, &section, &key);
             } else {
-                anyhow::bail!("Unknown recipe or command '{recipe}'. Run `fa list` to see available options.");
+                let mut candidates: Vec<&str> = config.recipes.keys().map(|k| k.as_str()).collect();
+                for (_, k, _) in config.all_commands() {
+                    candidates.push(k.as_str());
+                }
+                let hint = crate::recipe::suggest_closest(&recipe, &candidates)
+                    .map(|s| format!("\n\nDid you mean?\n    {s}"))
+                    .unwrap_or_default();
+                anyhow::bail!("Unknown recipe or command '{recipe}'. Run `fa list` to see available options.{hint}");
             }
         }
         Commands::Alias { name, args } => {
             let (_section, _key, cmd) = config.resolve_command(&name).ok_or_else(|| {
-                if let Some((ns, _)) = name.split_once(' ') {
-                    let raw_ns = ns.strip_prefix(':').unwrap_or(ns);
-                    anyhow::anyhow!("Unknown command '{name}'. Run `fa {raw_ns}` to see available subcommands.")
-                } else {
-                    anyhow::anyhow!("Unknown command '{name}'. Run `fa list` to see available aliases.")
-                }
+                anyhow::anyhow!("{}", unknown_alias_error(&name, &config))
             })?;
             ensure_trusted()?;
             let effective_command = crate::templating::substitute_command_args(&cmd.command, &args);
@@ -825,7 +835,16 @@ fn display_namespace_help(config: &Config, namespace: &str) {
     let raw_ns = ns_key.strip_prefix(':').unwrap_or(&ns_key);
 
     let Some(commands) = config.aliases.get(&ns_key) else {
-        eprintln!("{BOLD_RED}Unknown namespace '{raw_ns}'.{RESET}");
+        let ns_candidates: Vec<&str> = config
+            .aliases
+            .keys()
+            .filter(|k| k.starts_with(':'))
+            .map(|k| k.strip_prefix(':').unwrap_or(k))
+            .collect();
+        let hint = crate::recipe::suggest_closest(raw_ns, &ns_candidates)
+            .map(|s| format!("\n\n{BOLD_CYAN}Did you mean?{RESET}\n    {WHITE}{s}{RESET}"))
+            .unwrap_or_default();
+        eprintln!("{BOLD_RED}Unknown namespace '{raw_ns}'.{RESET}{hint}");
         return;
     };
 
@@ -835,6 +854,67 @@ fn display_namespace_help(config: &Config, namespace: &str) {
     for (command_key, command) in commands {
         println!("  {}", crate::engine::format_command_line(command_key, command));
     }
+}
+
+pub(crate) fn unknown_alias_error(name: &str, config: &Config) -> String {
+    if let Some((ns, sub)) = name.split_once(' ') {
+        let raw_ns = ns.strip_prefix(':').unwrap_or(ns);
+        let ns_key = if ns.starts_with(':') {
+            ns.to_string()
+        } else {
+            format!(":{ns}")
+        };
+        let sub_candidates: Vec<&str> = config
+            .aliases
+            .get(&ns_key)
+            .map(|cmds| cmds.keys().map(|k| k.as_str()).collect())
+            .unwrap_or_default();
+        let hint = crate::recipe::suggest_closest(sub, &sub_candidates)
+            .map(|s| format!("\n\nDid you mean?\n    {s}"))
+            .unwrap_or_default();
+        format!("Unknown command '{name}'. Run `fa {raw_ns}` to see available subcommands.{hint}")
+    } else {
+        let all_aliases: Vec<&str> = config
+            .all_commands()
+            .into_iter()
+            .filter(|(sec, _, _)| !sec.starts_with(':'))
+            .map(|(_, k, _)| k.as_str())
+            .collect();
+        let hint = crate::recipe::suggest_closest(name, &all_aliases)
+            .map(|s| format!("\n\nDid you mean?\n    {s}"))
+            .unwrap_or_default();
+        format!("Unknown command '{name}'. Run `fa list` to see available aliases.{hint}")
+    }
+}
+
+pub(crate) fn unknown_recipe_error(recipe: &str, config: &Config) -> String {
+    let candidates: Vec<&str> = config.recipes.keys().map(|k| k.as_str()).collect();
+    let hint = crate::recipe::suggest_closest(recipe, &candidates)
+        .map(|s| format!("\n\nDid you mean?\n    {s}"))
+        .unwrap_or_default();
+    format!("Unknown recipe '{recipe}'. Run `fa list` to see available recipes.{hint}")
+}
+
+pub(crate) fn suggest_unrecognized_subcommand(unknown: &str, config: &Config) -> Option<String> {
+    let mut candidates: Vec<&str> = Vec::new();
+    for (sec, cmds) in &config.aliases {
+        if sec.starts_with(':') {
+            candidates.push(sec.strip_prefix(':').unwrap_or(sec));
+        } else {
+            for k in cmds.keys() {
+                candidates.push(k.as_str());
+            }
+        }
+    }
+    for k in config.recipes.keys() {
+        candidates.push(k.as_str());
+    }
+    for &b in BUILTIN_COMMANDS {
+        if !b.starts_with('-') {
+            candidates.push(b);
+        }
+    }
+    crate::recipe::suggest_closest(unknown, &candidates)
 }
 
 fn show_command(config: &Config, section: &str, key: &str) {
@@ -1585,5 +1665,83 @@ down = { command = "docker compose down" }
             }
             _ => panic!("Expected RecipeAction::Rm"),
         }
+    }
+
+    #[test]
+    fn test_unknown_alias_error_includes_did_you_mean() {
+        let mut config = Config::default();
+        let mut cmds = std::collections::BTreeMap::new();
+        cmds.insert(
+            "status".to_string(),
+            crate::config::Command {
+                command: "git status".to_string(),
+                description: Some("Status".to_string()),
+                platform: None,
+                aliases: vec![],
+            },
+        );
+        config.aliases.insert("git".to_string(), cmds);
+
+        let err = unknown_alias_error("stts", &config);
+        assert!(err.contains("Unknown command 'stts'"));
+        assert!(err.contains("Did you mean?"), "Error must contain 'Did you mean?': got {err}");
+        assert!(err.contains("status"), "Error must suggest 'status': got {err}");
+    }
+
+    #[test]
+    fn test_unknown_namespaced_subcommand_error_includes_did_you_mean() {
+        let mut config = Config::default();
+        let mut cmds = std::collections::BTreeMap::new();
+        cmds.insert(
+            "ls".to_string(),
+            crate::config::Command {
+                command: "bunx tabernaculo list".to_string(),
+                description: Some("List".to_string()),
+                platform: None,
+                aliases: vec![],
+            },
+        );
+        config.aliases.insert(":skills".to_string(), cmds);
+
+        let err = unknown_alias_error("skills lss", &config);
+        assert!(err.contains("Unknown command 'skills lss'"));
+        assert!(err.contains("Did you mean?"), "Error must contain 'Did you mean?': got {err}");
+        assert!(err.contains("ls"), "Error must suggest 'ls': got {err}");
+    }
+
+    #[test]
+    fn test_unknown_recipe_error_includes_did_you_mean() {
+        let mut config = Config::default();
+        let recipe: crate::config::Recipe = toml::from_str(
+            r#"
+name = "Next.js"
+description = "Next.js TS"
+"#,
+        ).unwrap();
+        config.recipes.insert("next-ts".to_string(), recipe);
+
+        let err = unknown_recipe_error("nxt-ts", &config);
+        assert!(err.contains("Unknown recipe 'nxt-ts'"));
+        assert!(err.contains("Did you mean?"), "Error must contain 'Did you mean?': got {err}");
+        assert!(err.contains("next-ts"), "Error must suggest 'next-ts': got {err}");
+    }
+
+    #[test]
+    fn test_suggest_unrecognized_subcommand() {
+        let mut config = Config::default();
+        let mut cmds = std::collections::BTreeMap::new();
+        cmds.insert(
+            "ls".to_string(),
+            crate::config::Command {
+                command: "bunx list".to_string(),
+                description: None,
+                platform: None,
+                aliases: vec![],
+            },
+        );
+        config.aliases.insert(":skills".to_string(), cmds);
+
+        let suggestion = suggest_unrecognized_subcommand("skill", &config);
+        assert_eq!(suggestion, Some("skills".to_string()), "Must suggest 'skills' for 'skill'");
     }
 }
