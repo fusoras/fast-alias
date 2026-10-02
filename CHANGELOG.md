@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Alias environment variable injection (`env`, `env_force`, `_env`, `_env_force`): declare custom environment variables scoped to aliases or namespaces directly in TOML. Supports fallback mode (`env`, `_env` applied only if unset in system) and forced mode (`env_force`, `_env_force` overriding terminal environment). Values dynamically expand tildes (`~`), existing variables (`$VAR`, `${VAR}`), and fallback syntax (`${VAR:-default}`).
+- Bash-style export syntax for alias environments: supply environment variables as strings using standard Bash syntax (`env_force = 'export MODEL="qwen.gguf" && export THREADS="8"'`), with automatic parsing of assignments separated by `&&`, `;`, newlines, or spaces.
+- Static template variables (`_vars` and `[vars]`): declare reusable template placeholders in section tables (`_vars`) or at root (`[vars]`) substituted automatically via `{{KEY}}` across `command`, `description`, `env`, and `env_force`, with recursive/transitive resolution.
+- Git-style typo suggestions ("Did you mean?"): suggest closest valid matches using Jaro-Winkler distance on typo'd top-level subcommands, namespaced subcommands, and recipe names.
+- Dedicated environment variables guide: added `docs/environment.md` detailing fallback vs. force resolution modes, scopes, priority hierarchy, and real-world examples.
 - Namespaced command aliases (`[aliases.":<namespace>"]`): group commands under isolated `:`-prefixed namespace sections called with multi-word syntax (`fa <namespace> <command>` or `fa :<namespace> <command>`). Invoking `fa <namespace>` directly executes the root command if one with the same name exists (`skills = { ... }`), or prints the namespace's available subcommands and usage help if not. Commands inside a namespace are strictly isolated and never collide with global root aliases.
 - Git-style `[alias]` in `~/.config/fa/config.toml`: configure custom native command shortcuts (`rn = "--recipe new"`, `st = "--list"`) and external shell commands prefixed with `!` (`ac = "!git add -A && git commit -m"`).
 - Clean minimal recipe scaffolds & alias preset: `fa --recipe new <name>` now generates an ultra-clean 8-line scaffold by default; preserved `standard` and `pack` templates and added the `alias` preset (`fa -r new <name> alias`) for fast alias catalog scaffolding.
@@ -25,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Resilient recipe editing and diagnostics: `fa -r edit` and `fa -r validate` now continue gracefully when config files have syntax or parse errors instead of aborting before opening the editor; added support for `fa -r edit recipes` to edit primary config, and raw text searching for malformed files.
 - CLI help column alignment: dynamically calculates maximum command name width in `format_help_with_inline_aliases` with guaranteed 2-space padding, fixing an issue where command flags and descriptions were rendered without spacing.
 - CLI help: `fa <command> --help` / `fa help <command>` now render that command's own help instead of always falling back to the top-level help (`render_cli_help` preserves subcommand context, e.g. `fa recipe --help`, `fa help recipe new`); top-level help keeps inline aliases.
 
