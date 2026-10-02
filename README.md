@@ -25,14 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.
 ### Quick CLI Overview
 
 > [!TIP]
-> **Getting Help for Any Command**:
-> You can inspect usage and flags for any command or subcommand at any time by appending `--help` or `-h` (or using `fa help <command>`):
-> ```bash
-> fa --list --help          # or: fa -l -h
-> fa --new --help           # or: fa -n -h
-> fa --recipe --help        # or: fa -r -h
-> fa --template add --help  # or: fa -t add -h
-> ```
+> Append `--help` or `-h` to any command (e.g. `fa --new -h`) to inspect its usage and flags.
 
 | Command (Long) | Short | Description | Notes & Flags |
 |---|---|---|---|
@@ -48,25 +41,34 @@ curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.
 | `fa --version` | `fa -v` | Displays version and checks for updates in background | Cached update notifications |
 | `fa --help` | `fa -h` | Displays CLI help | — |
 
-> [!NOTE]
-> **Command Style**: In documentation and examples, `fa` uses the explicit long form (`fa --new`, `fa --list`, etc.) for teaching clarity. In your daily shell workflow, use the ultra-fast short flags (`fa -n`, `fa -l`, `fa -se`, `fa -sh`, `fa -r`, `fa -t`, `fa -a`). Native commands always use `--` or `-`, leaving all un-prefixed words exclusively available for your own custom aliases without naming collisions.
-
 ---
 
 # Configuring Your Own Aliases & Recipes
 
 `fa` is a **recipe player**: everything lives in declarative TOML files in your personal config directory, so adding a recipe or command alias is config only.
 
-## Where the configuration lives
+Create a new config file directly from the CLI:
 
-`fa` reads your catalog exclusively from `~/.config/fa/`:
+```bash
+fa --recipe new example alias   # or: fa -r new example alias
+```
 
-1. `~/.config/fa/recipes.toml` — your primary catalog (works from anywhere)
-2. Modular files: `~/.config/fa/recipes.d/*.toml` (merged alphabetically)
+Example alias declaration:
 
-Template files referenced as `{ from = "templates/<path>" }` are resolved from `~/.config/fa/templates/<path>` at runtime.
+```toml
+[aliases."example"]
+hello = { command = "echo 'Hello from fast-alias!'", description = "Say hello" }
+```
 
-On first run (no `~/.config/fa/` yet) `fa` creates it with a small example configuration (an `example` recipe and a `hello` alias). Delete it and, with no other entries, the lists appear empty.
+```bash
+fa -a hello                   # runs: echo 'Hello from fast-alias!'
+```
+
+> [!NOTE] Where configuration files live
+> - **Modular files**: `fa --recipe new <name>` creates `~/.config/fa/recipes.d/<name>.toml` and opens it in your `$EDITOR`.
+> - **Primary catalog**: `~/.config/fa/recipes.toml` (auto-provisioned on first run with sample recipes and aliases).
+> - **Templates directory**: Template files referenced as `{ from = "templates/<path>" }` resolve from `~/.config/fa/templates/<path>`.
+> - **Automatic merge**: All `.toml` files under `~/.config/fa/recipes.d/` merge alphabetically with `recipes.toml`.
 
 > [!WARNING]
 > Commands in recipes execute arbitrary shell on your machine. `fa` asks for a one-time `[TRUST]` confirmation before running recipe steps or command aliases, and remembers it per config file. Only define commands you trust.
