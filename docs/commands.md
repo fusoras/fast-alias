@@ -1,6 +1,6 @@
 # CLI Reference — fa
 
-`fa` provides a simple, safety-first command-line interface to scaffold projects, apply tooling, and manage recipe catalogs across **Debian** and **Termux**.
+`fa` provides a simple, safety-first command-line interface to scaffold projects, apply tooling, and manage recipe catalogs.
 
 ## Overview of Commands
 
@@ -17,8 +17,6 @@
 | `fa --self-uninstall` | — | Remove `fa` binary, state, and config | `-y, --yes`, `-n, --no`, `-d, --dry-run` |
 | `fa --version` | `fa -v` | Display version and check for updates | — |
 | `fa --help` | `fa -h` | Display CLI help | — |
-
-> **Style note:** Examples below use the long form (`fa --new`, `fa --list`) for educational clarity. For faster terminal typing, use short flags (`fa -n`, `fa -l`, `fa -se`, `fa -sh`, `fa -r`, `fa -t`, `fa -a`). Native commands always start with `--` or `-`, reserving all un-prefixed words exclusively for user aliases to eliminate name collisions.
 
 ---
 
@@ -139,6 +137,9 @@ coder = { command = "llama-cli -m $MODEL_PATH", env_force = {
 } }
 ```
 
+> [!TIP]
+> For full details on environment variable injection and Bash syntax in TOML, see [Syntax Options](environment.md#4-syntax-options).
+
 ### 5. `fa --template add <recipe> <path>...`
 Copies files or directories recursively into the template directory of a recipe (`~/.config/fa/templates/<recipe>/`, honoring `template_base` or `templates_dir` if defined).
 
@@ -171,31 +172,7 @@ fa --recipe rm my-app -y               # Remove recipe TOML file without interac
 ### Dependency Preflight
 Before running any recipe step or alias command, `fa` inspects the shell command and verifies all required binaries exist on `PATH`. If a tool is missing, execution halts immediately with a clear installation hint.
 
-### Git-Style Aliases (`~/.config/fa/config.toml`)
-Configure custom command aliases directly under `[alias]` in `~/.config/fa/config.toml`. Supports native command shortcuts as well as external shell commands prefixed with `!`:
-
-```toml
-[alias]
-# Native command shortcuts:
-n  = "--new"
-l  = "--list"
-r  = "--recipe"
-rn = "--recipe new"
-rv = "--recipe validate"
-re = "--recipe edit"
-rm = "--recipe rm"
-
-# External shell commands (prefixed with '!'):
-b  = "!git branch"
-s  = "!git switch"
-st = "!git status"
-ac = "!git add -A && git commit -m"
-```
-
-Invoking `fa rn my-app` expands to `fa --recipe new my-app`. Invoking `fa ac "feat: init"` executes the shell command with appended arguments.
-
-### Version & Background Update Check
-`fa --version` prints the active version immediately. It reads cached release data from `~/.local/state/fa/state.toml` and displays an update hint if a newer release exists. It spawns a non-blocking background check so the CLI never hangs on network requests.
+For git-style aliases configured in `~/.config/fa/config.toml`, see [Git-Style Aliases](config.md#git-style-aliases-configfaconfigtoml).
 
 ### `fa --self-update`
 Downloads and replaces the current binary with the latest release from GitHub Releases.
@@ -214,17 +191,3 @@ fa --self-uninstall --yes      # Non-interactive, removes binary and config/stat
 fa --self-uninstall --no       # Removes binary only, preserves config/state
 fa --self-uninstall --dry-run  # Preview paths targeted for deletion
 ```
-
-### Bootstrap Installation Script
-Installs `fa` on a fresh machine (Debian or Termux) without requiring Rust or Cargo:
-
-```bash
-curl -sSL https://raw.githubusercontent.com/<user>/fast-alias/develop/install.sh | sh
-```
-
-### Environment Variables
-- `FAST_ALIAS_REPO`: Override target GitHub repository (`owner/repo`) for updates.
-- `GITHUB_TOKEN`: GitHub personal access token used to avoid API rate limits when checking releases.
-
-> [!TIP]
-> To inject environment variables into user commands and aliases (`env`, `env_force`, `_env`, `_env_force`) and use Bash syntax in TOML, consult the dedicated guide [docs/environment.md](environment.md).

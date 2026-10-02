@@ -267,7 +267,7 @@ down = { command = "docker compose down", description = "Stop containers" }
 Aliases and namespaces can declare custom environment variables injected directly into the execution subshell with fallback (`env`, `_env`) and forced (`env_force`, `_env_force`) modes, supporting Bash-style export syntax (`export KEY="val"`).
 
 > [!NOTE]
-> For the comprehensive guide covering priority hierarchies, Bash export string syntax, and dynamic variable expansion, consult the dedicated guide [docs/environment.md](environment.md).
+> For the comprehensive guide covering priority hierarchies, Bash export string syntax, and dynamic variable expansion, consult the dedicated [Environment Variables Guide](environment.md).
 
 ---
 
@@ -276,6 +276,6 @@ Aliases and namespaces can declare custom environment variables injected directl
 To eliminate repetition across aliases, declare static variables at the file level (`[vars]`) or namespace level (`_vars`). Fast-alias substitutes `{{KEY}}` placeholders across `command`, `description`, `env`, and `env_force` with transitive expansion.
 
 > [!NOTE]
-> For the complete guide on template variables, scope hierarchy, nested substitutions, and TOML syntax rules, consult the dedicated guide [docs/variables.md](variables.md).
+> For the complete guide on template variables, scope hierarchy, nested substitutions, and TOML syntax rules, consult the dedicated [Static Template Variables Guide](variables.md).
 
 

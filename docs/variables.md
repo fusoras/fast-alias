@@ -1,9 +1,5 @@
 # Static Template Variables Guide (`_vars` and `[vars]`)
 
-Fast-alias (`fa`) provides static template variables to eliminate repetition across alias definitions. Instead of copying and pasting long commands, flags, or descriptions across multiple aliases, define them once as template variables and reference them using `{{KEY}}` placeholders.
-
----
-
 ## 1. Core Concept: What are Template Variables?
 
 Template variables are **static string substitutions** processed at configuration load time:
@@ -28,11 +24,11 @@ Declared within a specific namespace section (`[aliases.":<namespace>"]`). These
 # Single-line inline table:
 _vars = {
   SD = "sd-cli --steps 25 --cfg-scale 7.0 -m $AI_IMAGE_MODEL",
-  SD_DESC = "Generar imagen con SD"
+  SD_DESC = "Generate image with SD"
 }
 
 create-img-anima = {
-  description = "{{SD_DESC}} estilo anime: <prompt> <output>",
+  description = "{{SD_DESC}} anime style: <prompt> <output>",
   command = "{{SD}}",
   env_force = 'export AI_IMAGE_MODEL="$AI_MODELS_DIR/vision/anima-aesthetic-v3.0.safetensors"'
 }
@@ -43,7 +39,7 @@ create-img-anima = {
 > ```toml
 > [aliases.":ai"._vars]
 > SD = "sd-cli --steps 25 --cfg-scale 7.0 -m $AI_IMAGE_MODEL"
-> SD_DESC = "Generar imagen con SD"
+> SD_DESC = "Generate image with SD"
 > ```
 
 ### B. File Level (`[vars]`)
@@ -110,17 +106,17 @@ The most powerful pattern combines `_vars` for common command templates with `en
 [aliases.":ai"]
 _vars = {
   SD = "sd-cli --steps 25 --cfg-scale 7.0 -m $AI_IMAGE_MODEL",
-  SD_DESC = "Generar imagen con SD"
+  SD_DESC = "Generate image with SD"
 }
 
 create-img-anima = {
-  description = "{{SD_DESC}} estilo anime: <prompt> <output>",
+  description = "{{SD_DESC}} anime style: <prompt> <output>",
   command = "{{SD}}",
   env_force = 'export AI_IMAGE_MODEL="$AI_MODELS_DIR/vision/anima-aesthetic-v3.0.safetensors"'
 }
 
 create-img-standard = {
-  description = "{{SD_DESC}} estandar: <prompt> <output>",
+  description = "{{SD_DESC}} standard: <prompt> <output>",
   command = "{{SD}}",
   env_force = 'export AI_IMAGE_MODEL="$AI_MODELS_DIR/vision/qwen-image-2.1/qwen-image-2.1-Q5_K_M.gguf"'
 }
@@ -128,7 +124,7 @@ create-img-standard = {
 
 ---
 
-## 6. Related Documentation
+## Related Documentation
 - For runtime environment variables (`env`, `env_force`, `_env`, `_env_force`) and Bash export syntax, see [docs/environment.md](environment.md).
 - For complete alias catalogs and recipes, see [docs/recipes.md](recipes.md).
 - For general CLI commands and flags, see [docs/commands.md](commands.md).
