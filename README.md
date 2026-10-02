@@ -75,38 +75,37 @@ fa -a hello                   # runs: echo 'Hello from fast-alias!'
 
 ## Declaring a command alias
 
-Beyond scaffolding, `fa` is a section-grouped alternative to Bash aliases. General-purpose commands live in **top-level `[aliases]` sections — one per section** (e.g. `git`, `system`, `deploy`), completely independent from scaffold recipes. Run them from anywhere with `fa alias <alias>`.
+Beyond scaffolding, `fa` is a section-grouped alternative to Bash aliases. Commands live in **`[aliases]` sections** (e.g. `git`, `system`, or namespaced `[aliases.":skills"]`), completely independent from scaffold recipes. Run them from anywhere with `fa alias <alias>` or direct syntax `fa <namespace> <command>`.
 
-Each alias has:
+Each alias supports:
 
-- **`command`** (required): the shell command to run.
+- **`command`** (required): shell command to run.
 - **`description`** (optional): shown in `fa list`.
 - **`aliases`** (optional): short names to invoke it with.
+- **`env` / `env_force`** (optional): fallback or forced environment variables.
 - **`platform`** (optional): restrict to `debian` or `termux`.
 
 ### Example
 
-Aliases are grouped by section and can live together in `~/.config/fa/recipes.toml` or split across `recipes.d/*.toml`:
+Aliases can live in `~/.config/fa/recipes.toml` or split across `recipes.d/*.toml`:
 
 ```toml
-[aliases.deploy]
-deploy = { command = "node --run build && rsync -av dist/ server:/srv/www", description = "Build and deploy", aliases = ["dep"] }
-
 [aliases.git]
 status = { command = "git status", description = "Show repo status" }
 
 [aliases.system]
 free = { command = "free -h", description = "Show available memory" }
+
+# Namespaced command group:
+[aliases.":skills"]
+ls = { command = "bunx tabernaculo list", description = "List skills" }
 ```
 
 ```bash
-fa --alias deploy   # run by canonical name (recommended)
-fa -a dep           # run by alias shorthand (recommended)
-fa deploy           # direct shorthand invocation
+fa --alias status   # run by canonical name (recommended)
+fa skills ls        # run namespaced command directly
+fa free             # direct shorthand invocation
 ```
-
-> [!TIP]
-> **Usage recommendation:** prefer `fa --alias <name>` or `fa -a <name>`. Direct `fa <name>` is quick but a future native command with same name would take precedence.
 
 ### Positional Arguments & Passthrough
 
@@ -183,6 +182,8 @@ pin_versions = true    # Strip ^ and ~ from package.json (default: false)
 ```
 
 ## Docs
-- [Aliases](docs/commands.md) - Command aliases and argument passthrough (see also [Recipes](docs/recipes.md)).
-- [Recipes](docs/recipes.md) - Recipe schema and template conventions.
-- [Commands](docs/commands.md) - CLI reference and subcommands.
+- [Recipes](docs/recipes.md) - Recipe schema, package management, and template conventions.
+- [Commands](docs/commands.md) - CLI reference, subcommands, and Git-style aliases.
+- [Packs](docs/packs.md) - Modular components and pack bundle installation.
+- [Environment Variables](docs/environment.md) - Fallback and forced environment variable injection (`env`, `env_force`).
+- [Template Variables](docs/variables.md) - Static template variables (`_vars`, `[vars]`).
