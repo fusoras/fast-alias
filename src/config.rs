@@ -693,10 +693,19 @@ impl Config {
     }
 
     /// Loads the user configuration from `~/.config/fa/recipes.toml` and
-    /// `~/.config/fa/recipes.d/*.toml`. On first run (no config directory yet)
-    /// it provisions an example configuration so the user always has a starting
-    /// point; deleting it yields an empty catalog (no recipes, no aliases).
+    /// `~/.config/fa/recipes.d/*.toml`. Fails if any configuration error is found.
     pub fn load() -> anyhow::Result<(Self, String)> {
+        let (config, source, errors) = Self::load_lenient()?;
+        if let Some(err) = errors.into_iter().next() {
+            anyhow::bail!("{err}");
+        }
+        Ok((config, source))
+    }
+
+    /// Loads the user configuration leniently: parses valid files, records
+    /// any broken files or validation failures in `errors`, and continues
+    /// loading other modular files.
+    pub fn load_lenient() -> anyhow::Result<(Self, String, Vec<String>)> {
         let user_dir = Self::get_user_config_dir()
             .ok_or_else(|| anyhow::anyhow!("Cannot determine home directory (HOME not set)"))?;
 
@@ -709,32 +718,50 @@ impl Config {
 
         let mut config = Self::default();
         let mut primary_source = String::new();
+        let mut errors = Vec::new();
 
         let xdg_path = user_dir.join("recipes.toml");
         if xdg_path.exists() {
-            let content = fs::read_to_string(&xdg_path)
-                .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", xdg_path.display()))?;
-            config = toml::from_str(&content)
-                .map_err(|e| anyhow::anyhow!("Failed to parse {}: {e}", xdg_path.display()))?;
-            annotate_sources(&mut config, &xdg_path, &content);
-            primary_source = xdg_path.to_string_lossy().to_string();
+            match fs::read_to_string(&xdg_path) {
+                Ok(content) => match toml::from_str(&content) {
+                    Ok(parsed) => {
+                        config = parsed;
+                        annotate_sources(&mut config, &xdg_path, &content);
+                        primary_source = xdg_path.to_string_lossy().to_string();
+                    }
+                    Err(e) => {
+                        errors.push(format!("Failed to parse {}: {e}", xdg_path.display()));
+                    }
+                },
+                Err(e) => {
+                    errors.push(format!("Failed to read {}: {e}", xdg_path.display()));
+                }
+            }
         }
 
         let mut loaded_modular_files = Vec::new();
         let xdg_d = user_dir.join("recipes.d");
         if xdg_d.is_dir() {
-            Self::load_directory_into(&mut config, &xdg_d, &mut loaded_modular_files)?;
+            Self::load_directory_lenient(&mut config, &xdg_d, &mut loaded_modular_files, &mut errors);
         }
 
         let global_config_path = user_dir.join("config.toml");
         if global_config_path.exists() {
-            let content = fs::read_to_string(&global_config_path)
-                .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", global_config_path.display()))?;
-            let global: GlobalConfig = parse_global_config(&content)
-                .map_err(|e| anyhow::anyhow!("Failed to parse {}: {e}", global_config_path.display()))?;
-            config.settings = global;
-            config.sync_config_aliases();
-            annotate_sources(&mut config, &global_config_path, &content);
+            match fs::read_to_string(&global_config_path) {
+                Ok(content) => match parse_global_config(&content) {
+                    Ok(global) => {
+                        config.settings = global;
+                        config.sync_config_aliases();
+                        annotate_sources(&mut config, &global_config_path, &content);
+                    }
+                    Err(e) => {
+                        errors.push(format!("Failed to parse {}: {e}", global_config_path.display()));
+                    }
+                },
+                Err(e) => {
+                    errors.push(format!("Failed to read {}: {e}", global_config_path.display()));
+                }
+            }
         }
 
         let source_summary = if loaded_modular_files.is_empty() {
@@ -747,12 +774,20 @@ impl Config {
             )
         };
 
-        config.validate_template_paths()?;
-        config.validate_variables()?;
-        config.validate_steps()?;
-        config.validate_packs()?;
+        if let Err(e) = config.validate_template_paths() {
+            errors.push(e.to_string());
+        }
+        if let Err(e) = config.validate_variables() {
+            errors.push(e.to_string());
+        }
+        if let Err(e) = config.validate_steps() {
+            errors.push(e.to_string());
+        }
+        if let Err(e) = config.validate_packs() {
+            errors.push(e.to_string());
+        }
 
-        Ok((config, source_summary))
+        Ok((config, source_summary, errors))
     }
 
     /// Creates `~/.config/fa/` and writes the example configuration into it.
@@ -784,14 +819,15 @@ impl Config {
         Ok(())
     }
 
-    fn load_directory_into(
+    fn load_directory_lenient(
         config: &mut Self,
         dir: &Path,
         loaded_files: &mut Vec<PathBuf>,
-    ) -> anyhow::Result<()> {
+        errors: &mut Vec<String>,
+    ) {
         let entries = match fs::read_dir(dir) {
             Ok(e) => e,
-            Err(_) => return Ok(()),
+            Err(_) => return,
         };
 
         let mut paths: Vec<PathBuf> = Vec::new();
@@ -805,10 +841,20 @@ impl Config {
         paths.sort();
 
         for path in paths {
-            let content = fs::read_to_string(&path)
-                .map_err(|e| anyhow::anyhow!("Failed to read modular config {}: {e}", path.display()))?;
-            let mut sub_config: Self = toml::from_str(&content)
-                .map_err(|e| anyhow::anyhow!("Failed to parse modular config {}: {e}", path.display()))?;
+            let content = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(e) => {
+                    errors.push(format!("Failed to read modular config {}: {e}", path.display()));
+                    continue;
+                }
+            };
+            let mut sub_config: Self = match toml::from_str(&content) {
+                Ok(sc) => sc,
+                Err(e) => {
+                    errors.push(format!("Failed to parse modular config {}: {e}", path.display()));
+                    continue;
+                }
+            };
             annotate_sources(&mut sub_config, &path, &content);
 
             for (recipe_name, recipe) in sub_config.recipes {
@@ -841,8 +887,6 @@ impl Config {
 
             loaded_files.push(path);
         }
-
-        Ok(())
     }
 
     /// Normalizes a `from`/`template` spec to a path relative to
@@ -2489,6 +2533,40 @@ create-img-anima = { description = "{{SD_DESCRIPTION}} estilo anime: <prompt> <o
             Some("$AI_MODELS_DIR/vision/anima.safetensors"),
             "env_force bash string must be parsed into env_force map"
         );
+    }
+
+    #[test]
+    fn test_load_lenient_captures_errors_and_loads_valid_recipes() {
+        let temp = std::env::temp_dir().join(format!("fa-test-lenient-{}", std::process::id()));
+        let recipes_d = temp.join("recipes.d");
+        let _ = fs::create_dir_all(&recipes_d);
+
+        let valid_path = recipes_d.join("valid.toml");
+        fs::write(
+            &valid_path,
+            "[recipes.good]\nname = \"Good Recipe\"\ndescription = \"Testing good\"\n",
+        )
+        .unwrap();
+
+        let broken_path = recipes_d.join("broken.toml");
+        fs::write(
+            &broken_path,
+            "[aliases.ai]\n_SD = \"plain string not struct\"\n",
+        )
+        .unwrap();
+
+        let mut config = Config::default();
+        let mut loaded = Vec::new();
+        let mut errors = Vec::new();
+
+        Config::load_directory_lenient(&mut config, &recipes_d, &mut loaded, &mut errors);
+
+        assert_eq!(errors.len(), 1, "Expected exactly 1 error for broken.toml");
+        assert!(errors[0].contains("broken.toml"));
+        assert!(config.recipes.contains_key("good"), "Valid recipe 'good' should be loaded despite broken.toml");
+        assert_eq!(loaded.len(), 1);
+
+        let _ = fs::remove_dir_all(&temp);
     }
 }
 

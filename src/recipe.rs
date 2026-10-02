@@ -576,8 +576,19 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
         }
     }
 
-    if let Ok(cfg) = toml::from_str::<Config>(&content) {
-        for (recipe_name, recipe) in &cfg.recipes {
+    let cfg: Config = match toml::from_str(&content) {
+        Ok(c) => c,
+        Err(e) => {
+            issues.push(ValidationIssue {
+                severity: IssueSeverity::Error,
+                message: format!("Failed to parse {}: {e}", file_path.display()),
+                suggestion: None,
+            });
+            return;
+        }
+    };
+
+    for (recipe_name, recipe) in &cfg.recipes {
             let base_dir = config_dir.join("templates");
             let recipe_templates_dir: Option<PathBuf> = recipe.templates_dir.as_deref().map(|td| {
                 if td.starts_with("~/") {
@@ -666,7 +677,6 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
                 });
             }
         }
-    }
 }
 
 pub fn recipe_diagnostics(
@@ -713,6 +723,30 @@ pub fn recipe_diagnostics(
 
     for file_path in files_to_check {
         validate_toml_file(config_dir, &file_path, &mut issues);
+    }
+
+    if name.is_none() {
+        let global_config_path = config_dir.join("config.toml");
+        if global_config_path.is_file() {
+            match fs::read_to_string(&global_config_path) {
+                Ok(content) => {
+                    if let Err(e) = crate::config::parse_global_config(&content) {
+                        issues.push(ValidationIssue {
+                            severity: IssueSeverity::Error,
+                            message: format!("Failed to parse {}: {e}", global_config_path.display()),
+                            suggestion: None,
+                        });
+                    }
+                }
+                Err(e) => {
+                    issues.push(ValidationIssue {
+                        severity: IssueSeverity::Error,
+                        message: format!("Failed to read {}: {e}", global_config_path.display()),
+                        suggestion: None,
+                    });
+                }
+            }
+        }
     }
 
     let has_errors = issues.iter().any(|i| i.severity == IssueSeverity::Error);
@@ -998,6 +1032,36 @@ mod tests {
         );
         println!("   ✓ Duplicates and broken TOML surfaced as issues.\n");
     }
+
+    #[test]
+    fn recipe_validate_should_detect_invalid_type_schema_in_modular_toml() {
+        println!("\n🔍 [TEST] recipe validate — invalid type in modular toml");
+        let dir = temp_dir("invalid-type");
+        fs::write(
+            dir.join("recipes.d/ai.toml"),
+            r#"
+[aliases.ai]
+_SD = """
+sd-cli -m model
+"""
+"#,
+        )
+        .unwrap();
+
+        let (issues, has_errors) = recipe_diagnostics(&dir, None).unwrap();
+        assert!(
+            has_errors,
+            "expected schema/deserialization error in ai.toml to be detected as error, but has_errors was false"
+        );
+        assert!(!issues.is_empty(), "expected issues to contain parse error");
+        let joined = issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        assert!(
+            joined.contains("ai.toml"),
+            "issue must mention ai.toml, got: {joined}"
+        );
+        println!("   ✓ Invalid type in modular toml surfaced as error.\n");
+    }
+
 
     #[test]
     fn recipe_validate_should_report_ok_when_parseable_and_unique() {

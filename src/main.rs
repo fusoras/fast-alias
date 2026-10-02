@@ -403,6 +403,40 @@ pub(crate) fn prompt_yes_no(question: &str, default: bool) -> bool {
         _ => default,
     }
 }
+fn is_validation_cmd(args: &[String]) -> bool {
+    if args.len() < 2 {
+        return false;
+    }
+    match args[1].as_str() {
+        "-rv" | "rv" => true,
+        "--recipe" | "-r" | "recipe" => {
+            args.len() >= 3 && matches!(args[2].as_str(), "validate" | "-v" | "v")
+        }
+        _ => false,
+    }
+}
+
+fn is_help_or_version_cmd(args: &[String]) -> bool {
+    if args.len() < 2 {
+        return true;
+    }
+    args.iter().any(|a| matches!(a.as_str(), "--help" | "-h" | "help" | "--version" | "-v"))
+}
+
+fn is_recipe_edit_cmd(args: &[String]) -> bool {
+    if args.len() < 2 {
+        return false;
+    }
+    match args[1].as_str() {
+        "-re" | "re" => true,
+        "--recipe" | "-r" | "recipe" => {
+            args.len() >= 3 && matches!(args[2].as_str(), "edit" | "-e" | "e")
+        }
+        _ => false,
+    }
+}
+
+#[allow(dead_code)]
 fn is_recipe_or_help_cmd(args: &[String]) -> bool {
     if args.len() < 2 {
         return false;
@@ -441,29 +475,25 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // `fa recipe` reads its config files itself, so a broken TOML must not
-    // abort the command (validate/edit need to report or open the file).
-    let is_recipe_cmd = is_recipe_or_help_cmd(&args);
-    let config = match Config::load() {
-        Ok((cfg, _source)) => cfg,
-        Err(err) if is_recipe_cmd => {
-            eprintln!(
-                "warning: failed to load config ({err}); continuing for recipe command"
-            );
-            let mut fallback = Config::default();
-            if let Some(user_dir) = Config::get_user_config_dir() {
-                let global_config_path = user_dir.join("config.toml");
-                if let Ok(content) = std::fs::read_to_string(&global_config_path)
-                    && let Ok(global) = crate::config::parse_global_config(&content)
-                {
-                    fallback.settings = global;
-                    fallback.sync_config_aliases();
-                }
-            }
-            fallback
+    let is_validate = is_validation_cmd(&args);
+    let is_help_or_version = is_help_or_version_cmd(&args);
+    let is_edit = is_recipe_edit_cmd(&args);
+
+    let (config, errors) = match Config::load_lenient() {
+        Ok((cfg, _source, errs)) => (cfg, errs),
+        Err(err) if is_validate || is_edit || is_help_or_version => {
+            (Config::default(), vec![err.to_string()])
         }
         Err(err) => return Err(err),
     };
+
+    if !is_validate && !is_help_or_version && !is_edit && !errors.is_empty() {
+        let count = errors.len();
+        let word = if count == 1 { "error" } else { "errors" };
+        eprintln!(
+            "{BOLD_YELLOW}warning:{RESET} {count} config {word} ignored (see {WHITE}'fa -r validate'{RESET})"
+        );
+    }
 
     let args = rewrite_args(args, Some(&config));
     let cli = match Cli::try_parse_from(args.clone()) {
@@ -2043,5 +2073,44 @@ description = "Next.js TS"
         assert!(is_recipe_or_help_cmd(&["fa".into(), "-h".into()]));
         assert!(!is_recipe_or_help_cmd(&["fa".into(), "ai".into(), "code".into()]));
         assert!(!is_recipe_or_help_cmd(&["fa".into(), "--alias".into(), "code".into()]));
+    }
+
+    #[test]
+    fn test_is_validation_cmd() {
+        assert!(is_validation_cmd(&["fa".into(), "-rv".into()]));
+        assert!(is_validation_cmd(&["fa".into(), "rv".into()]));
+        assert!(is_validation_cmd(&["fa".into(), "-r".into(), "validate".into()]));
+        assert!(is_validation_cmd(&["fa".into(), "--recipe".into(), "validate".into()]));
+        assert!(is_validation_cmd(&["fa".into(), "recipe".into(), "validate".into()]));
+        assert!(is_validation_cmd(&["fa".into(), "-r".into(), "-v".into()]));
+        assert!(is_validation_cmd(&["fa".into(), "-rv".into(), "ai".into()]));
+        assert!(!is_validation_cmd(&["fa".into(), "-r".into(), "new".into(), "example".into()]));
+        assert!(!is_validation_cmd(&["fa".into(), "-l".into()]));
+        assert!(!is_validation_cmd(&["fa".into(), "new".into(), "test".into()]));
+    }
+
+    #[test]
+    fn test_is_recipe_edit_cmd() {
+        assert!(is_recipe_edit_cmd(&["fa".into(), "-re".into()]));
+        assert!(is_recipe_edit_cmd(&["fa".into(), "re".into()]));
+        assert!(is_recipe_edit_cmd(&["fa".into(), "-r".into(), "edit".into()]));
+        assert!(is_recipe_edit_cmd(&["fa".into(), "--recipe".into(), "edit".into()]));
+        assert!(is_recipe_edit_cmd(&["fa".into(), "recipe".into(), "edit".into()]));
+        assert!(is_recipe_edit_cmd(&["fa".into(), "-re".into(), "ai".into()]));
+        assert!(!is_recipe_edit_cmd(&["fa".into(), "-r".into(), "new".into(), "example".into()]));
+        assert!(!is_recipe_edit_cmd(&["fa".into(), "-rv".into()]));
+    }
+
+    #[test]
+    fn test_is_help_or_version_cmd() {
+        assert!(is_help_or_version_cmd(&["fa".into()]));
+        assert!(is_help_or_version_cmd(&["fa".into(), "--help".into()]));
+        assert!(is_help_or_version_cmd(&["fa".into(), "-h".into()]));
+        assert!(is_help_or_version_cmd(&["fa".into(), "help".into()]));
+        assert!(is_help_or_version_cmd(&["fa".into(), "--version".into()]));
+        assert!(is_help_or_version_cmd(&["fa".into(), "-v".into()]));
+        assert!(is_help_or_version_cmd(&["fa".into(), "-r".into(), "new".into(), "--help".into()]));
+        assert!(!is_help_or_version_cmd(&["fa".into(), "-r".into(), "new".into(), "example".into()]));
+        assert!(!is_help_or_version_cmd(&["fa".into(), "-l".into()]));
     }
 }

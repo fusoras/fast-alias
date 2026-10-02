@@ -28,7 +28,7 @@ secrets/
 *.old
 *.orig
 *.rej
-*.tmp
+*.tmp.*
 *.backup
 *~
 *.swp
