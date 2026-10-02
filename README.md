@@ -183,7 +183,7 @@ pin_versions = true    # Strip ^ and ~ from package.json (default: false)
 
 ## Docs
 - [Recipes](docs/recipes.md) - Recipe schema, package management, and template conventions.
-- [Commands](docs/commands.md) - CLI reference, subcommands, and Git-style aliases.
+- [Commands](docs/commands.md) - CLI reference and subcommands; see [Configuration](docs/config.md) for git-style aliases.
 - [Packs](docs/packs.md) - Modular components and pack bundle installation.
 - [Environment Variables](docs/environment.md) - Fallback and forced environment variable injection (`env`, `env_force`).
 - [Template Variables](docs/variables.md) - Static template variables (`_vars`, `[vars]`).

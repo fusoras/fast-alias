@@ -219,27 +219,9 @@ To include a new or existing component in any pack, simply add its folder name t
 
 ### 2.3 Running `fa new` Without Arguments (Global Configuration)
 
-You can configure what happens when you run `fa new <recipe>` without specifying a pack or component in `~/.config/fa/config.toml`:
+The `default_behavior` setting in `~/.config/fa/config.toml` controls what `fa new <recipe>` does without a pack or component: `list` (default), `default`, or `error`.
 
-```toml
-# ~/.config/fa/config.toml
-[packs]
-# Available modes: "list" (default), "default", "error"
-default_behavior = "list"
-```
-
-1. **`default_behavior = "list"` (Default mode)**:
-   Running `fa new wc-lib` displays a formatted list of all available packs in `packs_dir` and components in `templates_dir`:
-   ```bash
-   fa new wc-lib
-   ```
-   *Note: If a recipe specifies `default_pack` while `default_behavior` is set to `list` or `error`, `fa` reports a validation error prompting you to set `default_behavior = "default"` in `~/.config/fa/config.toml`.*
-
-2. **`default_behavior = "default"`**:
-   Automatically runs the pack specified by `default_pack = "<pack-name>"` in your recipe.
-
-3. **`default_behavior = "error"`**:
-   Immediately halts with an error requiring an explicit pack or component argument.
+For full configuration details, see [Global Pack Configuration](config.md#running-fa-new-without-arguments-global-pack-configuration).
 
 ### 2.4 Installing Components into Your Project
 

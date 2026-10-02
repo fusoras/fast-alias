@@ -36,3 +36,7 @@ Templates are read from disk on every invocation, so editing a template file tak
 
 - A one-time `[TRUST]` confirmation is requested before executing recipe `[[steps]]`/`create` commands (`fa new`) and command aliases (`fa alias`), since these run arbitrary shell. The decision is persisted by config path in `~/.local/state/fa/state.toml`; the same path is never re-prompted. The provisioned example config is trusted automatically.
 - Never store secrets in `~/.config/fa/templates/` that you do not want on disk.
+
+## 5. Version & Background Update Check
+
+`fa --version` prints the active version immediately. It reads cached release data from `~/.local/state/fa/state.toml` and displays an update hint if a newer release exists. It spawns a non-blocking background check so the CLI never hangs on network requests.
