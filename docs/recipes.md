@@ -262,3 +262,94 @@ down = { command = "docker compose down", description = "Stop containers" }
   - If no command matches the namespace name (e.g. `fa docker`), it automatically displays the namespace help and available subcommands.
 - **Strict Isolation**: Subcommands like `ls` or `up` are unreachable via `fa ls` or `fa up`, ensuring complete independence.
 
+### Environment Variable Injection (`env`, `env_force`, `_env`, `_env_force`)
+
+> [!NOTE]
+> For a comprehensive, dedicated guide covering environment variables, Bash syntax, priority hierarchies, and `$PATH` resolution, see [docs/environment.md](environment.md).
+
+Aliases and namespaces can declare custom environment variables injected directly into the execution subshell. This eliminates wrapper bash scripts and keeps all configuration declarative in TOML:
+
+```toml
+[aliases.":ai"]
+# Namespace-level defaults:
+_env = { CONTEXT_SIZE = "4096" }                      # Fallback (respected only if unset in system)
+_env_force = { LLM_BACKEND = "llama-cpp" }            # Force (always overrides system environment)
+
+# Command-level variables:
+coder = { command = "llama-cli -m $MODEL_PATH", env_force = {
+  MODEL_PATH = "/models/qwen-2.5-coder-7b.gguf",
+  PATH = "$HOME/.local/ai/bin:$PATH"
+}, description = "Run code model" }
+
+chat = { command = "llama-cli -m $MODEL_PATH", env_force = {
+  MODEL_PATH = "/models/llama-3.2-3b.gguf"
+}, env = {
+  TEMPERATURE = "0.7"
+}, description = "Run chat model" }
+```
+
+#### Resolution Modes:
+1. **Fallback (`_env` / `env`)**: Injected **only if** the variable is not currently set in your terminal environment. If you run `TEMPERATURE=0.2 fa ai chat`, your terminal value (`0.2`) takes precedence over the TOML value (`0.7`).
+2. **Force / Override (`_env_force` / `env_force`)**: **Always overrides** the system environment. Even if your `.zshrc` exports `MODEL_PATH=/default.gguf`, the alias executes with the exact model declared in `env_force`.
+
+#### Resolution Hierarchy (Highest to Lowest Priority):
+1. Command force (`cmd.env_force`)
+2. Namespace force (`_env_force`)
+3. User terminal / system environment (`std::env::vars()`)
+4. Command fallback (`cmd.env`)
+5. Namespace fallback (`_env`)
+
+#### Variable Expansion:
+Variable values automatically expand references to existing environment variables:
+- **Tilde**: `~/...` expands to `$HOME/...`.
+- **Variables**: `$VAR` and `${VAR}` expand using the current system environment (e.g. `PATH = "$HOME/.local/bin:$PATH"` prepends to your real `$PATH`).
+- **Defaults**: `${VAR:-default}` uses `default` when `VAR` is empty or unset.
+
+#### Bash-Style String Syntax:
+In addition to TOML inline tables, `env` and `env_force` (and `_env` / `_env_force`) accept bash-style export strings directly:
+```toml
+# Single variable export:
+env_force = 'export AI_IMAGE_MODEL="$AI_MODELS_DIR/vision/anima-aesthetic-v1.0.safetensors"'
+
+# Multiple variables joined by &&, ;, or spaces:
+env_force = 'export MODEL="qwen.gguf" && export THREADS="8"'
+```
+
+---
+
+### Static Template Variables (`_vars` and `[vars]`)
+
+To avoid repeating long command strings, descriptions, or common prefixes across aliases, declare static variables using `[vars]` at the file level or `_vars` at the namespace level. Fast-alias automatically substitutes `{{KEY}}` references inside `command`, `description`, `env`, and `env_force`:
+
+```toml
+# ~/.config/fa/recipes.d/ai.toml
+
+# File-wide global variables
+[vars]
+GLOBAL_BIN = "sd-cli"
+
+[aliases.":ai"]
+# Namespace-level variables (takes precedence over [vars])
+_vars = {
+  SD = "{{GLOBAL_BIN}} --steps 25 --cfg-scale 7.0 -m $AI_IMAGE_MODEL",
+  SD_DESC = "Generar imagen con SD"
+}
+
+create-img-anima = {
+  description = "{{SD_DESC}} estilo anime: <prompt> <output>",
+  command = "{{SD}}",
+  env_force = 'export AI_IMAGE_MODEL="$AI_MODELS_DIR/vision/anima-aesthetic-v3.0.safetensors"'
+}
+
+create-img-standard = {
+  description = "{{SD_DESC}} estandar: <prompt> <output>",
+  command = "{{SD}}",
+  env_force = 'export AI_IMAGE_MODEL="$AI_MODELS_DIR/vision/qwen-image-2.1/qwen-image-2.1-Q5_K_M.gguf"'
+}
+```
+
+- **Scope & Hierarchy**: `_vars` in a namespace overrides `[vars]` declared at the file root.
+- **Transitive Substitution**: Variables can reference other variables (e.g. `{{GLOBAL_BIN}}` inside `{{SD}}`).
+- **Clean Command Line**: Keeps alias definitions declarative and concise without needing bash wrapper scripts.
+
+

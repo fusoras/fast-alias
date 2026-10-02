@@ -29,6 +29,7 @@ For detailed architecture, roadmap, CLI reference, recipe schema, unit testing, 
 - Planning and Roadmap: @.agents/docs/planning.md
 - Recipes and Configuration: @docs/recipes.md
 - CLI Reference & Commands: @docs/commands.md
+- Alias Environment Variables Guide: @docs/environment.md
 - Implementation Notes: @.agents/docs/implementation.md
 - Unit Testing Guide: @.agents/docs/testing.md
 - Versioning & Release Guide: @.agents/docs/versioning.md
@@ -39,6 +40,11 @@ For detailed architecture, roadmap, CLI reference, recipe schema, unit testing, 
 - Use concise bullet points for agent rules and documentation.
 - Present user-facing commands using the compiled binary (`fa <command>`) rather than `cargo run --`.
 - **Recipe Player Principle**: The engine must stay "dumb" — all stack/toolchain complexity lives in the TOML recipes, never hardcoded in the binary. No recipe-specific logic in code.
+- **Strict Builtin Command Prefix Rule (`--` and `-`)**:
+  - All native builtin CLI commands in `fa` MUST use the `--` prefix (e.g. `--list`, `--new`, `--search`, `--show`, `--alias`, `--recipe`, `--template`) with single-dash short flags (e.g. `-l`, `-n`, `-se`, `-sh`, `-a`, `-r`, `-t`).
+  - NEVER add unprefixed words or bare subcommands as builtins (e.g. NEVER add `which`, `list`, `new`, `show`, `alias`).
+  - The entire unprefixed namespace is reserved 100% exclusively for user-defined recipes and aliases so they never collide with builtins.
+  - NEVER introduce any command, alias, or feature that contradicts this prefix convention.
 - **Short Commands Principle**: The CLI must stay as short as possible. NEVER add parameters to existing commands — use TOML config toggles instead (e.g. `pin_versions = true` in recipes.toml). Every new flag lengthens the command for all users forever. If a feature can live in config, it must live in config.
 - **Security Governance & Secret Leak Prevention**:
   - NEVER commit API keys, private keys (`id_*`), certificates (`*.key`, `*.pem`), or `.env` files within project directories. Templates and recipes live in `~/.config/fa/` on disk — no config is embedded in the release binary.
@@ -78,3 +84,6 @@ For detailed architecture, roadmap, CLI reference, recipe schema, unit testing, 
   - Tests MUST NEVER block indefinitely or wait for interactive input (e.g. `stdin`, unhandled prompts, infinite polling/loops).
   - Functions with interactive prompts (`prompt_yes_no`) must always be called with non-interactive arguments (`auto_confirm` / `auto_reject`) in tests.
   - If a `cargo test` execution hangs or runs unexpectedly long, the assistant MUST NOT leave it hanging: it must immediately terminate/diagnose the process, fix the root cause (or report it directly to the user), and ensure the suite executes non-interactively to completion.
+- **Documentation Language Standard**:
+  - All documentation (`*.md`, architecture docs, guides, and specifications) MUST always be written in English.
+  - Non-English documentation is permitted ONLY for files that explicitly declare a target language code in their file extension (e.g. `*.es.md` for Spanish).

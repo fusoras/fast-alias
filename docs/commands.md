@@ -60,12 +60,13 @@ fa --list -s                         # or: fa -l -s
 fa --search typescript               # or: fa -se typescript
 ```
 
-### 3. `fa --show <target>`
-Displays detailed recipe configuration (variants, tooling, scaffolded files, and execution steps) or command alias definitions.
+### 3. `fa --show <target>` (or: `fa -sh <target>`)
+Displays detailed recipe configuration (variants, tooling, scaffolded files, and execution steps) or command alias definitions, including exact source file and line traceability (`Defined in: <file> (line <n>)`). Supports recipes, flat aliases, and multi-word namespaced commands (`skills ls`).
 
 ```bash
-fa --show next-ts                    # or: fa -sh next-ts
-fa --show gco                        # or: fa -sh gco
+fa --show next-ts                    # Inspect recipe details and origin file
+fa -sh fpages                        # Inspect alias details and origin file
+fa -sh skills ls                     # Inspect namespaced command origin without quotes
 ```
 
 ### 4. `fa --alias <name> [args...]`
@@ -121,6 +122,21 @@ fa docker help                        # Displays subcommands for the namespace (
 
 # Strict isolation:
 fa ls                                 # Does NOT execute 'skills ls'; stays isolated within its namespace
+```
+
+#### Custom Environment Variables (`env`, `env_force`, `_env`, `_env_force`)
+Aliases and namespaces support environment variables injected into the execution subshell:
+- **`env` / `_env`**: Fallback variables applied only when not present in the system/terminal.
+- **`env_force` / `_env_force`**: Forced variables that always override the system environment.
+- **Variable expansion**: Values expand `$VAR`, `${VAR}`, `${VAR:-default}`, and `~/`.
+
+```toml
+[aliases.":ai"]
+_env_force = { LLM_BACKEND = "llama-cpp" }
+coder = { command = "llama-cli -m $MODEL_PATH", env_force = {
+  MODEL_PATH = "/models/qwen-coder.gguf",
+  PATH = "$HOME/.local/ai/bin:$PATH"
+} }
 ```
 
 ### 5. `fa --template add <recipe> <path>...`
@@ -209,3 +225,6 @@ curl -sSL https://raw.githubusercontent.com/<user>/fast-alias/develop/install.sh
 ### Environment Variables
 - `FAST_ALIAS_REPO`: Override target GitHub repository (`owner/repo`) for updates.
 - `GITHUB_TOKEN`: GitHub personal access token used to avoid API rate limits when checking releases.
+
+> [!TIP]
+> To inject environment variables into user commands and aliases (`env`, `env_force`, `_env`, `_env_force`) and use Bash syntax in TOML, consult the dedicated guide [docs/environment.md](environment.md).

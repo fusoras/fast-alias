@@ -15,38 +15,38 @@ cargo test -- --nocapture
 ## Mandatory Test Failure & Sensitivity Protocol (Red-Before-Green Rule)
 
 > [!IMPORTANT]
-> **NUNCA aceptar un test que pase a la primera sin haberlo visto fallar primero.**
+> **NEVER accept a test that passes on the first try without having seen it fail first.**
 
-Para evitar tests tautológicos, inútiles o falsos positivos (tests que aprueban incluso cuando el código de producción está roto), todo test nuevo o modificado DEBE cumplir estrictamente con el siguiente protocolo:
+To avoid tautological, useless, or false-positive tests (tests that pass even when production code is broken), every new or modified test MUST strictly comply with the following protocol:
 
-1. **Fase 1 — Prueba de Fallo Obligatoria (RED / Mutation State):**
-   - Antes de dar por válido un test, la lógica del código de producción a evaluar debe alterarse deliberadamente (mutación sintáctica, cambio de condición, retorno de valores erróneos o estado incompleto).
-   - Se debe ejecutar `cargo test` y verificar empíricamente que el test **FALLA** con una aserción o pánico explicativo.
-   - Si el test pasa a la primera (`ok`) sobre código mutado o incompleto, el test se considera **inválido/tautológico** y debe reescribirse para ajustar sus aserciones a la lógica real del dominio.
+1. **Phase 1 — Mandatory Failure Test (RED / Mutation State):**
+   - Before considering a test valid, the production logic being evaluated must be deliberately broken (syntactic mutation, inverted condition, erroneous return value, or incomplete state).
+   - Execute `cargo test` and verify empirically that the test **FAILS** with an explanatory assertion or panic.
+   - If the test passes on the first attempt (`ok`) against mutated or incomplete code, the test is deemed **invalid/tautological** and must be rewritten to tie its assertions to the actual domain logic.
 
-2. **Fase 2 — Implementación y Aprobación (GREEN State):**
-   - Una vez comprobada la sensibilidad al fallo del test, se restaura o implementa la lógica correcta del código de producción.
-   - Se vuelve a ejecutar `cargo test` para confirmar que el test pasa en verde de forma legítima.
+2. **Phase 2 — Implementation & Acceptance (GREEN State):**
+   - Once failure sensitivity is verified, restore or implement the correct production logic.
+   - Re-run `cargo test` to confirm that the test legitimately passes.
 
-3. **Evidencia Transparente Obligatoria en el Chat:**
-   - Para que el usuario pueda auditar el cumplimiento de esta regla cuando la IA cree tests espontáneamente, la respuesta DEBE incluir una sección dedicada llamada `## Test Failure Verification (RED State)` mostrando la traza real del fallo en terminal antes de presentar el pase final en verde.
+3. **Mandatory Transparent Evidence in Chat:**
+   - To allow auditing of this rule whenever the AI assistant writes tests, the response MUST include a dedicated section titled `## Test Failure Verification (RED State)` displaying the actual terminal failure trace before presenting the final passing implementation.
 
-4. **Herramienta de Verificación:**
-   - La suite puede auditarse creando un git worktree aislado (`git worktree add .worktrees/test-check develop`) para ejecutar pruebas de mutación sin alterar el árbol de trabajo principal.
+4. **Verification Tooling:**
+   - The test suite can be audited by creating an isolated git worktree (`git worktree add .worktrees/test-check develop`) to run mutation tests without dirtying the primary working tree.
 
 ---
 
 ## Non-Blocking Tests & Zero-Hang Policy
 
 > [!CAUTION]
-> **Prohibición estricta de bloqueos interactivos en la suite de pruebas.**
+> **Strict prohibition of interactive blocking in the test suite.**
 
-1. **Sin esperas en `stdin` ni llamadas interactivas:**
-   - Ningún test unitario puede solicitar datos por entrada estándar (`std::io::stdin()`) ni quedarse esperando respuestas en `prompt_yes_no`.
-   - Cualquier función que acepte confirmación interactiva (`perform_self_uninstall`, etc.) DEBE ser testeada con sus banderas automatizadas (`auto_confirm: true` o `auto_reject: true`).
+1. **No `stdin` waits or interactive calls:**
+   - No unit test may request input via standard input (`std::io::stdin()`) or block waiting for responses in `prompt_yes_no`.
+   - Any function accepting interactive confirmation (`perform_self_uninstall`, etc.) MUST be tested using automated flags (`auto_confirm: true` or `auto_reject: true`).
 
-2. **Detección, resolución inmediata y reporte:**
-   - Si una ejecución de `cargo test` excede el tiempo esperado o queda colgada, el asistente DEBE cancelar el proceso inmediatamente, diagnosticar la causa raíz, corregir el código/test para garantizar que sea 100% no-bloqueante o informarlo de inmediato al usuario en lugar de dejar el comando en segundo plano sin resolver.
+2. **Detection, immediate resolution, and reporting:**
+   - If a `cargo test` run exceeds the expected duration or hangs, the assistant MUST terminate the process immediately, diagnose the root cause, fix the code/test to ensure it is 100% non-blocking, or report it immediately to the user rather than leaving background commands unresolved.
 
 ---
 
