@@ -11,13 +11,16 @@ mod update;
 mod template;
 mod schema;
 
+use std::path::Path;
+
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::colors::*;
-use crate::config::Config;
+use crate::config::{Command, Config};
 use crate::engine::{
-    format_alias_groups, format_command_line, format_list_line, is_supported, preflight, run_new,
-    run_shell, NewOptions,
+    check_circular_recursion, check_self_recursion, format_alias_groups, format_command_line,
+    format_list_line, is_supported, preflight, run_new, run_shell_with_env, NewOptions,
+    FA_CALL_STACK_ENV,
 };
 use crate::platform::Platform;
 use crate::state::State;
@@ -76,7 +79,7 @@ enum Commands {
     Search {
         query: String,
     },
-    /// Show full details of a recipe.
+    /// Show full details of a recipe or command, including its source file.
     #[command(name = "--show", visible_alias = "-sh")]
     Show {
         recipe: String,
@@ -203,22 +206,29 @@ const BUILTIN_COMMANDS: &[&str] = &[
 ];
 
 /// Rewrites CLI arguments:
-/// 1. Expands Git-style sub-command aliases and shell commands declared in `config.toml` `[alias]`.
-/// 2. Rewrites namespaced command invocations (`fa <ns> <subcmd>` -> `fa --alias "<ns> <subcmd>"`).
-/// 3. Intercepts direct flat alias invocations (`fa <alias_name>` -> `fa --alias <alias_name>`).
+/// 1. Rewrites multi-word arguments for `fa -sh <target...>` and `fa --show <target...>`.
+/// 2. Expands Git-style sub-command aliases and shell commands declared in `config.toml` `[alias]`.
+/// 3. Rewrites namespaced command invocations (`fa <ns> <subcmd>` -> `fa --alias "<ns> <subcmd>"`).
+/// 4. Intercepts direct flat alias invocations (`fa <alias_name>` -> `fa --alias <alias_name>`).
 fn rewrite_args(mut args: Vec<String>, config: Option<&Config>) -> Vec<String> {
+    if args.len() > 3 {
+        let first = args[1].as_str();
+        if first == "--show" || first == "-sh" {
+            let target = args[2..].join(" ");
+            return vec![args[0].clone(), first.to_string(), target];
+        }
+    }
+
     let Some(cfg) = config else {
         return args;
     };
 
-    // 1. Expand Git-style sub-command aliases from config.toml [alias]
     let mut depth = 0;
     while args.len() >= 2 && depth < 5 {
         let word = args[1].as_str();
         if let Some(target) = cfg.settings.alias.get(word) {
             let target = target.trim();
             if target.starts_with('!') {
-                // Shell command alias: rewrite to `fa --alias <word> <args...>`
                 args.insert(1, "--alias".to_string());
                 return args;
             } else {
@@ -237,7 +247,28 @@ fn rewrite_args(mut args: Vec<String>, config: Option<&Config>) -> Vec<String> {
         }
     }
 
-    // 2. Namespaced command invocation check ([aliases.":<name>"])
+    if args.len() >= 4 && (args[1] == "--alias" || args[1] == "-a") {
+        let ns_part = args[2].as_str();
+        if !ns_part.contains(' ') {
+            let ns_key = if ns_part.starts_with(':') {
+                ns_part.to_string()
+            } else {
+                format!(":{ns_part}")
+            };
+            if let Some(commands) = cfg.aliases.get(&ns_key) {
+                let raw_ns = ns_key.strip_prefix(':').unwrap_or(&ns_key).to_string();
+                let sub_part = args[3].as_str();
+                if !sub_part.starts_with('-')
+                    && let Some((sub_key, _)) = crate::config::find_command(commands, sub_part)
+                {
+                    args[2] = format!("{raw_ns} {sub_key}");
+                    args.remove(3);
+                    return args;
+                }
+            }
+        }
+    }
+
     if args.len() >= 2 {
         let first = args[1].as_str();
         let ns_key = if first.starts_with(':') {
@@ -249,7 +280,6 @@ fn rewrite_args(mut args: Vec<String>, config: Option<&Config>) -> Vec<String> {
         if let Some(commands) = cfg.aliases.get(&ns_key) {
             let raw_ns = ns_key.strip_prefix(':').unwrap_or(&ns_key).to_string();
 
-            // Check if an explicit subcommand or help flag is provided
             if args.len() >= 3 {
                 let second = args[2].as_str();
                 if second == "help" || second == "--help" || second == "-h" {
@@ -259,12 +289,27 @@ fn rewrite_args(mut args: Vec<String>, config: Option<&Config>) -> Vec<String> {
                     args.insert(2, raw_ns);
                     return args;
                 } else if !second.starts_with('-') {
-                    // Subcommand provided: `fa <ns> <subcmd> [args...]`
-                    args.remove(1); // removes <ns>
-                    let sub = args.remove(1); // removes <subcmd>
-                    args.insert(1, "--alias".to_string());
-                    args.insert(2, format!("{raw_ns} {sub}"));
-                    return args;
+                    if let Some((sub_key, _)) = crate::config::find_command(commands, second) {
+                        args.remove(1); // removes <ns>
+                        args.remove(1); // removes <subcmd>
+                        args.insert(1, "--alias".to_string());
+                        args.insert(2, format!("{raw_ns} {sub_key}"));
+                        return args;
+                    } else if crate::config::find_command(commands, &raw_ns).is_some() {
+                        // Not a declared subcommand, but a root command exists for this namespace:
+                        // Invoke root command and pass all arguments (including `second`) to it.
+                        args.remove(1); // removes <ns>
+                        args.insert(1, "--alias".to_string());
+                        args.insert(2, format!("{raw_ns} {raw_ns}"));
+                        return args;
+                    } else {
+                        // No root command: keep treating as subcommand so error/typo suggestions work
+                        args.remove(1); // removes <ns>
+                        let sub = args.remove(1); // removes <subcmd>
+                        args.insert(1, "--alias".to_string());
+                        args.insert(2, format!("{raw_ns} {sub}"));
+                        return args;
+                    }
                 }
             }
 
@@ -276,7 +321,6 @@ fn rewrite_args(mut args: Vec<String>, config: Option<&Config>) -> Vec<String> {
                 args.insert(2, format!("{raw_ns} {raw_ns}"));
                 return args;
             } else {
-                // No root command: fallback to namespace help
                 args.remove(1); // removes <ns>
                 while args.len() > 1 && (args[1] == "--help" || args[1] == "-h" || args[1] == "help") {
                     args.remove(1);
@@ -288,7 +332,6 @@ fn rewrite_args(mut args: Vec<String>, config: Option<&Config>) -> Vec<String> {
         }
     }
 
-    // 3. Direct flat alias check from recipes catalog (recipes.toml / recipes.d/*.toml)
     if args.len() >= 2 {
         let first = args[1].as_str();
         if !BUILTIN_COMMANDS.contains(&first)
@@ -360,6 +403,31 @@ pub(crate) fn prompt_yes_no(question: &str, default: bool) -> bool {
         _ => default,
     }
 }
+fn is_recipe_or_help_cmd(args: &[String]) -> bool {
+    if args.len() < 2 {
+        return false;
+    }
+    let first = args[1].as_str();
+    matches!(
+        first,
+        "--recipe"
+            | "-r"
+            | "recipe"
+            | "re"
+            | "rv"
+            | "rn"
+            | "rm"
+            | "-re"
+            | "-rv"
+            | "-rn"
+            | "-rm"
+            | "--help"
+            | "-h"
+            | "help"
+            | "--version"
+            | "-v"
+    )
+}
 
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
@@ -375,14 +443,24 @@ fn main() -> anyhow::Result<()> {
 
     // `fa recipe` reads its config files itself, so a broken TOML must not
     // abort the command (validate/edit need to report or open the file).
-    let is_recipe_cmd = args.len() >= 2 && args[1] == "recipe";
+    let is_recipe_cmd = is_recipe_or_help_cmd(&args);
     let config = match Config::load() {
         Ok((cfg, _source)) => cfg,
         Err(err) if is_recipe_cmd => {
             eprintln!(
-                "warning: failed to load config ({err}); continuing with an empty catalog for `fa recipe`"
+                "warning: failed to load config ({err}); continuing for recipe command"
             );
-            Config::default()
+            let mut fallback = Config::default();
+            if let Some(user_dir) = Config::get_user_config_dir() {
+                let global_config_path = user_dir.join("config.toml");
+                if let Ok(content) = std::fs::read_to_string(&global_config_path)
+                    && let Ok(global) = crate::config::parse_global_config(&content)
+                {
+                    fallback.settings = global;
+                    fallback.sync_config_aliases();
+                }
+            }
+            fallback
         }
         Err(err) => return Err(err),
     };
@@ -718,14 +796,39 @@ fn main() -> anyhow::Result<()> {
                 anyhow::bail!("Unknown recipe or command '{recipe}'. Run `fa list` to see available options.{hint}");
             }
         }
-        Commands::Alias { name, args } => {
-            let (_section, _key, cmd) = config.resolve_command(&name).ok_or_else(|| {
+        Commands::Alias { mut name, mut args } => {
+            if !name.contains(' ') && !args.is_empty() {
+                let candidate = format!("{name} {}", args[0]);
+                if config.resolve_command(&candidate).is_some() {
+                    name = candidate;
+                    args.remove(0);
+                }
+            }
+            let (section, key, cmd) = config.resolve_command(&name).ok_or_else(|| {
                 anyhow::anyhow!("{}", unknown_alias_error(&name, &config))
             })?;
+            let canonical_name = if section.starts_with(':') {
+                format!("{} {}", section.trim_start_matches(':'), key)
+            } else {
+                key.clone()
+            };
+            check_self_recursion(&canonical_name, &cmd.command)?;
+            if name != canonical_name {
+                check_self_recursion(&name, &cmd.command)?;
+            }
+            let new_stack = check_circular_recursion(&canonical_name)?;
+
+            let alias_envs = crate::config::resolve_alias_env(&config, &section, cmd);
+            let mut all_envs: Vec<(&str, &str)> = Vec::new();
+            all_envs.push((FA_CALL_STACK_ENV, &new_stack));
+            for (k, v) in &alias_envs {
+                all_envs.push((k.as_str(), v.as_str()));
+            }
+
             ensure_trusted()?;
             let effective_command = crate::templating::substitute_command_args(&cmd.command, &args);
             preflight(&effective_command)?;
-            run_shell(&effective_command)?;
+            run_shell_with_env(&effective_command, &all_envs)?;
         }
         Commands::Recipe { action } => {
             let user_dir = Config::get_user_config_dir()
@@ -854,6 +957,22 @@ fn display_namespace_help(config: &Config, namespace: &str) {
     for (command_key, command) in commands {
         println!("  {}", crate::engine::format_command_line(command_key, command));
     }
+    if let Some(env_map) = config.alias_env.get(&ns_key)
+        && !env_map.is_empty()
+    {
+        println!("\n{BOLD_CYAN}Namespace Environment:{RESET}");
+        for (k, v) in env_map {
+            println!("  {DIM}{k}{RESET} = {v}");
+        }
+    }
+    if let Some(env_force_map) = config.alias_env_force.get(&ns_key)
+        && !env_force_map.is_empty()
+    {
+        println!("\n{BOLD_CYAN}Namespace Environment (forced):{RESET}");
+        for (k, v) in env_force_map {
+            println!("  {DIM}{k}{RESET} = {v}");
+        }
+    }
 }
 
 pub(crate) fn unknown_alias_error(name: &str, config: &Config) -> String {
@@ -917,21 +1036,71 @@ pub(crate) fn suggest_unrecognized_subcommand(unknown: &str, config: &Config) ->
     crate::recipe::suggest_closest(unknown, &candidates)
 }
 
+pub fn format_source_location(file: Option<&Path>, line: Option<usize>) -> Option<String> {
+    let path = file?;
+    let path_str = path.to_string_lossy();
+    let display_path = if let Some(home) = std::env::var_os("HOME") {
+        let home_str = home.to_string_lossy();
+        if let Some(rel) = path_str.strip_prefix(home_str.as_ref()) {
+            format!("~{rel}")
+        } else {
+            path_str.to_string()
+        }
+    } else {
+        path_str.to_string()
+    };
+
+    match line {
+        Some(l) => Some(format!("{display_path} (line {l})")),
+        None => Some(display_path),
+    }
+}
+
+pub fn format_command_details(cmd: &Command, section: &str, key: &str) -> String {
+    let display_name = if let Some(raw_ns) = section.strip_prefix(':') {
+        if key == raw_ns {
+            raw_ns.to_string()
+        } else {
+            format!("{raw_ns} {key}")
+        }
+    } else {
+        key.to_string()
+    };
+    let mut out = String::new();
+    out.push_str(&format!("{BOLD_CYAN}Command:{RESET} {display_name}\n"));
+    if let Some(loc) = format_source_location(cmd.source_file.as_deref(), cmd.source_line) {
+        out.push_str(&format!("Defined in: {loc}\n"));
+    }
+    out.push_str(&format!("Section: {section}\n"));
+    if let Some(desc) = &cmd.description {
+        out.push_str(&format!("Description: {desc}\n"));
+    }
+    if !cmd.aliases.is_empty() {
+        out.push_str(&format!("Aliases: {}\n", cmd.aliases.join(", ")));
+    }
+    if !cmd.env.is_empty() {
+        out.push_str("Environment:\n");
+        for (k, v) in &cmd.env {
+            out.push_str(&format!("  {k} = {v}\n"));
+        }
+    }
+    if !cmd.env_force.is_empty() {
+        out.push_str("Environment (forced):\n");
+        for (k, v) in &cmd.env_force {
+            out.push_str(&format!("  {k} = {v}\n"));
+        }
+    }
+    out.push_str(&format!("\nCommand: {}\n", cmd.command));
+    out
+}
+
 fn show_command(config: &Config, section: &str, key: &str) {
     let (_, _, cmd) = config
         .all_commands()
         .into_iter()
         .find(|(sec, ck, _)| *sec == section && ck.as_str() == key)
         .expect("resolved command should exist");
-    println!("{BOLD_CYAN}Command:{RESET} {key}");
-    println!("Section: {section}");
-    if let Some(desc) = &cmd.description {
-        println!("Description: {desc}");
-    }
-    if !cmd.aliases.is_empty() {
-        println!("Aliases: {}", cmd.aliases.join(", "));
-    }
-    println!("\nCommand: {}", cmd.command);
+    print!("{}", format_command_details(cmd, section, key));
 }
 
 fn show_recipe(config: &Config, key: &str) {
@@ -942,6 +1111,9 @@ fn show_recipe(config: &Config, key: &str) {
 fn format_recipe_details(recipe: &crate::config::Recipe, key: &str) -> String {
     let mut out = String::new();
     out.push_str(&format!("Recipe: {key}\n"));
+    if let Some(loc) = format_source_location(recipe.source_file.as_deref(), recipe.source_line) {
+        out.push_str(&format!("Defined in: {loc}\n"));
+    }
     out.push_str(&format!("Description: {}\n", recipe.description));
     if let Some(lang) = &recipe.language {
         out.push_str(&format!("Language: {lang}\n"));
@@ -1117,6 +1289,7 @@ mod tests {
             vec!["fa", "recipe", "new"],
             vec!["fa", "template", "add", "rec", "file.txt"],
             vec!["fa", "alias", "status"],
+            vec!["fa", "which", "react"],
         ];
 
         for args in unprefixed {
@@ -1129,6 +1302,7 @@ mod tests {
     }
 
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn timestamp_should_be_iso8601_format() {
@@ -1174,6 +1348,7 @@ mod tests {
                 description: Some("Repo status".to_string()),
                 platform: None,
                 aliases: vec!["st".to_string()],
+                ..Default::default()
             },
         );
         config.aliases.insert("git".to_string(), git_cmds);
@@ -1202,6 +1377,7 @@ mod tests {
                 description: Some("New branch".to_string()),
                 platform: None,
                 aliases: vec![],
+                ..Default::default()
             },
         );
         config.aliases.insert("custom".to_string(), custom_cmds);
@@ -1240,6 +1416,7 @@ mod tests {
                 description: Some("Convert to avif".to_string()),
                 platform: None,
                 aliases: vec![],
+                ..Default::default()
             },
         );
         config.aliases.insert("wrapper".to_string(), wrapper);
@@ -1352,6 +1529,14 @@ down = { command = "docker compose down" }
             vec!["fa", "--alias", "skills skills", "-v"]
         );
 
+        // 4c. fa skills list -> fa --alias "skills skills" list (non-subcommand argument passed to root command)
+        let args = vec!["fa".to_string(), "skills".to_string(), "list".to_string()];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--alias", "skills skills", "list"],
+            "Non-subcommand argument must be passed to root command if root command exists"
+        );
+
         // 5. fa docker -> fa --namespace-help docker (no root command, displays help)
         let args = vec!["fa".to_string(), "docker".to_string()];
         assert_eq!(
@@ -1364,6 +1549,34 @@ down = { command = "docker compose down" }
         assert_eq!(
             rewrite_args(args, Some(&config)),
             vec!["fa", "--namespace-help", "docker"]
+        );
+
+        // 6. fa -a skills add my-skill -> fa -a "skills add" my-skill
+        let args = vec![
+            "fa".to_string(),
+            "-a".to_string(),
+            "skills".to_string(),
+            "add".to_string(),
+            "my-skill".to_string(),
+        ];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "-a", "skills add", "my-skill"],
+            "fa -a with namespace and subcommand must merge into compound alias"
+        );
+
+        // 7. fa --alias skills add my-skill -> fa --alias "skills add" my-skill
+        let args = vec![
+            "fa".to_string(),
+            "--alias".to_string(),
+            "skills".to_string(),
+            "add".to_string(),
+            "my-skill".to_string(),
+        ];
+        assert_eq!(
+            rewrite_args(args, Some(&config)),
+            vec!["fa", "--alias", "skills add", "my-skill"],
+            "fa --alias with namespace and subcommand must merge into compound alias"
         );
 
         // 5c. fa docker --help -> fa --namespace-help docker
@@ -1443,6 +1656,7 @@ down = { command = "docker compose down" }
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
 
         // When final_message is None, defaults to cd project-name hint
@@ -1678,6 +1892,7 @@ down = { command = "docker compose down" }
                 description: Some("Status".to_string()),
                 platform: None,
                 aliases: vec![],
+                ..Default::default()
             },
         );
         config.aliases.insert("git".to_string(), cmds);
@@ -1699,6 +1914,7 @@ down = { command = "docker compose down" }
                 description: Some("List".to_string()),
                 platform: None,
                 aliases: vec![],
+                ..Default::default()
             },
         );
         config.aliases.insert(":skills".to_string(), cmds);
@@ -1737,11 +1953,95 @@ description = "Next.js TS"
                 description: None,
                 platform: None,
                 aliases: vec![],
+                ..Default::default()
             },
         );
         config.aliases.insert(":skills".to_string(), cmds);
 
         let suggestion = suggest_unrecognized_subcommand("skill", &config);
         assert_eq!(suggestion, Some("skills".to_string()), "Must suggest 'skills' for 'skill'");
+    }
+
+    #[test]
+    fn test_format_source_location() {
+        let path = PathBuf::from("/home/user/.config/fa/recipes.d/skills.toml");
+        let formatted = format_source_location(Some(&path), Some(12));
+        assert!(formatted.is_some(), "Formatted location must not be None");
+        let loc = formatted.unwrap();
+        assert!(loc.contains("skills.toml"));
+        assert!(loc.contains("(line 12)"));
+    }
+
+    #[test]
+    fn test_format_command_details_includes_source_location() {
+        let mut env_map = std::collections::BTreeMap::new();
+        env_map.insert("CONTEXT".to_string(), "2048".to_string());
+        let mut force_map = std::collections::BTreeMap::new();
+        force_map.insert("MODEL_PATH".to_string(), "/models/coder.gguf".to_string());
+
+        let cmd = crate::config::Command {
+            command: "bunx tabernaculo list".to_string(),
+            description: Some("List skills".to_string()),
+            platform: None,
+            aliases: vec![],
+            env: env_map,
+            env_force: force_map,
+            source_file: Some(PathBuf::from("/home/user/.config/fa/recipes.d/skills.toml")),
+            source_line: Some(12),
+        };
+        let output = format_command_details(&cmd, ":skills", "ls");
+        assert!(output.contains("Command:") && output.contains("skills ls"), "Output must contain full command name");
+        assert!(output.contains("Defined in:"), "Output must contain 'Defined in:'");
+        assert!(output.contains("skills.toml (line 12)"), "Output must contain file and line");
+        assert!(output.contains("Environment:"), "Output must contain Environment section");
+        assert!(output.contains("CONTEXT = 2048"), "Output must display env");
+        assert!(output.contains("Environment (forced):"), "Output must contain forced section");
+        assert!(output.contains("MODEL_PATH = /models/coder.gguf"), "Output must display forced env");
+        assert!(output.contains("bunx tabernaculo list"), "Output must contain the command");
+    }
+
+    #[test]
+    fn test_format_recipe_details_includes_source_location() {
+        let recipe = crate::config::Recipe {
+            name: "Next.js TS".to_string(),
+            description: "Next.js TypeScript stack".to_string(),
+            source_file: Some(PathBuf::from("/home/user/.config/fa/recipes.toml")),
+            source_line: Some(5),
+            ..Default::default()
+        };
+        let output = format_recipe_details(&recipe, "next-ts");
+        assert!(output.contains("Recipe: next-ts"));
+        assert!(output.contains("Defined in:"), "Output must contain 'Defined in:'");
+        assert!(output.contains("recipes.toml (line 5)"));
+    }
+
+    #[test]
+    fn test_rewrite_args_show_multiword() {
+        let config = Config::default();
+
+        // 1. `fa -sh skills ls` -> `fa -sh "skills ls"`
+        let args = vec!["fa".to_string(), "-sh".to_string(), "skills".to_string(), "ls".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(rewritten, vec!["fa", "-sh", "skills ls"]);
+
+        // 2. `fa --show skills ls` -> `fa --show "skills ls"`
+        let args = vec!["fa".to_string(), "--show".to_string(), "skills".to_string(), "ls".to_string()];
+        let rewritten = rewrite_args(args, Some(&config));
+        assert_eq!(rewritten, vec!["fa", "--show", "skills ls"]);
+    }
+
+    #[test]
+    fn test_is_recipe_cli_command() {
+        assert!(is_recipe_or_help_cmd(&["fa".into(), "-r".into(), "edit".into(), "ai".into()]));
+        assert!(is_recipe_or_help_cmd(&["fa".into(), "--recipe".into(), "edit".into(), "ai".into()]));
+        assert!(is_recipe_or_help_cmd(&["fa".into(), "-re".into(), "ai".into()]));
+        assert!(is_recipe_or_help_cmd(&["fa".into(), "-rv".into(), "ai".into()]));
+        assert!(is_recipe_or_help_cmd(&["fa".into(), "recipe".into(), "edit".into(), "ai".into()]));
+        assert!(is_recipe_or_help_cmd(&["fa".into(), "re".into(), "ai".into()]));
+        assert!(is_recipe_or_help_cmd(&["fa".into(), "rv".into(), "ai".into()]));
+        assert!(is_recipe_or_help_cmd(&["fa".into(), "--help".into()]));
+        assert!(is_recipe_or_help_cmd(&["fa".into(), "-h".into()]));
+        assert!(!is_recipe_or_help_cmd(&["fa".into(), "ai".into(), "code".into()]));
+        assert!(!is_recipe_or_help_cmd(&["fa".into(), "--alias".into(), "code".into()]));
     }
 }

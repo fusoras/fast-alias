@@ -43,7 +43,6 @@ pub fn resolve_template_dir(
     Ok(templates_base.join(canonical_key))
 }
 
-/// Copies a single file to `dest`, handling overwrite confirmation and force logic.
 fn copy_single_file(
     src: &Path,
     dest: &Path,
@@ -81,7 +80,6 @@ fn copy_single_file(
     Ok(())
 }
 
-/// Recursively copies a directory to `dest_dir`, running per-file confirmation on collisions.
 fn copy_directory_recursive_with_confirm(
     src_dir: &Path,
     dest_dir: &Path,
@@ -256,6 +254,7 @@ mod tests {
             templates_dir: templates_dir.map(|s| s.to_string()),
             default_pack: None,
             packs: BTreeMap::new(),
+            ..Default::default()
         }
     }
 

@@ -12,6 +12,11 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
   "description": "Configuration schema for fast-alias (fa) recipe and alias files.",
   "type": "object",
   "properties": {
+    "vars": {
+      "type": "object",
+      "description": "Global template variables substituted via {{KEY}} across command strings, descriptions, and environment variables.",
+      "additionalProperties": { "type": "string" }
+    },
     "recipes": {
       "type": "object",
       "description": "Map of recipe definitions, keyed by recipe name.",
@@ -24,6 +29,27 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
       "description": "Map of alias sections containing named command aliases.",
       "additionalProperties": {
         "type": "object",
+        "properties": {
+          "_vars": {
+            "type": "object",
+            "description": "Namespace template variables substituted via {{KEY}} within this section.",
+            "additionalProperties": { "type": "string" }
+          },
+          "_env": {
+            "oneOf": [
+              { "type": "object", "additionalProperties": { "type": "string" } },
+              { "type": "string" }
+            ],
+            "description": "Shared fallback environment variables for all commands in this namespace."
+          },
+          "_env_force": {
+            "oneOf": [
+              { "type": "object", "additionalProperties": { "type": "string" } },
+              { "type": "string" }
+            ],
+            "description": "Shared forced environment variables for all commands in this namespace."
+          }
+        },
         "additionalProperties": {
           "$ref": "#/definitions/Alias"
         }
@@ -120,10 +146,29 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
     },
     "Alias": {
       "type": "object",
-      "required": ["command", "description"],
+      "required": ["command"],
       "properties": {
         "command": { "type": "string", "description": "Shell command to execute." },
-        "description": { "type": "string", "description": "Description of the alias." }
+        "description": { "type": "string", "description": "Description of the alias." },
+        "env": {
+          "oneOf": [
+            { "type": "object", "additionalProperties": { "type": "string" } },
+            { "type": "string" }
+          ],
+          "description": "Fallback environment variables (applied only if not set in system)."
+        },
+        "env_force": {
+          "oneOf": [
+            { "type": "object", "additionalProperties": { "type": "string" } },
+            { "type": "string" }
+          ],
+          "description": "Forced environment variables (always overrides system environment)."
+        },
+        "aliases": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Optional short alias names for this command."
+        }
       },
       "additionalProperties": false
     },

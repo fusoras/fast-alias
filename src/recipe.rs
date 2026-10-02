@@ -231,10 +231,25 @@ pub fn recipe_edit_path(config_dir: &Path, name: &str) -> anyhow::Result<PathBuf
     if direct.is_file() {
         return Ok(direct);
     }
+    if name == "recipes" || name == "recipes.toml" {
+        let primary = config_dir.join("recipes.toml");
+        if primary.is_file() {
+            return Ok(primary);
+        }
+    }
     let mut found: Option<PathBuf> = None;
     for path in config_files(config_dir) {
-        if let Ok(cfg) = parse_config_file(&path) && cfg.recipes.contains_key(name) {
-            found = Some(path);
+        if let Ok(cfg) = parse_config_file(&path) {
+            if cfg.recipes.contains_key(name) || cfg.aliases.contains_key(name) {
+                found = Some(path);
+            }
+        } else if let Ok(raw) = fs::read_to_string(&path) {
+            let target_recipe = format!("[recipes.{name}]");
+            let target_alias = format!("[aliases.{name}]");
+            let target_ns = format!("[aliases.\":{name}\"]");
+            if raw.contains(&target_recipe) || raw.contains(&target_alias) || raw.contains(&target_ns) {
+                found = Some(path);
+            }
         }
     }
     found.ok_or_else(|| anyhow::anyhow!("recipe '{name}' no existe"))
@@ -485,7 +500,6 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
         }
     };
 
-    // Check unknown keys in [recipes.*]
     if let Some(recipes) = value.get("recipes").and_then(|r| r.as_table()) {
         for (recipe_name, recipe_val) in recipes {
             if let Some(recipe_table) = recipe_val.as_table() {
@@ -503,7 +517,6 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
                     }
                 }
 
-                // Check create table
                 if let Some(create_table) = recipe_table.get("create").and_then(|c| c.as_table()) {
                     for key in create_table.keys() {
                         if !KNOWN_CREATE_FIELDS.contains(&key.as_str()) {
@@ -520,7 +533,6 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
                     }
                 }
 
-                // Check variables tables
                 if let Some(vars_table) = recipe_table.get("variables").and_then(|v| v.as_table()) {
                     for (var_name, var_val) in vars_table {
                         if let Some(var_table) = var_val.as_table() {
@@ -541,7 +553,6 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
                     }
                 }
 
-                // Check steps tables
                 if let Some(steps_array) = recipe_table.get("steps").and_then(|s| s.as_array()) {
                     for (idx, step_val) in steps_array.iter().enumerate() {
                         if let Some(step_table) = step_val.as_table() {
@@ -565,10 +576,8 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
         }
     }
 
-    // Parse into typed Config to run semantic checks (templates and variables)
     if let Ok(cfg) = toml::from_str::<Config>(&content) {
         for (recipe_name, recipe) in &cfg.recipes {
-            // Check missing templates
             let base_dir = config_dir.join("templates");
             let recipe_templates_dir: Option<PathBuf> = recipe.templates_dir.as_deref().map(|td| {
                 if td.starts_with("~/") {
@@ -593,7 +602,6 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
                 });
             }
 
-            // Check orphan variables
             let declared_vars: std::collections::HashSet<String> = recipe
                 .variables
                 .keys()
@@ -642,7 +650,6 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
                 check_placeholder(cmd);
             }
 
-            // Check default_pack vs global default_behavior Notice
             let global_config_path = config_dir.join("config.toml");
             if let Some(dp) = &recipe.default_pack
                 && let Ok(content) = fs::read_to_string(&global_config_path)
@@ -676,7 +683,6 @@ pub fn recipe_diagnostics(
         None => config_files(config_dir),
     };
 
-    // Check duplicate recipe names across files
     let mut seen: BTreeMap<String, PathBuf> = BTreeMap::new();
     for path in config_files(config_dir) {
         if let Ok(cfg) = parse_config_file(&path) {
@@ -895,6 +901,35 @@ mod tests {
         assert_eq!(by_key, modular.join("recipes.d/custom.toml"));
         let direct = recipe_edit_path(&modular, "custom.toml").ok();
         println!("   ✓ Missing recipe errors; existing recipes resolve by file and key.\n{direct:?}\n");
+    }
+
+    #[test]
+    fn test_recipe_edit_path_with_syntax_errors_and_aliases() {
+        let dir = temp_dir("edit-syntax-err");
+        fs::write(
+            dir.join("recipes.d/broken.toml"),
+            "[[invalid toml syntax {{{",
+        )
+        .unwrap();
+
+        // 1. Direct modular file name match works even if the TOML is completely malformed
+        let broken_path = recipe_edit_path(&dir, "broken").expect("should resolve broken file by name");
+        assert_eq!(broken_path, dir.join("recipes.d/broken.toml"));
+
+        // 2. Primary recipes.toml resolves when named "recipes"
+        fs::write(dir.join("recipes.toml"), "# primary").unwrap();
+        let primary_path = recipe_edit_path(&dir, "recipes").expect("should resolve recipes.toml");
+        assert_eq!(primary_path, dir.join("recipes.toml"));
+
+        // 3. Substring match finds file with syntax error that defines target recipe
+        let dir2 = temp_dir("edit-broken-content");
+        fs::write(
+            dir2.join("recipes.d/malformed.toml"),
+            "[recipes.my-target]\nbroken_syntax = = =\n",
+        )
+        .unwrap();
+        let target_path = recipe_edit_path(&dir2, "my-target").expect("should find file containing target section even with syntax error");
+        assert_eq!(target_path, dir2.join("recipes.d/malformed.toml"));
     }
 
     #[test]

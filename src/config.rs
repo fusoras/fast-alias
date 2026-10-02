@@ -236,16 +236,24 @@ pub struct PackDefinition {
 }
 
 /// Executable command declared in the alias catalog, invoked via `fa alias <name>`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Command {
     pub command: String,
     pub description: Option<String>,
     pub platform: Option<String>,
     #[serde(default)]
     pub aliases: Vec<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+    #[serde(default)]
+    pub env_force: BTreeMap<String, String>,
+    #[serde(skip)]
+    pub source_file: Option<PathBuf>,
+    #[serde(skip)]
+    pub source_line: Option<usize>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Recipe {
     pub name: String,
     pub description: String,
@@ -293,6 +301,10 @@ pub struct Recipe {
     /// Optional inline packs defined directly inside the recipe.
     #[serde(default)]
     pub packs: BTreeMap<String, PackDefinition>,
+    #[serde(skip)]
+    pub source_file: Option<PathBuf>,
+    #[serde(skip)]
+    pub source_line: Option<usize>,
 }
 
 fn default_packs_behavior() -> String {
@@ -375,9 +387,7 @@ pub fn parse_packs_from_toml(content: &str, file_stem: &str) -> Vec<Pack> {
         return Vec::new();
     };
 
-    // Case 1: `packs` key exists
     if let Some(packs_val) = table.get("packs") {
-        // 1a: Table of packs: [packs.<name>]
         if let Some(packs_table) = packs_val.as_table() {
             let mut packs = Vec::new();
             for (key, sub_val) in packs_table {
@@ -402,7 +412,6 @@ pub fn parse_packs_from_toml(content: &str, file_stem: &str) -> Vec<Pack> {
             return packs;
         }
 
-        // 1b: Array of packs: [[packs]]
         if let Some(packs_array) = packs_val.as_array() {
             let mut packs = Vec::new();
             for item in packs_array {
@@ -428,7 +437,6 @@ pub fn parse_packs_from_toml(content: &str, file_stem: &str) -> Vec<Pack> {
         }
     }
 
-    // Case 2: Root level has `components` (single pack file)
     if table.contains_key("components") {
         let name = table
             .get("name")
@@ -447,7 +455,6 @@ pub fn parse_packs_from_toml(content: &str, file_stem: &str) -> Vec<Pack> {
         }];
     }
 
-    // Case 3: Top-level tables where each table has `components`
     let mut top_packs = Vec::new();
     for (key, sub_val) in table {
         if let Some(sub_table) = sub_val.as_table()
@@ -489,7 +496,7 @@ fn extract_components(table: &toml::map::Map<String, toml::Value>) -> Vec<String
         .unwrap_or_default()
 }
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Config {
     #[serde(default)]
     pub settings: GlobalConfig,
@@ -500,6 +507,150 @@ pub struct Config {
     /// live independently of scaffolding recipes.
     #[serde(default)]
     pub aliases: BTreeMap<String, BTreeMap<String, Command>>,
+    /// Fallback environment variables declared at the namespace/section level (`_env`).
+    #[serde(default)]
+    pub alias_env: BTreeMap<String, BTreeMap<String, String>>,
+    /// Forced/override environment variables declared at the namespace/section level (`_env_force`).
+    #[serde(default)]
+    pub alias_env_force: BTreeMap<String, BTreeMap<String, String>>,
+    /// File-level template variables (`[vars]`).
+    #[serde(default)]
+    pub vars: BTreeMap<String, String>,
+}
+
+/// Flexible specification for environment variables: either a key-value map or a bash-style string (e.g. `'export FOO="bar" && export BAZ=qux'`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnvSpec {
+    Map(BTreeMap<String, String>),
+    String(String),
+}
+
+impl EnvSpec {
+    pub fn into_map(self) -> BTreeMap<String, String> {
+        match self {
+            EnvSpec::Map(m) => m,
+            EnvSpec::String(s) => parse_env_string(&s),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct RawCommand {
+    command: Option<String>,
+    description: Option<String>,
+    platform: Option<String>,
+    #[serde(default)]
+    aliases: Vec<String>,
+    #[serde(default)]
+    env: Option<EnvSpec>,
+    #[serde(default)]
+    env_force: Option<EnvSpec>,
+}
+
+#[derive(Deserialize)]
+struct RawConfig {
+    #[serde(default)]
+    settings: GlobalConfig,
+    #[serde(default)]
+    recipes: BTreeMap<String, Recipe>,
+    #[serde(default)]
+    vars: BTreeMap<String, String>,
+    #[serde(default)]
+    aliases: BTreeMap<String, BTreeMap<String, toml::Value>>,
+}
+
+impl<'de> Deserialize<'de> for Config {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawConfig::deserialize(deserializer)?;
+        let mut config = Config {
+            settings: raw.settings,
+            recipes: raw.recipes,
+            aliases: BTreeMap::new(),
+            alias_env: BTreeMap::new(),
+            alias_env_force: BTreeMap::new(),
+            vars: raw.vars.clone(),
+        };
+
+        let mut section_vars: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+
+        for (section, entries) in raw.aliases {
+            for (key, val) in entries {
+                if key == "_env" {
+                    let spec: EnvSpec = val.try_into().map_err(serde::de::Error::custom)?;
+                    config.alias_env.entry(section.clone()).or_default().extend(spec.into_map());
+                } else if key == "_env_force" {
+                    let spec: EnvSpec = val.try_into().map_err(serde::de::Error::custom)?;
+                    config.alias_env_force.entry(section.clone()).or_default().extend(spec.into_map());
+                } else if key == "_vars" {
+                    let vars_map: BTreeMap<String, String> = val.try_into().map_err(serde::de::Error::custom)?;
+                    section_vars.entry(section.clone()).or_default().extend(vars_map);
+                } else {
+                    let raw_cmd: RawCommand = val.try_into().map_err(serde::de::Error::custom)?;
+                    let cmd = Command {
+                        command: raw_cmd.command.unwrap_or_default(),
+                        description: raw_cmd.description,
+                        platform: raw_cmd.platform,
+                        aliases: raw_cmd.aliases,
+                        env: raw_cmd.env.map(|e| e.into_map()).unwrap_or_default(),
+                        env_force: raw_cmd.env_force.map(|e| e.into_map()).unwrap_or_default(),
+                        source_file: None,
+                        source_line: None,
+                    };
+                    config.aliases.entry(section.clone()).or_default().insert(key, cmd);
+                }
+            }
+        }
+
+        // Apply template variable substitutions (_vars and [vars])
+        for (section, commands) in &mut config.aliases {
+            let mut effective_vars = raw.vars.clone();
+            if let Some(sv) = section_vars.get(section) {
+                effective_vars.extend(sv.clone());
+            }
+
+            for _ in 0..5 {
+                let snapshot = effective_vars.clone();
+                for v in effective_vars.values_mut() {
+                    for (sk, sv) in &snapshot {
+                        let placeholder = format!("{{{{{sk}}}}}");
+                        if v.contains(&placeholder) {
+                            *v = v.replace(&placeholder, sv);
+                        }
+                    }
+                }
+            }
+
+            for cmd in commands.values_mut() {
+                for (k, v) in &effective_vars {
+                    let placeholder = format!("{{{{{k}}}}}");
+                    if cmd.command.contains(&placeholder) {
+                        cmd.command = cmd.command.replace(&placeholder, v);
+                    }
+                    if let Some(desc) = &mut cmd.description
+                        && desc.contains(&placeholder)
+                    {
+                        *desc = desc.replace(&placeholder, v);
+                    }
+                    for env_val in cmd.env.values_mut() {
+                        if env_val.contains(&placeholder) {
+                            *env_val = env_val.replace(&placeholder, v);
+                        }
+                    }
+                    for env_force_val in cmd.env_force.values_mut() {
+                        if env_force_val.contains(&placeholder) {
+                            *env_force_val = env_force_val.replace(&placeholder, v);
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(config)
+    }
 }
 
 impl Config {
@@ -534,6 +685,7 @@ impl Config {
                             description: Some(format!("Git-style shell alias '{alias_key}'")),
                             platform: None,
                             aliases: vec![],
+                            ..Default::default()
                         },
                     );
             }
@@ -564,6 +716,7 @@ impl Config {
                 .map_err(|e| anyhow::anyhow!("Failed to read {}: {e}", xdg_path.display()))?;
             config = toml::from_str(&content)
                 .map_err(|e| anyhow::anyhow!("Failed to parse {}: {e}", xdg_path.display()))?;
+            annotate_sources(&mut config, &xdg_path, &content);
             primary_source = xdg_path.to_string_lossy().to_string();
         }
 
@@ -581,6 +734,7 @@ impl Config {
                 .map_err(|e| anyhow::anyhow!("Failed to parse {}: {e}", global_config_path.display()))?;
             config.settings = global;
             config.sync_config_aliases();
+            annotate_sources(&mut config, &global_config_path, &content);
         }
 
         let source_summary = if loaded_modular_files.is_empty() {
@@ -653,8 +807,9 @@ impl Config {
         for path in paths {
             let content = fs::read_to_string(&path)
                 .map_err(|e| anyhow::anyhow!("Failed to read modular config {}: {e}", path.display()))?;
-            let sub_config: Self = toml::from_str(&content)
+            let mut sub_config: Self = toml::from_str(&content)
                 .map_err(|e| anyhow::anyhow!("Failed to parse modular config {}: {e}", path.display()))?;
+            annotate_sources(&mut sub_config, &path, &content);
 
             for (recipe_name, recipe) in sub_config.recipes {
                 config.recipes.insert(recipe_name, recipe);
@@ -666,6 +821,22 @@ impl Config {
                     .entry(section)
                     .or_default()
                     .extend(commands);
+            }
+
+            for (section, envs) in sub_config.alias_env {
+                config
+                    .alias_env
+                    .entry(section)
+                    .or_default()
+                    .extend(envs);
+            }
+
+            for (section, envs) in sub_config.alias_env_force {
+                config
+                    .alias_env_force
+                    .entry(section)
+                    .or_default()
+                    .extend(envs);
             }
 
             loaded_files.push(path);
@@ -890,7 +1061,6 @@ impl Config {
     /// 2. A `<pack_name>.toml` file in `packs_dir`
     /// 3. A multi-pack TOML file in `packs_dir` (e.g. `packs.toml` or any `.toml` containing `[packs.<name>]` or `[<name>]`)
     pub fn find_pack(recipe: Option<&Recipe>, packs_dir: &str, pack_name: &str) -> anyhow::Result<Pack> {
-        // 1. Check inline recipe packs
         if let Some(r) = recipe {
             if let Some(def) = r.packs.get(pack_name) {
                 return Ok(Pack {
@@ -910,7 +1080,6 @@ impl Config {
             }
         }
 
-        // 2. Check packs_dir
         if packs_dir.starts_with('/') {
             anyhow::bail!("Root paths starting with '/' are not allowed; use '~/' or paths relative to ~/.config/fa");
         }
@@ -925,7 +1094,6 @@ impl Config {
             user_dir.join(packs_dir)
         };
 
-        // Try exact filename first
         let pack_path = pack_dir.join(format!("{pack_name}.toml"));
         if pack_path.is_file()
             && let Ok(content) = fs::read_to_string(&pack_path)
@@ -937,7 +1105,6 @@ impl Config {
             }
         }
 
-        // Scan all .toml files in pack_dir (including multi-pack files)
         if let Ok(entries) = fs::read_dir(&pack_dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
@@ -968,7 +1135,6 @@ impl Config {
     pub fn list_recipe_packs(recipe: &Recipe) -> Vec<Pack> {
         let mut map: BTreeMap<String, Pack> = BTreeMap::new();
 
-        // 1. Inline packs
         for (key, def) in &recipe.packs {
             let name = def.name.clone().unwrap_or_else(|| key.clone());
             map.insert(name.clone(), Pack {
@@ -978,7 +1144,6 @@ impl Config {
             });
         }
 
-        // 2. Packs from packs_dir
         let packs_dir = recipe.packs_dir.as_deref().unwrap_or("packs");
         for pack in Self::list_packs(packs_dir) {
             map.entry(pack.name.clone()).or_insert(pack);
@@ -1004,7 +1169,6 @@ impl Config {
     pub fn resolve_command(&self, query: &str) -> Option<(String, String, &Command)> {
         let trimmed = query.trim();
 
-        // 1. Compound namespaced query: "<ns> <subcommand>" or ":<ns> <subcommand>"
         if let Some((ns_part, subcmd_part)) = trimmed.split_once(' ') {
             let ns_key = if ns_part.starts_with(':') {
                 ns_part.to_string()
@@ -1019,7 +1183,6 @@ impl Config {
             return None;
         }
 
-        // 2. Query in standard (non-namespaced) sections
         for (section, commands) in &self.aliases {
             if section.starts_with(':') {
                 continue; // Isolated: commands in namespaced sections do not leak to flat queries
@@ -1029,7 +1192,6 @@ impl Config {
             }
         }
 
-        // 3. Namespace root command invocation: query equals namespace name (e.g. "skills" or ":skills")
         let ns_key = if trimmed.starts_with(':') {
             trimmed.to_string()
         } else {
@@ -1145,6 +1307,358 @@ pub(crate) fn find_command<'a>(
             .any(|alias| alias.eq_ignore_ascii_case(query))
             .then_some((k, cmd))
     })
+}
+
+fn split_toml_path(s: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_quotes = None;
+
+    for ch in s.chars() {
+        if let Some(q) = in_quotes {
+            if ch == q {
+                in_quotes = None;
+            } else {
+                current.push(ch);
+            }
+        } else if ch == '"' || ch == '\'' {
+            in_quotes = Some(ch);
+        } else if ch == '.' {
+            let trimmed = current.trim();
+            if !trimmed.is_empty() {
+                parts.push(trimmed.to_string());
+            }
+            current.clear();
+        } else {
+            current.push(ch);
+        }
+    }
+    let trimmed = current.trim();
+    if !trimmed.is_empty() {
+        parts.push(trimmed.to_string());
+    }
+    parts
+}
+
+fn extract_toml_key(line: &str) -> Option<String> {
+    let mut in_quotes = None;
+    let mut key_buf = String::new();
+
+    for ch in line.chars() {
+        if let Some(q) = in_quotes {
+            if ch == q {
+                in_quotes = None;
+            } else {
+                key_buf.push(ch);
+            }
+        } else if ch == '"' || ch == '\'' {
+            in_quotes = Some(ch);
+        } else if ch == '#' {
+            break;
+        } else if ch == '=' {
+            let trimmed = key_buf.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+            return None;
+        } else {
+            key_buf.push(ch);
+        }
+    }
+    None
+}
+
+/// Annotates each recipe and command with its source file path and line number.
+pub fn annotate_sources(config: &mut Config, path: &Path, content: &str) {
+    #[derive(Debug, Clone)]
+    enum Context {
+        None,
+        Recipe,
+        AliasSection(String),
+        GlobalAlias,
+    }
+
+    let mut context = Context::None;
+
+    for (idx, line) in content.lines().enumerate() {
+        let line_num = idx + 1;
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            let inner = trimmed
+                .trim_start_matches('[')
+                .trim_end_matches(']')
+                .trim();
+
+            if let Some(rest) = inner.strip_prefix("recipes.") {
+                let parts = split_toml_path(rest);
+                if let Some(recipe_key) = parts.first() {
+                    context = Context::Recipe;
+                    if parts.len() == 1
+                        && let Some(recipe) = config.recipes.get_mut(recipe_key)
+                    {
+                        recipe.source_file = Some(path.to_path_buf());
+                        recipe.source_line = Some(line_num);
+                    }
+                }
+            } else if let Some(rest) = inner.strip_prefix("aliases.") {
+                let parts = split_toml_path(rest);
+                if parts.len() == 1 {
+                    context = Context::AliasSection(parts[0].clone());
+                } else if parts.len() == 2 {
+                    let sec = &parts[0];
+                    let cmd_name = &parts[1];
+                    context = Context::AliasSection(sec.clone());
+                    if let Some(section) = config.aliases.get_mut(sec)
+                        && let Some(cmd) = section.get_mut(cmd_name)
+                    {
+                        cmd.source_file = Some(path.to_path_buf());
+                        cmd.source_line = Some(line_num);
+                    }
+                } else {
+                    context = Context::None;
+                }
+            } else if inner == "alias" {
+                context = Context::GlobalAlias;
+            } else {
+                context = Context::None;
+            }
+            continue;
+        }
+
+        match &context {
+            Context::AliasSection(sec) => {
+                if let Some(key) = extract_toml_key(trimmed)
+                    && let Some(section) = config.aliases.get_mut(sec)
+                    && let Some(cmd) = section.get_mut(&key)
+                {
+                    cmd.source_file = Some(path.to_path_buf());
+                    cmd.source_line = Some(line_num);
+                }
+            }
+            Context::GlobalAlias => {
+                if let Some(key) = extract_toml_key(trimmed)
+                    && let Some(section) = config.aliases.get_mut("config")
+                    && let Some(cmd) = section.get_mut(&key)
+                {
+                    cmd.source_file = Some(path.to_path_buf());
+                    cmd.source_line = Some(line_num);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Parses a bash-style environment assignment string (e.g. `'export FOO="bar" && export BAZ=qux'` or `'KEY=val'`)
+/// into a key-value map.
+pub fn parse_env_string(input: &str) -> BTreeMap<String, String> {
+    let mut map = BTreeMap::new();
+    let chars: Vec<char> = input.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        while i < len {
+            if chars[i].is_whitespace() || chars[i] == ';' {
+                i += 1;
+            } else if chars[i] == '&' && i + 1 < len && chars[i + 1] == '&' {
+                i += 2;
+            } else {
+                break;
+            }
+        }
+        if i >= len {
+            break;
+        }
+
+        if i + 6 <= len
+            && chars[i..i + 6] == ['e', 'x', 'p', 'o', 'r', 't']
+            && (i + 6 == len || chars[i + 6].is_whitespace())
+        {
+            i += 6;
+            while i < len && chars[i].is_whitespace() {
+                i += 1;
+            }
+        }
+        if i >= len {
+            break;
+        }
+
+        let key_start = i;
+        while i < len && (chars[i].is_ascii_alphanumeric() || chars[i] == '_') {
+            i += 1;
+        }
+        let key: String = chars[key_start..i].iter().collect();
+
+        if key.is_empty() {
+            i += 1;
+            continue;
+        }
+
+        while i < len && (chars[i] == ' ' || chars[i] == '\t') {
+            i += 1;
+        }
+        if i >= len || chars[i] != '=' {
+            continue;
+        }
+        i += 1; // skip '='
+
+        while i < len && (chars[i] == ' ' || chars[i] == '\t') {
+            i += 1;
+        }
+        if i >= len {
+            map.insert(key, String::new());
+            break;
+        }
+
+        let mut val = String::new();
+        if chars[i] == '"' {
+            i += 1; // skip opening quote
+            while i < len {
+                if chars[i] == '\\' && i + 1 < len && (chars[i + 1] == '"' || chars[i + 1] == '\\') {
+                    val.push(chars[i + 1]);
+                    i += 2;
+                } else if chars[i] == '"' {
+                    i += 1; // skip closing quote
+                    break;
+                } else {
+                    val.push(chars[i]);
+                    i += 1;
+                }
+            }
+        } else if chars[i] == '\'' {
+            i += 1; // skip opening quote
+            while i < len {
+                if chars[i] == '\'' {
+                    i += 1; // skip closing quote
+                    break;
+                } else {
+                    val.push(chars[i]);
+                    i += 1;
+                }
+            }
+        } else {
+            while i < len {
+                if chars[i].is_whitespace() || chars[i] == ';' {
+                    break;
+                }
+                if chars[i] == '&' && i + 1 < len && chars[i + 1] == '&' {
+                    break;
+                }
+                val.push(chars[i]);
+                i += 1;
+            }
+        }
+
+        map.insert(key, val);
+    }
+
+    map
+}
+
+/// Expands `$VAR`, `${VAR}`, and leading `~` references in an environment variable value using the current process environment.
+pub fn expand_env_value(val: &str) -> String {
+    let mut input = val.to_string();
+    if input == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            return home;
+        }
+    } else if let Some(rest) = input.strip_prefix("~/")
+        && let Ok(home) = std::env::var("HOME")
+    {
+        input = format!("{home}/{rest}");
+    }
+
+    let mut result = String::new();
+    let chars: Vec<char> = input.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '$' && i + 1 < chars.len() {
+            if chars[i + 1] == '{' {
+                // Braced variable: ${VAR} or ${VAR:-default}
+                if let Some(close_idx) = chars[i + 2..].iter().position(|&c| c == '}') {
+                    let full_close = i + 2 + close_idx;
+                    let inner: String = chars[i + 2..full_close].iter().collect();
+                    if let Some((var_name, default_val)) = inner.split_once(":-") {
+                        let val = std::env::var(var_name.trim())
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| default_val.to_string());
+                        result.push_str(&val);
+                    } else if let Some((var_name, default_val)) = inner.split_once(':') {
+                        let val = std::env::var(var_name.trim())
+                            .ok()
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| default_val.to_string());
+                        result.push_str(&val);
+                    } else {
+                        let val = std::env::var(inner.trim()).unwrap_or_default();
+                        result.push_str(&val);
+                    }
+                    i = full_close + 1;
+                    continue;
+                }
+            } else if chars[i + 1].is_ascii_alphabetic() || chars[i + 1] == '_' {
+                // Unbraced variable: $VAR
+                let mut end = i + 1;
+                while end < chars.len() && (chars[end].is_ascii_alphanumeric() || chars[end] == '_') {
+                    end += 1;
+                }
+                let var_name: String = chars[i + 1..end].iter().collect();
+                let val = std::env::var(&var_name).unwrap_or_default();
+                result.push_str(&val);
+                i = end;
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+
+    result
+}
+
+/// Computes the effective environment variables for an alias execution honoring:
+/// 1. Fallback vars (`_env` and `env`): only applied if not set in the current process environment.
+/// 2. Forced vars (`_env_force` and `env_force`): always applied, overriding the current process environment.
+///
+/// Variable values are expanded via [`expand_env_value`].
+pub fn resolve_alias_env(config: &Config, section: &str, cmd: &Command) -> Vec<(String, String)> {
+    let mut resolved: BTreeMap<String, String> = BTreeMap::new();
+
+    if let Some(ns_env) = config.alias_env.get(section) {
+        for (k, v) in ns_env {
+            if std::env::var(k).is_err() {
+                resolved.insert(k.clone(), v.clone());
+            }
+        }
+    }
+
+    for (k, v) in &cmd.env {
+        if std::env::var(k).is_err() {
+            resolved.insert(k.clone(), v.clone());
+        }
+    }
+
+    if let Some(ns_force) = config.alias_env_force.get(section) {
+        for (k, v) in ns_force {
+            resolved.insert(k.clone(), v.clone());
+        }
+    }
+
+    for (k, v) in &cmd.env_force {
+        resolved.insert(k.clone(), v.clone());
+    }
+
+    resolved
+        .into_iter()
+        .map(|(k, v)| (k, expand_env_value(&v)))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1836,5 +2350,146 @@ free = { command = "free -h" }
         assert_eq!(sec, "general");
         assert_eq!(key, "free");
     }
+
+    #[test]
+    fn test_annotate_sources_tracks_file_and_line() {
+        let content = r#"
+[recipes.my-app]
+name = "My App"
+description = "Desc"
+
+[aliases.":skills"]
+skills = { command = "tabernaculo status", description = "Root" }
+ls = { command = "bunx tabernaculo list", description = "List" }
+
+[aliases.general]
+free = { command = "free -h", description = "Free" }
+"#;
+        let mut config: Config = toml::from_str(content).unwrap();
+        let path = PathBuf::from("/home/user/.config/fa/recipes.d/skills.toml");
+        annotate_sources(&mut config, &path, content);
+
+        let recipe = config.recipes.get("my-app").unwrap();
+        assert_eq!(recipe.source_file.as_ref(), Some(&path));
+        assert_eq!(recipe.source_line, Some(2));
+
+        let ls_cmd = &config.aliases[":skills"]["ls"];
+        assert_eq!(ls_cmd.source_file.as_ref(), Some(&path));
+        assert_eq!(ls_cmd.source_line, Some(8));
+    }
+
+    #[test]
+    fn test_expand_env_value() {
+        let orig_home = std::env::var("HOME").ok();
+        unsafe { std::env::set_var("HOME", "/custom/home"); }
+        unsafe { std::env::set_var("MY_TEST_VAR", "hello"); }
+
+        let expanded = expand_env_value("$HOME/bin:$MY_TEST_VAR");
+        assert_eq!(expanded, "/custom/home/bin:hello");
+
+        let tilde_expanded = expand_env_value("~/models/coder.gguf");
+        assert_eq!(tilde_expanded, "/custom/home/models/coder.gguf");
+
+        if let Some(h) = orig_home {
+            unsafe { std::env::set_var("HOME", h); }
+        }
+        unsafe { std::env::remove_var("MY_TEST_VAR"); }
+    }
+
+    #[test]
+    fn test_resolve_alias_env_fallback_and_force() {
+        let toml_str = r#"
+[aliases.":ai"]
+_env = { CONTEXT = "2048", FALLBACK_VAR = "ns_fallback" }
+_env_force = { BACKEND = "llama-cpp", FORCE_VAR = "ns_force" }
+
+coder = { command = "llama-cli", env = { FALLBACK_VAR = "cmd_fallback", CMD_ONLY = "1" }, env_force = { FORCE_VAR = "cmd_force", MODEL_PATH = "/models/coder.gguf" } }
+"#;
+        let config: Config = toml::from_str(toml_str).expect("Should deserialize config with _env and _env_force");
+
+        // Verify deserialization
+        assert_eq!(config.alias_env[":ai"]["CONTEXT"], "2048");
+        assert_eq!(config.alias_env[":ai"]["FALLBACK_VAR"], "ns_fallback");
+        assert_eq!(config.alias_env_force[":ai"]["BACKEND"], "llama-cpp");
+        assert_eq!(config.alias_env_force[":ai"]["FORCE_VAR"], "ns_force");
+
+        let cmd = &config.aliases[":ai"]["coder"];
+        assert_eq!(cmd.env["FALLBACK_VAR"], "cmd_fallback");
+        assert_eq!(cmd.env_force["MODEL_PATH"], "/models/coder.gguf");
+
+        // Test resolution:
+        unsafe { std::env::set_var("CONTEXT", "8192"); }
+        unsafe { std::env::set_var("BACKEND", "vllm"); }
+
+        let env_list = resolve_alias_env(&config, ":ai", cmd);
+        let env_map: std::collections::HashMap<String, String> = env_list.into_iter().collect();
+
+        // 1. CONTEXT is in _env (fallback), but system already has CONTEXT=8192 -> must NOT be injected
+        assert!(!env_map.contains_key("CONTEXT"), "Fallback variable already set in system must not be injected");
+
+        // 2. CMD_ONLY is in cmd.env (fallback) and not in system -> must be injected
+        assert_eq!(env_map.get("CMD_ONLY").map(|s| s.as_str()), Some("1"));
+
+        // 3. BACKEND is in _env_force and system has BACKEND=vllm -> must be injected with llama-cpp
+        assert_eq!(env_map.get("BACKEND").map(|s| s.as_str()), Some("llama-cpp"));
+
+        // 4. FORCE_VAR is in cmd.env_force ("cmd_force") and _env_force ("ns_force") -> cmd.env_force wins
+        assert_eq!(env_map.get("FORCE_VAR").map(|s| s.as_str()), Some("cmd_force"));
+
+        // 5. MODEL_PATH is in cmd.env_force -> must be injected
+        assert_eq!(env_map.get("MODEL_PATH").map(|s| s.as_str()), Some("/models/coder.gguf"));
+
+        unsafe { std::env::remove_var("CONTEXT"); }
+        unsafe { std::env::remove_var("BACKEND"); }
+    }
+
+    #[test]
+    fn test_parse_env_string_bash_export_format() {
+        let single = parse_env_string("export AI_IMAGE_MODEL=\"$AI_MODELS_DIR/vision/model.safetensors\"");
+        assert_eq!(
+            single.get("AI_IMAGE_MODEL").map(|s| s.as_str()),
+            Some("$AI_MODELS_DIR/vision/model.safetensors")
+        );
+
+        let multi = parse_env_string("export MODEL=\"qwen.gguf\" && export THREADS=\"8\"");
+        assert_eq!(multi.get("MODEL").map(|s| s.as_str()), Some("qwen.gguf"));
+        assert_eq!(multi.get("THREADS").map(|s| s.as_str()), Some("8"));
+
+        let no_export = parse_env_string("FOO=bar && BAZ='hello world'");
+        assert_eq!(no_export.get("FOO").map(|s| s.as_str()), Some("bar"));
+        assert_eq!(no_export.get("BAZ").map(|s| s.as_str()), Some("hello world"));
+    }
+
+    #[test]
+    fn test_vars_and_bash_export_integration() {
+        let toml_str = r#"
+[vars]
+GLOBAL_BIN = "sd-cli"
+
+[aliases.":ai"]
+_vars = { SD = "{{GLOBAL_BIN}} --steps 25 -m $AI_IMAGE_MODEL", SD_DESCRIPTION = "Generar imagen con SD" }
+
+create-img-anima = { description = "{{SD_DESCRIPTION}} estilo anime: <prompt> <output>", command = "{{SD}}", env_force = 'export AI_IMAGE_MODEL="$AI_MODELS_DIR/vision/anima.safetensors"' }
+"#;
+        let config: Config = toml::from_str(toml_str).expect("Should parse TOML with _vars and bash-style env_force");
+
+        let cmd = &config.aliases[":ai"]["create-img-anima"];
+        assert_eq!(
+            cmd.command,
+            "sd-cli --steps 25 -m $AI_IMAGE_MODEL",
+            "{{SD}} must be replaced by expanded template variable"
+        );
+        assert_eq!(
+            cmd.description.as_deref(),
+            Some("Generar imagen con SD estilo anime: <prompt> <output>"),
+            "{{SD_DESCRIPTION}} must be replaced in description"
+        );
+        assert_eq!(
+            cmd.env_force.get("AI_IMAGE_MODEL").map(|s| s.as_str()),
+            Some("$AI_MODELS_DIR/vision/anima.safetensors"),
+            "env_force bash string must be parsed into env_force map"
+        );
+    }
 }
+
 

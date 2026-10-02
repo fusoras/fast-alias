@@ -167,7 +167,6 @@ pub(crate) fn execute_create_step(
     Ok(())
 }
 
-/// Recursively copies a directory.
 pub(crate) fn copy_dir_recursive(src: &Path, dest: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(dest)?;
     for entry in fs::read_dir(src)? {
@@ -399,7 +398,6 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
         };
     }
 
-    // 1. Create base
     let original_cwd = std::env::current_dir().unwrap_or_else(|_| Path::new(".").to_path_buf());
     // Whether a project directory already existed before this run. A directory
     // that existed beforehand is NEVER removed, even on internal failures.
@@ -430,7 +428,6 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                 }
             }
 
-        // 2. Write files
         println!("\nWriting configuration files:");
         let mut errors: Vec<String> = Vec::new();
         let mut written = 0usize;
@@ -506,7 +503,6 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
         // recoverable (e.g. dependency installation) and must keep the project.
         scaffold_ok = true;
 
-        // 2.5 Execute create steps (packs/components file copy)
         if !components.is_empty() {
             println!("\nInstalling components:");
             let templates_dir = Config::resolve_templates_dir(recipe);
@@ -522,7 +518,6 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
             }
         }
 
-        // 3. Steps
         if !recipe.steps.is_empty() {
             let last_install_idx = recipe.steps.iter().rposition(|s| s.install);
             println!("\nSteps:");
@@ -582,7 +577,6 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
     })();
 
     if let Err(e) = flow_result {
-        // Always restore the original working directory.
         let _ = std::env::set_current_dir(&original_cwd);
 
         let project_path = Path::new(&opts.project_name);
@@ -753,6 +747,102 @@ enum OutputMode {
     Captured,
 }
 
+pub const FA_CALL_STACK_ENV: &str = "_FA_CALL_STACK";
+
+/// Checks for direct self-referential recursion in an alias command string.
+/// Detects patterns where `alias_name` directly invokes `fa <alias_name>` or `fa -a <alias_name>` / `fa --alias <alias_name>`
+/// across pipeline segments (`&&`, `||`, `;`, `|`, `&`, `\n`).
+pub fn check_self_recursion(alias_name: &str, cmd_str: &str) -> anyhow::Result<()> {
+    let clean_alias = alias_name.trim();
+    if clean_alias.is_empty() {
+        return Ok(());
+    }
+
+    for segment in cmd_str.split(['&', '|', ';', '\n']) {
+        let trimmed = segment.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+        if tokens.is_empty() {
+            continue;
+        }
+
+        let mut idx = 0;
+        while idx < tokens.len() && tokens[idx].contains('=') && !tokens[idx].starts_with('-') {
+            idx += 1;
+        }
+        if idx >= tokens.len() {
+            continue;
+        }
+
+        let cmd_token = tokens[idx].trim_matches(['\'', '"', '(', '{']);
+        let is_fa = cmd_token == "fa" || cmd_token.ends_with("/fa");
+        if !is_fa {
+            continue;
+        }
+
+        let args = &tokens[idx + 1..];
+        if args.is_empty() {
+            continue;
+        }
+
+        let raw_args = args.join(" ");
+        let normalized_args = raw_args.replace(['\'', '"'], "");
+        let normalized_args = normalized_args.trim();
+
+        let target = if let Some(rest) = normalized_args.strip_prefix("--alias=") {
+            rest.trim()
+        } else if let Some(rest) = normalized_args.strip_prefix("--alias") {
+            rest.trim_start_matches('=').trim()
+        } else if let Some(rest) = normalized_args.strip_prefix("-a") {
+            rest.trim_start_matches('=').trim()
+        } else {
+            normalized_args
+        };
+
+        if target == clean_alias || target.starts_with(&format!("{clean_alias} ")) {
+            anyhow::bail!(
+                "Direct self-referential alias recursion detected: alias '{}' invokes 'fa {}'",
+                clean_alias,
+                target
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Checks the dynamic call stack in `_FA_CALL_STACK` for circular recursion.
+/// Returns the updated call stack string to be passed via environment to child processes.
+pub fn check_circular_recursion(alias_name: &str) -> anyhow::Result<String> {
+    let clean = alias_name.trim();
+    if clean.is_empty() {
+        return Ok(String::new());
+    }
+
+    if let Ok(stack_val) = std::env::var(FA_CALL_STACK_ENV) {
+        let stack_val = stack_val.trim();
+        if !stack_val.is_empty() {
+            let items: Vec<&str> = stack_val.split(':').filter(|s| !s.is_empty()).collect();
+            if items.contains(&clean) {
+                let cycle = format!("{} -> {}", items.join(" -> "), clean);
+                anyhow::bail!("Circular alias recursion detected: {cycle}");
+            }
+            if items.len() >= 10 {
+                anyhow::bail!(
+                    "Alias call stack limit exceeded (max 10 levels): {}",
+                    items.join(" -> ")
+                );
+            }
+            return Ok(format!("{stack_val}:{clean}"));
+        }
+    }
+
+    Ok(clean.to_string())
+}
+
 /// Executes a shell command, forwarding stdout/stderr.
 ///
 /// When the command runs without an interactive terminal (stdin is not a TTY),
@@ -761,7 +851,13 @@ enum OutputMode {
 /// install. In an interactive terminal the user answers prompts normally.
 pub fn run_shell(command: &str) -> anyhow::Result<()> {
     use std::io::IsTerminal;
-    run_shell_inner(command, !std::io::stdin().is_terminal(), OutputMode::Inherit, None)
+    run_shell_inner(command, !std::io::stdin().is_terminal(), OutputMode::Inherit, None, &[])
+}
+
+/// Executes a shell command forwarding stdout/stderr, passing additional environment variables to the child process.
+pub fn run_shell_with_env(command: &str, extra_env: &[(&str, &str)]) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+    run_shell_inner(command, !std::io::stdin().is_terminal(), OutputMode::Inherit, None, extra_env)
 }
 
 /// Executes a shell command while showing an animated spinner with `label` on
@@ -769,7 +865,7 @@ pub fn run_shell(command: &str) -> anyhow::Result<()> {
 /// its line is erased) before any error excerpt is printed.
 pub fn run_shell_quiet_with_spinner(command: &str, label: &str) -> anyhow::Result<()> {
     use std::io::IsTerminal;
-    run_shell_inner(command, !std::io::stdin().is_terminal(), OutputMode::Captured, Some(label))
+    run_shell_inner(command, !std::io::stdin().is_terminal(), OutputMode::Captured, Some(label), &[])
 }
 
 /// Number of captured output lines shown when a quiet command fails.
@@ -808,6 +904,7 @@ fn run_shell_inner(
     auto_answer: bool,
     mode: OutputMode,
     label: Option<&str>,
+    extra_env: &[(&str, &str)],
 ) -> anyhow::Result<()> {
     use std::io::Write;
     use std::process::Stdio;
@@ -815,12 +912,18 @@ fn run_shell_inner(
     let captured = mode == OutputMode::Captured;
     let spinner = if captured { crate::spinner::Spinner::start(label) } else { None };
 
-    let mut child = Command::new("sh")
-        .arg("-c")
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
         .arg(command)
         .stdin(if auto_answer { Stdio::piped() } else { Stdio::inherit() })
         .stdout(if captured { Stdio::piped() } else { Stdio::inherit() })
-        .stderr(if captured { Stdio::piped() } else { Stdio::inherit() })
+        .stderr(if captured { Stdio::piped() } else { Stdio::inherit() });
+
+    for &(k, v) in extra_env {
+        cmd.env(k, v);
+    }
+
+    let mut child = cmd
         .spawn()
         .map_err(|e| anyhow::anyhow!("Failed to execute '{command}': {e}"))?;
 
@@ -1083,6 +1186,7 @@ mod tests {
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -1177,6 +1281,7 @@ mod tests {
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
         let mut config = Config::default();
         config.recipes.insert("test".to_string(), recipe);
@@ -1280,6 +1385,7 @@ mod tests {
             true,
             OutputMode::Inherit,
             None,
+            &[],
         );
         assert!(result.is_ok(), "Auto-answered prompt should succeed: {result:?}");
         println!("   ✓ Confirmation prompt auto-answered with `y`.\n");
@@ -1288,7 +1394,7 @@ mod tests {
     #[test]
     fn run_shell_should_report_failing_command() {
         println!("\n🔍 [TEST] Shell — failing command surfaces the exit status");
-        let result = run_shell_inner("exit 3", true, OutputMode::Inherit, None);
+        let result = run_shell_inner("exit 3", true, OutputMode::Inherit, None, &[]);
         assert!(result.is_err(), "Non-zero exit must surface as an error");
         let msg = format!("{result:?}");
         assert!(msg.contains("3"), "Error should mention the exit status: {msg}");
@@ -1299,9 +1405,9 @@ mod tests {
     fn run_shell_quiet_should_capture_output_and_still_report_failure() {
         println!("\n🔍 [TEST] Shell — quiet mode captures output and still reports failures");
         // Quiet mode must succeed on success and surface a failure the same way.
-        let ok = run_shell_inner("echo hidden", true, OutputMode::Captured, None);
+        let ok = run_shell_inner("echo hidden", true, OutputMode::Captured, None, &[]);
         assert!(ok.is_ok(), "Quiet success must not fail: {ok:?}");
-        let err = run_shell_inner("exit 4", true, OutputMode::Captured, None);
+        let err = run_shell_inner("exit 4", true, OutputMode::Captured, None, &[]);
         assert!(err.is_err(), "Quiet failure must surface as an error");
         let msg = format!("{err:?}");
         assert!(msg.contains("4"), "Quiet error should mention the exit status: {msg}");
@@ -1392,6 +1498,7 @@ mod tests {
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
         let line = format_list_line("demo", &recipe);
         assert!(line.contains("demo"));
@@ -1422,6 +1529,7 @@ mod tests {
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
         let vars = HashMap::new();
         let msg = resolve_final_message(&recipe, "my-go-tool", &vars);
@@ -1531,6 +1639,7 @@ components = ["toggle-theme"]
             templates_dir: None,
             default_pack: Some("default".to_string()),
             packs: Default::default(),
+            ..Default::default()
         };
         let (components, desc) = resolve_components(&recipe, &Some("toggle-theme".to_string()), &None).unwrap();
         assert_eq!(components, vec!["toggle-theme"]);
@@ -1560,6 +1669,7 @@ components = ["toggle-theme"]
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
         let res = resolve_components(&recipe, &None, &Some("nonexistent-pack".to_string()));
         assert!(res.is_err(), "Must return error on missing pack");
@@ -1602,6 +1712,7 @@ components = ["toggle-theme", "btn-ally"]
             templates_dir: None,
             default_pack: Some("default".to_string()),
             packs: Default::default(),
+            ..Default::default()
         };
         let (components, desc) =
             resolve_components(&recipe, &None, &Some("wc-ui".to_string())).unwrap();
@@ -1761,6 +1872,7 @@ components = ["toggle-theme", "btn-ally"]
             description: Some("Build the project".to_string()),
             platform: None,
             aliases: vec!["fb".to_string(), "bld".to_string()],
+            ..Default::default()
         };
 
         let line = format_command_line("build", &cmd);
@@ -2095,6 +2207,7 @@ free = { command = "free -h", description = "Free memory" }
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         }
     }
 
@@ -2231,6 +2344,7 @@ free = { command = "free -h", description = "Free memory" }
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
         let inputs = vec!["create {{name}}".to_string()];
         let mut vars = HashMap::new();
@@ -2262,6 +2376,7 @@ free = { command = "free -h", description = "Free memory" }
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
         let vars = HashMap::new();
         let msg = resolve_final_message(&recipe, "my-app", &vars);
@@ -2295,6 +2410,7 @@ free = { command = "free -h", description = "Free memory" }
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), "my-app".to_string());
@@ -2329,6 +2445,7 @@ free = { command = "free -h", description = "Free memory" }
             templates_dir: None,
             default_pack: None,
             packs: Default::default(),
+            ..Default::default()
         };
         let vars = HashMap::new();
         let msg = resolve_final_message(&recipe, "my-go-tool", &vars);
@@ -2357,6 +2474,7 @@ free = { command = "free -h", description = "Free memory" }
             templates_dir: None,
             default_pack: Some("toggle-theme".to_string()),
             packs: Default::default(),
+            ..Default::default()
         };
         let out = format_recipe_packs_and_components(&recipe, "wc-lib");
         assert!(out.contains("[Recipe] wc-lib"));
@@ -2365,5 +2483,59 @@ free = { command = "free -h", description = "Free memory" }
         assert!(out.contains("Default pack:"));
         assert!(out.contains("toggle-theme"));
         assert!(out.contains("fa new wc-lib <pack>"));
+    }
+
+    #[test]
+    fn test_check_self_recursion_detects_direct_loop() {
+        assert!(check_self_recursion("bucle", "fa bucle").is_err());
+        assert!(check_self_recursion("bucle", "fa --alias bucle").is_err());
+        assert!(check_self_recursion("bucle", "fa -a bucle").is_err());
+        assert!(check_self_recursion("bucle", "VAR=1 fa bucle").is_err());
+        assert!(check_self_recursion("bucle", "echo ok && fa bucle").is_err());
+        assert!(check_self_recursion("skills ls", "fa skills ls").is_err());
+        assert!(check_self_recursion("skills ls", "fa -a \"skills ls\"").is_err());
+    }
+
+    #[test]
+    fn test_check_self_recursion_allows_non_recursive() {
+        assert!(check_self_recursion("bucle", "fa --list").is_ok());
+        assert!(check_self_recursion("bucle", "fa other_cmd").is_ok());
+        assert!(check_self_recursion("bucle", "echo 'fa bucle'").is_ok());
+    }
+
+    #[test]
+    fn test_check_circular_recursion_detects_cycle() {
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let orig = std::env::var_os(FA_CALL_STACK_ENV);
+        unsafe { std::env::set_var(FA_CALL_STACK_ENV, "alias_a:alias_b"); }
+
+        let res = check_circular_recursion("alias_a");
+        assert!(res.is_err(), "Must detect cycle when alias_a is already in stack");
+        let msg = res.unwrap_err().to_string();
+        assert!(msg.contains("Circular alias recursion detected"));
+        assert!(msg.contains("alias_a -> alias_b -> alias_a"));
+
+        if let Some(v) = orig {
+            unsafe { std::env::set_var(FA_CALL_STACK_ENV, v); }
+        } else {
+            unsafe { std::env::remove_var(FA_CALL_STACK_ENV); }
+        }
+    }
+
+    #[test]
+    fn test_check_circular_recursion_allows_linear_chain() {
+        let _guard = cwd_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let orig = std::env::var_os(FA_CALL_STACK_ENV);
+        unsafe { std::env::set_var(FA_CALL_STACK_ENV, "alias_a"); }
+
+        let res = check_circular_recursion("alias_b");
+        assert!(res.is_ok(), "Linear call alias_a -> alias_b must be allowed");
+        assert_eq!(res.unwrap(), "alias_a:alias_b");
+
+        if let Some(v) = orig {
+            unsafe { std::env::set_var(FA_CALL_STACK_ENV, v); }
+        } else {
+            unsafe { std::env::remove_var(FA_CALL_STACK_ENV); }
+        }
     }
 }
