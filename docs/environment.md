@@ -204,5 +204,6 @@ Command: sd-cli --steps 25 --cfg-scale 7.0 -m $AI_IMAGE_MODEL
 ---
 
 ## 8. Related Documentation
+- For static template variables (`_vars` and `[vars]`), see [variables.md](variables.md).
 - For recipe and pack authoring specifications, see [recipes.md](recipes.md).
 - For complete CLI commands and reference options, see [commands.md](commands.md).

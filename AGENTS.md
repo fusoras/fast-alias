@@ -30,6 +30,7 @@ For detailed architecture, roadmap, CLI reference, recipe schema, unit testing, 
 - Recipes and Configuration: @docs/recipes.md
 - CLI Reference & Commands: @docs/commands.md
 - Alias Environment Variables Guide: @docs/environment.md
+- Static Template Variables Guide: @docs/variables.md
 - Implementation Notes: @.agents/docs/implementation.md
 - Unit Testing Guide: @.agents/docs/testing.md
 - Versioning & Release Guide: @.agents/docs/versioning.md
