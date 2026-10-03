@@ -28,7 +28,10 @@
 
 ## Next 🔲
 
-- Commands drift: `docs/commands.md` + `README.md` document `fa sync`, `fa alias --dry-run`, and `$PAGER` paging — none exist in `Commands` (`src/main.rs`); implement or remove from docs
+- **1. Search description parity (`fa --search`)**: include `recipe.description` in `fa --search` search haystack to achieve parity with `all_commands()` command descriptions.
+- **2. Interactive recipe picker on bare `fa -n` (TTY only)**: when `fa --new` / `fa -n` is run without arguments in an interactive terminal, prompt the user with a numbered list of available recipes instead of aborting with a missing-argument error.
+- **3. Namespace argument signatures in help**: extract and display positional argument signatures (e.g. `<arg1> <arg2>` inferred from `$1`, `$2` or placeholders) beside command descriptions in `fa <namespace>` listings.
+- **4. Variable typo suggestions in `fa -r validate`**: provide "Did you mean?" suggestions using Levenshtein distance for undeclared variable placeholders in `[[steps]]` that closely match declared `[variables]`.
 - Pinning beyond Node: `pin_versions` only handles `package.json`; decide TOML-declared per-ecosystem rules vs keep Node-only
 
 ## Proposed features (research-backed, medium-term roadmap)
@@ -52,10 +55,12 @@ Cross-referenced against similar tools (copier, chezmoi, cargo-generate, mise, j
 ### Vision (L — only if product grows, explicit user request)
 
 - Update-in-place / re-sync of scaffolded projects (copier `update`, cruft) — `state.toml` already tracks projects; needs 3-way merge
-- Shared recipe catalog / gallery (cookiecutter catalog) — only if social ecosystem wanted; related to deferred `fa sync`
 
-### Rejected (violates principles)
+### Rejected (violates principles or discarded per user decision)
 
+- `fa sync` & remote catalog syncing → discarded per user decision; keep configurations local in `~/.config/fa/` or personal dotfiles
+- `fa alias --dry-run` → discarded per user decision; command inspection is handled cleanly via `fa --show` / `fa -sh`
+- Automatic pager (`$PAGER` / `less`) → discarded per user decision; output is printed directly to `stdout` for fast shell interaction and Termux ergonomics
 - `recipes.local.toml` machine override → discarded per user decision; keep configurations in `recipes.d/` or dotfiles
 - Shell completions (dynamic or static scripts) → unnecessary maintenance overhead; commands are short and direct
 - Per-invocation long flags (`--ts --eslint…`) → breaks Short Commands; use TOML toggles
@@ -64,6 +69,3 @@ Cross-referenced against similar tools (copier, chezmoi, cargo-generate, mise, j
 - Secrets/password-manager integration (chezmoi) → token-leak surface
 - Per-stack hardcoded branches in Rust → absolute Recipe Player violation
 
-## Future (explicitly not implemented)
-
-- `fa sync` catalog refresh, pager/`less` output, `[apply]` — referenced nowhere in code; only build on explicit user request

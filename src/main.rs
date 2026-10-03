@@ -351,6 +351,26 @@ fn is_scaffold_recipe(recipe: &crate::config::Recipe) -> bool {
     recipe.create.is_some() || !recipe.files.is_empty() || !recipe.steps.is_empty()
 }
 
+pub(crate) fn recipe_matches_search(
+    key: &str,
+    recipe: &crate::config::Recipe,
+    query: &str,
+) -> bool {
+    let q = query.to_lowercase();
+    let mut haystack = format!("{key} {}", recipe.name.to_lowercase());
+    haystack.push(' ');
+    haystack.push_str(&recipe.aliases.join(" "));
+    if let Some(lang) = &recipe.language {
+        haystack.push(' ');
+        haystack.push_str(&lang.to_lowercase());
+    }
+    haystack.push(' ');
+    haystack.push_str(&recipe.variants.join(" "));
+    haystack.push(' ');
+    haystack.push_str(&recipe.description.to_lowercase());
+    haystack.contains(&q)
+}
+
 /// Asks the user once (per config path) whether they trust the shell commands
 /// defined in their personal config. The answer is persisted in state.toml, so
 /// subsequent runs never prompt again for the same path ("one covers all": the
@@ -765,15 +785,7 @@ fn main() -> anyhow::Result<()> {
                 if !is_scaffold_recipe(recipe) {
                     continue;
                 }
-                let mut haystack = format!("{key} {}", recipe.name.to_lowercase());
-                haystack.push_str(&recipe.aliases.join(" "));
-                if let Some(lang) = &recipe.language {
-                    haystack.push(' ');
-                    haystack.push_str(&lang.to_lowercase());
-                }
-                haystack.push(' ');
-                haystack.push_str(&recipe.variants.join(" "));
-                if haystack.contains(&q) {
+                if recipe_matches_search(key, recipe, &query) {
                     recipes.push(format_list_line(key, recipe));
                 }
             }
@@ -2112,5 +2124,18 @@ description = "Next.js TS"
         assert!(is_help_or_version_cmd(&["fa".into(), "-r".into(), "new".into(), "--help".into()]));
         assert!(!is_help_or_version_cmd(&["fa".into(), "-r".into(), "new".into(), "example".into()]));
         assert!(!is_help_or_version_cmd(&["fa".into(), "-l".into()]));
+    }
+
+    #[test]
+    fn test_search_recipes_matches_description() {
+        let recipe = crate::config::Recipe {
+            name: "web-app".to_string(),
+            description: "Fullstack template with SQLite database".to_string(),
+            ..Default::default()
+        };
+        assert!(
+            recipe_matches_search("web", &recipe, "sqlite"),
+            "expected recipe search to match keyword in recipe.description"
+        );
     }
 }
