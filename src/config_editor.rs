@@ -419,6 +419,134 @@ impl UiIcons {
             "->"
         }
     }
+
+    /// Gear / config icon for title.
+    /// Universal: ""
+    /// Nerd Font: " " (\u{f013})
+    pub fn gear(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f013} "
+        } else {
+            ""
+        }
+    }
+
+    /// Config file / TOML icon.
+    /// Universal: ""
+    /// Nerd Font: " " (\u{e615})
+    pub fn file_config(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{e615} "
+        } else {
+            ""
+        }
+    }
+
+    /// Packages / packs icon.
+    /// Universal: ""
+    /// Nerd Font: " " (\u{f487})
+    pub fn package(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f487} "
+        } else {
+            ""
+        }
+    }
+
+    /// Terminal / shell alias icon.
+    /// Universal: ""
+    /// Nerd Font: " " (\u{f120})
+    pub fn terminal(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f120} "
+        } else {
+            ""
+        }
+    }
+
+    /// Palette / icon style icon.
+    /// Universal: ""
+    /// Nerd Font: "󰏘 " (\u{f03d8})
+    pub fn palette(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f03d8} "
+        } else {
+            ""
+        }
+    }
+
+    /// Editor / pencil icon.
+    /// Universal: ""
+    /// Nerd Font: " " (\u{f044})
+    pub fn editor(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f044} "
+        } else {
+            ""
+        }
+    }
+
+    /// Reset / restore icon.
+    /// Universal: ""
+    /// Nerd Font: " " (\u{f01e})
+    pub fn reset(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f01e} "
+        } else {
+            ""
+        }
+    }
+
+    /// Content save / disk icon.
+    /// Universal: ""
+    /// Nerd Font: "󰆓 " (\u{f0193})
+    pub fn save(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f0193} "
+        } else {
+            ""
+        }
+    }
+
+    /// Cancel / cross icon.
+    /// Universal: ""
+    /// Nerd Font: " " (\u{f00d})
+    pub fn cancel(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f00d} "
+        } else {
+            ""
+        }
+    }
+
+    /// Trash / delete icon.
+    /// Universal: "− "
+    /// Nerd Font: " " (\u{f014})
+    pub fn trash(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f014} "
+        } else {
+            "− "
+        }
+    }
+
+    /// Badge for shell aliases.
+    pub fn shell_badge(&self) -> &'static str {
+        if self.nerd_fonts {
+            "[ shell]"
+        } else {
+            "[shell]"
+        }
+    }
+
+    /// Badge for native aliases.
+    pub fn native_badge(&self) -> &'static str {
+        if self.nerd_fonts {
+            "[ native]"
+        } else {
+            "[native]"
+        }
+    }
 }
 
 /// Applies a `ConfigDelta` to existing `config.toml` content using `toml_edit`
@@ -659,11 +787,13 @@ impl ConfigEditor {
             }
             let mut lines = 0;
             let path_str = format_path_with_tilde(&self.config_path);
-            let prefix = format!("  Fast-Alias Configuration  {}  ", icons.dot());
+            let title_text = format!("{}Fast-Alias Configuration", icons.gear());
+            let file_text = format!("{}{path_str}", icons.file_config());
+            let prefix = format!("  {title_text}  {}  ", icons.dot());
             let min_inner_w = 61;
-            let content_w = prefix.chars().count() + path_str.chars().count() + 2;
+            let content_w = prefix.chars().count() + file_text.chars().count() + 2;
             let inner_w = content_w.max(min_inner_w);
-            let right_pad = " ".repeat(inner_w.saturating_sub(prefix.chars().count() + path_str.chars().count()));
+            let right_pad = " ".repeat(inner_w.saturating_sub(prefix.chars().count() + file_text.chars().count()));
 
             writeln!(
                 output,
@@ -673,7 +803,7 @@ impl ConfigEditor {
             lines += 1;
             writeln!(
                 output,
-                "{BOLD_CYAN}│{RESET}  {BOLD_WHITE}Fast-Alias Configuration{RESET}  {DIM}{}{RESET}  {DIM}{path_str}{RESET}{right_pad}{BOLD_CYAN}│{RESET}",
+                "{BOLD_CYAN}│{RESET}  {BOLD_WHITE}{title_text}{RESET}  {DIM}{}{RESET}  {DIM}{file_text}{RESET}{right_pad}{BOLD_CYAN}│{RESET}",
                 icons.dot()
             )?;
             lines += 1;
@@ -732,10 +862,21 @@ impl ConfigEditor {
                         _ => String::new(),
                     };
 
+                    let item_label = match idx {
+                        0 => format!("{}Packs default behavior", icons.package()),
+                        1 => format!("{}Command aliases", icons.terminal()),
+                        2 => format!("{}Icon style", icons.palette()),
+                        3 => format!("{}Open in editor", icons.editor()),
+                        4 => format!("{}Reset to defaults", icons.reset()),
+                        5 => format!("{}Save and exit", icons.save()),
+                        6 => format!("{}Cancel", icons.cancel()),
+                        _ => item.to_string(),
+                    };
+
                     if is_sel {
-                        writeln!(output, "  {marker} {BOLD_WHITE}{item}{RESET}{detail}")?;
+                        writeln!(output, "  {marker} {BOLD_WHITE}{item_label}{RESET}{detail}")?;
                     } else {
-                        writeln!(output, "  {marker} {item}{detail}")?;
+                        writeln!(output, "  {marker} {item_label}{detail}")?;
                     }
                     lines += 1;
                 }
@@ -1045,8 +1186,10 @@ impl ConfigEditor {
         input: &mut R,
         output: &mut W,
     ) -> anyhow::Result<()> {
+        let icons = UiIcons::new(self.is_nerd_fonts());
+        let back_label = icons.back_label();
         let options = [
-            ("[<- Back]", "", ""),
+            (back_label, "", ""),
             (
                 "unicode",
                 "Universal Unicode symbols",
@@ -1055,7 +1198,7 @@ impl ConfigEditor {
             (
                 "nerd-font",
                 "Nerd Font developer glyphs",
-                "          ",
+                "                      󰆓",
             ),
         ];
 
@@ -1302,9 +1445,9 @@ impl ConfigEditor {
                     };
 
                     let badge = if v.starts_with('!') {
-                        format!("{BOLD_MAGENTA}[shell]{RESET}")
+                        format!("{BOLD_MAGENTA}{}{RESET}", icons.shell_badge())
                     } else {
-                        format!("{BOLD_CYAN}[native]{RESET}")
+                        format!("{BOLD_CYAN}{}{RESET}", icons.native_badge())
                     };
 
                     if is_sel {
@@ -1452,8 +1595,8 @@ impl ConfigEditor {
                     if delete_sel == 0 {
                         self.aliases.remove(alias_name);
                         self.status_message = Some(format!(
-                            "{BOLD_YELLOW}{} Deleted alias '{alias_name}'{RESET}",
-                            icons.check()
+                            "{BOLD_YELLOW}{}Deleted alias '{alias_name}'{RESET}",
+                            icons.trash()
                         ));
                     }
                     if last_lines_drawn > 0 {
@@ -2619,8 +2762,8 @@ nerd_fonts = true
             "Must render universal unicode glyph preview: ( ▸  ✔  •  ›  -> ), rendered:\n{rendered}"
         );
         assert!(
-            rendered.contains("( \u{f054}  \u{f00c}  \u{f444}  \u{f060}  \u{f067}  \u{f061} )"),
-            "Must render Nerd Font glyph preview: (            ), rendered:\n{rendered}"
+            rendered.contains("( \u{f054}  \u{f00c}  \u{f444}  \u{f060}  \u{f067}  \u{f061}  \u{f013}  \u{f487}  \u{f120}  \u{f044}  \u{f01e}  \u{f0193} )"),
+            "Must render Nerd Font glyph preview, rendered:\n{rendered}"
         );
         assert_eq!(editor.icon_style, "nerd-font");
         assert!(editor.is_nerd_fonts());
@@ -2664,6 +2807,60 @@ nerd_fonts = true
             rendered_aliases.contains("\u{f061}"),
             "Aliases table must render Nerd Font arrow '\\u{{f061}}', rendered:\n{rendered_aliases}"
         );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_ui_icons_nerd_font_repertoire_and_main_menu_rendering() {
+        let universal = UiIcons::new(false);
+        assert_eq!(universal.gear(), "");
+        assert_eq!(universal.file_config(), "");
+        assert_eq!(universal.package(), "");
+        assert_eq!(universal.terminal(), "");
+        assert_eq!(universal.palette(), "");
+        assert_eq!(universal.editor(), "");
+        assert_eq!(universal.reset(), "");
+        assert_eq!(universal.save(), "");
+        assert_eq!(universal.cancel(), "");
+        assert_eq!(universal.trash(), "− ");
+        assert_eq!(universal.shell_badge(), "[shell]");
+        assert_eq!(universal.native_badge(), "[native]");
+
+        let nerd = UiIcons::new(true);
+        assert_eq!(nerd.gear(), "\u{f013} ", "Must return FontAwesome gear glyph");
+        assert_eq!(nerd.file_config(), "\u{e615} ");
+        assert_eq!(nerd.package(), "\u{f487} ");
+        assert_eq!(nerd.terminal(), "\u{f120} ");
+        assert_eq!(nerd.palette(), "\u{f03d8} ");
+        assert_eq!(nerd.editor(), "\u{f044} ");
+        assert_eq!(nerd.reset(), "\u{f01e} ");
+        assert_eq!(nerd.save(), "\u{f0193} ");
+        assert_eq!(nerd.cancel(), "\u{f00d} ");
+        assert_eq!(nerd.trash(), "\u{f014} ");
+        assert_eq!(nerd.shell_badge(), "[ shell]");
+        assert_eq!(nerd.native_badge(), "[ native]");
+
+        // Test interactive menu rendering with nerd fonts:
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-nf-menu-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        editor.icon_style = "nerd-font".to_string();
+        let mut out = Vec::new();
+        editor.run(&mut &b"\x1b"[..], &mut out).unwrap();
+        let rendered = String::from_utf8_lossy(&out);
+
+        assert!(rendered.contains("\u{f013} Fast-Alias Configuration"), "Must render gear in header");
+        assert!(rendered.contains("\u{e615} "), "Must render config file icon in header");
+        assert!(rendered.contains("\u{f487} Packs default behavior"), "Must render package icon for packs");
+        assert!(rendered.contains("\u{f120} Command aliases"), "Must render terminal icon for aliases");
+        assert!(rendered.contains("\u{f03d8} Icon style"), "Must render palette icon for icon style");
+        assert!(rendered.contains("\u{f044} Open in editor"), "Must render editor icon");
+        assert!(rendered.contains("\u{f01e} Reset to defaults"), "Must render reset icon");
+        assert!(rendered.contains("\u{f0193} Save and exit"), "Must render save icon");
+        assert!(rendered.contains("\u{f00d} Cancel"), "Must render cancel icon");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
