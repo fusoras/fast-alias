@@ -106,6 +106,9 @@ enum Commands {
         #[command(subcommand)]
         action: TemplateAction,
     },
+    /// Configure fast-alias settings and aliases interactively.
+    #[command(name = "--config", visible_alias = "-co")]
+    Config,
     /// Checks GitHub Releases and updates the fa binary in-place.
     #[command(name = "--self-update")]
     SelfUpdate {
@@ -131,9 +134,6 @@ enum Commands {
     NamespaceHelp {
         namespace: String,
     },
-    /// Configure fast-alias settings and aliases interactively.
-    #[command(name = "--config", visible_alias = "-co")]
-    Config,
 }
 
 /// Actions under `fa --recipe`: create, edit, or validate recipe config files.
@@ -1989,6 +1989,24 @@ down = { command = "docker compose down" }
         assert!(
             formatted.contains("   - "),
             "Help output Commands: section must render aligned hyphen separator '   - ', got:\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_cli_help_self_update_and_uninstall_at_end_of_commands() {
+        let mut cmd = Cli::command();
+        let raw_help = cmd.render_help().to_string();
+        let formatted = format_help_with_inline_aliases(&raw_help);
+        let config_pos = formatted.find("-co, --config").expect("should contain -co, --config");
+        let update_pos = formatted.find("--self-update").expect("should contain --self-update");
+        let uninstall_pos = formatted.find("--self-uninstall").expect("should contain --self-uninstall");
+        assert!(
+            config_pos < update_pos,
+            "Expected -co, --config to appear before --self-update, got:\n{formatted}"
+        );
+        assert!(
+            update_pos < uninstall_pos,
+            "Expected --self-update to appear before --self-uninstall, got:\n{formatted}"
         );
     }
 
