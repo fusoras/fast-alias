@@ -584,24 +584,20 @@ impl ConfigEditor {
                     lines += 1;
                 }
             }
-            // Use positional arguments so DIM and RESET are guaranteed expanded
             if self.pending_behavior.is_some() {
                 writeln!(
                     output,
-                    "\n {}Tab/Shift-Tab: cycle value, Enter: confirm, ↑/↓: discard + move, Esc: discard{}",
-                    DIM, RESET
+                    "\n {DIM}Cycle with {RESET}{BOLD_CYAN}Tab{RESET}{DIM}/{RESET}{BOLD_CYAN}Shift-Tab{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to confirm, {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM} to discard + move, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to discard{RESET}"
                 )?;
             } else if selected == 0 {
                 writeln!(
                     output,
-                    "\n {}Navigate with ↑/↓, Enter to select, Tab to cycle value, Esc to cancel{}",
-                    DIM, RESET
+                    "\n {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Tab{RESET}{DIM} to cycle value, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
                 )?;
             } else {
                 writeln!(
                     output,
-                    "\n {}Navigate with ↑/↓, Enter to select, Esc to cancel{}",
-                    DIM, RESET
+                    "\n {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
                 )?;
             }
             lines += 2;
@@ -786,7 +782,7 @@ impl ConfigEditor {
             }
             writeln!(
                 output,
-                "\n {DIM}Navigate with ↑/↓, Enter to select, Esc to return{RESET}"
+                "\n {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to return{RESET}"
             )?;
             lines += 2;
 
@@ -977,8 +973,7 @@ impl ConfigEditor {
 
             writeln!(
                 output,
-                "\n {}Navigate with ↑/↓, Enter to select/delete, Esc to return{}",
-                DIM, RESET
+                "\n {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select/delete, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to return{RESET}"
             )?;
             lines += 2;
 
@@ -1076,8 +1071,7 @@ impl ConfigEditor {
 
             writeln!(
                 output,
-                "\n {}Navigate with ↑/↓, Enter to confirm, Esc to cancel{}",
-                DIM, RESET
+                "\n {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to confirm, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
             )?;
             lines += 2;
 
@@ -1202,8 +1196,7 @@ impl ConfigEditor {
 
             writeln!(
                 output,
-                "\n {}Navigate with ↑/↓, Enter to select, Esc to cancel{}",
-                DIM, RESET
+                "\n {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
             )?;
             plines += 2;
 
@@ -1352,8 +1345,7 @@ impl ConfigEditor {
 
             writeln!(
                 output,
-                "\n {}Navigate with ↑/↓, Enter to select, Esc to cancel{}",
-                DIM, RESET
+                "\n {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
             )?;
             lines += 2;
 
@@ -1785,11 +1777,64 @@ custom = "!echo hello"
 
         let rendered = String::from_utf8_lossy(&out);
         let back_pos = rendered.find("[Back to main menu]").expect("Must render [Back to main menu]");
-        let hint_pos = rendered.find("Navigate with ↑/↓").expect("Must render navigation hint");
+        let hint_pos = rendered.find("Navigate with").expect("Must render navigation hint");
 
         assert!(
             hint_pos > back_pos,
             "Navigation shortcut hint must appear at the BOTTOM, after options: back_pos={back_pos}, hint_pos={hint_pos}"
+        );
+        assert!(
+            rendered.contains(&format!("{BOLD_CYAN}↑/↓{RESET}")),
+            "Menu aliases footer must highlight ↑/↓ in BOLD_CYAN"
+        );
+        assert!(
+            rendered.contains(&format!("{BOLD_CYAN}Enter{RESET}")),
+            "Menu aliases footer must highlight Enter in BOLD_CYAN"
+        );
+        assert!(
+            rendered.contains(&format!("{BOLD_CYAN}Esc{RESET}")),
+            "Menu aliases footer must highlight Esc in BOLD_CYAN"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_footer_shortcuts_are_highlighted_with_color() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-shortcol-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        let mut out = Vec::new();
+        editor.run(&mut &b"\x1b"[..], &mut out).unwrap();
+
+        let rendered = String::from_utf8_lossy(&out);
+        assert!(
+            rendered.contains(&format!("{BOLD_CYAN}↑/↓{RESET}")),
+            "Shortcut ↑/↓ must be highlighted in BOLD_CYAN, rendered:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("{BOLD_CYAN}Enter{RESET}")),
+            "Shortcut Enter must be highlighted in BOLD_CYAN, rendered:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("{BOLD_CYAN}Tab{RESET}")),
+            "Shortcut Tab must be highlighted in BOLD_CYAN, rendered:\n{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!("{BOLD_CYAN}Esc{RESET}")),
+            "Shortcut Esc must be highlighted in BOLD_CYAN, rendered:\n{rendered}"
+        );
+
+        // Also test the pending Tab cycling state footer
+        let mut out_tab = Vec::new();
+        editor.run(&mut &b"\t\x1b"[..], &mut out_tab).unwrap();
+        let rendered_tab = String::from_utf8_lossy(&out_tab);
+        assert!(
+            rendered_tab.contains(&format!("{BOLD_CYAN}Tab{RESET}{DIM}/{RESET}{BOLD_CYAN}Shift-Tab{RESET}")),
+            "Pending cycling footer must highlight Tab/Shift-Tab in BOLD_CYAN, rendered:\n{rendered_tab}"
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
