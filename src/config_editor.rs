@@ -722,12 +722,12 @@ impl ConfigEditor {
             || self.icon_style == "nerdfont"
     }
 
-    /// Checks if a main menu element has unsaved or pending changes.
+    /// Checks if a main menu element has confirmed unsaved changes (excluding pending cycle state).
     pub fn is_item_unsaved(&self, idx: usize) -> bool {
         match idx {
-            0 => self.pending_behavior.is_some() || self.packs_behavior != self.saved_packs_behavior,
+            0 => self.pending_behavior.is_none() && self.packs_behavior != self.saved_packs_behavior,
             1 => self.aliases != self.saved_aliases,
-            2 => self.pending_icon_style.is_some() || self.icon_style != self.saved_icon_style,
+            2 => self.pending_icon_style.is_none() && self.icon_style != self.saved_icon_style,
             _ => false,
         }
     }
@@ -3013,6 +3013,37 @@ nerd_fonts = true
         assert!(
             !rendered_saved.contains("\u{ea71}"),
             "Saved main menu must NOT render unsaved circle filled icon after saving"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_pending_state_does_not_render_unsaved_circle_icon() {
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-pending-no-dot-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        editor.icon_style = "nerd-font".to_string();
+        editor.saved_icon_style = "nerd-font".to_string();
+
+        // Send Tab to trigger pending state on row 0, then Esc to exit
+        let input_bytes = b"\t\x1b";
+        let mut out = Vec::new();
+        let _ = editor.run(&mut &input_bytes[..], &mut out).unwrap();
+        let rendered = String::from_utf8_lossy(&out);
+
+        // Verify clock icon is rendered in pending label
+        assert!(
+            rendered.contains("(\u{f017} pending)"),
+            "Pending state must render clock icon '(\\u{{f017}} pending)'"
+        );
+
+        // Verify nf-cod-circle_filled is NOT rendered while in pending state
+        assert!(
+            !rendered.contains("\u{ea71}"),
+            "Pending state must NOT render unsaved circle icon '\\u{{ea71}}', rendered:\n{rendered}"
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
