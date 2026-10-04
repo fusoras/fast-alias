@@ -32,8 +32,8 @@ pub const EXAMPLE_GLOBAL_CONFIG: &str = r##"[packs]
 default_behavior = "list"
 
 [ui]
-# Enable Nerd Fonts glyphs instead of standard Unicode symbols:
-nerd_fonts = false
+# Icon style for CLI and TUI: "unicode" (default) | "nerd-font"
+icons = "unicode"
 
 [alias]
 # Command aliases (Git style)
@@ -370,11 +370,36 @@ impl Default for PacksSettings {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+fn default_icon_style() -> String {
+    "unicode".to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UiSettings {
-    /// Enable Nerd Fonts glyphs instead of standard Unicode symbols
+    /// Icon style for CLI and TUI: "unicode" (default) or "nerd-font"
+    #[serde(default = "default_icon_style")]
+    pub icons: String,
+    /// Boolean flag for backward compatibility
     #[serde(default)]
     pub nerd_fonts: bool,
+}
+
+impl Default for UiSettings {
+    fn default() -> Self {
+        Self {
+            icons: default_icon_style(),
+            nerd_fonts: false,
+        }
+    }
+}
+
+impl UiSettings {
+    pub fn is_nerd_fonts(&self) -> bool {
+        self.nerd_fonts
+            || self.icons == "nerd-font"
+            || self.icons == "nerd-fonts"
+            || self.icons == "nerdfont"
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
