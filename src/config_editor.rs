@@ -869,11 +869,8 @@ impl ConfigEditor {
                 " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Command Aliases{RESET}"
             )?;
             lines += 1;
-            writeln!(
-                output,
-                " {DIM}↑/↓: navigate, Enter on alias to delete, Esc to return{RESET}\n"
-            )?;
-            lines += 2;
+            writeln!(output)?;
+            lines += 1;
 
             // Render [Back to main menu]
             let is_back = selected == 0;
@@ -978,6 +975,13 @@ impl ConfigEditor {
             )?;
             lines += 1;
 
+            writeln!(
+                output,
+                "\n {}Navigate with ↑/↓, Enter to select/delete, Esc to return{}",
+                DIM, RESET
+            )?;
+            lines += 2;
+
             last_lines_drawn = lines;
             output.flush()?;
 
@@ -1069,6 +1073,14 @@ impl ConfigEditor {
                 }
                 lines += 1;
             }
+
+            writeln!(
+                output,
+                "\n {}Navigate with ↑/↓, Enter to confirm, Esc to cancel{}",
+                DIM, RESET
+            )?;
+            lines += 2;
+
             last_lines_drawn = lines;
             output.flush()?;
 
@@ -1161,11 +1173,8 @@ impl ConfigEditor {
                 " {BOLD_CYAN}Select Target Command for '{name}':{RESET}"
             )?;
             plines += 1;
-            writeln!(
-                output,
-                " {DIM}↑/↓: navigate, Enter: select, Esc: cancel{RESET}\n"
-            )?;
-            plines += 2;
+            writeln!(output)?;
+            plines += 1;
 
             for (i, (cmd, desc)) in choices.iter().enumerate() {
                 let is_sel = i == selected;
@@ -1190,6 +1199,14 @@ impl ConfigEditor {
                 }
                 plines += 1;
             }
+
+            writeln!(
+                output,
+                "\n {}Navigate with ↑/↓, Enter to select, Esc to cancel{}",
+                DIM, RESET
+            )?;
+            plines += 2;
+
             picker_lines_drawn = plines;
             output.flush()?;
 
@@ -1332,6 +1349,14 @@ impl ConfigEditor {
                 }
                 lines += 1;
             }
+
+            writeln!(
+                output,
+                "\n {}Navigate with ↑/↓, Enter to select, Esc to cancel{}",
+                DIM, RESET
+            )?;
+            lines += 2;
+
             last_lines_drawn = lines;
             output.flush()?;
 
@@ -1742,6 +1767,29 @@ custom = "!echo hello"
         assert_eq!(
             lines_no_msg, lines_with_msg,
             "Layout height must remain constant: status slot must be reserved"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_menu_aliases_renders_shortcut_hint_at_bottom() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-aliasbottom-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        let mut out = Vec::new();
+        editor.menu_aliases(&mut &b"\x1b"[..], &mut out).unwrap();
+
+        let rendered = String::from_utf8_lossy(&out);
+        let back_pos = rendered.find("[Back to main menu]").expect("Must render [Back to main menu]");
+        let hint_pos = rendered.find("Navigate with ↑/↓").expect("Must render navigation hint");
+
+        assert!(
+            hint_pos > back_pos,
+            "Navigation shortcut hint must appear at the BOTTOM, after options: back_pos={back_pos}, hint_pos={hint_pos}"
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
