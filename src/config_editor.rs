@@ -419,6 +419,17 @@ impl UiIcons {
             "->"
         }
     }
+
+    /// Pending indicator label.
+    /// Universal: "(pending)"
+    /// Nerd Font: "( pending)" (\u{f017})
+    pub fn pending_label(&self) -> &'static str {
+        if self.nerd_fonts {
+            "(\u{f017} pending)"
+        } else {
+            "(pending)"
+        }
+    }
 }
 
 /// Applies a `ConfigDelta` to existing `config.toml` content using `toml_edit`
@@ -567,7 +578,7 @@ fn packs_row_transition(
             Some(value) => PacksRowEffect::Confirm(value.to_string()),
             None => PacksRowEffect::OpenSubMenu,
         },
-        Key::Up | Key::Down => PacksRowEffect::Move,
+        Key::Up | Key::Down | Key::Char('k') | Key::Char('j') => PacksRowEffect::Move,
         Key::Esc => {
             if pending.is_some() {
                 PacksRowEffect::DiscardStay
@@ -617,7 +628,7 @@ fn icon_style_row_transition(
             Some(value) => PacksRowEffect::Confirm(value.to_string()),
             None => PacksRowEffect::OpenSubMenu,
         },
-        Key::Up | Key::Down => PacksRowEffect::Move,
+        Key::Up | Key::Down | Key::Char('k') | Key::Char('j') => PacksRowEffect::Move,
         Key::Esc => {
             if pending.is_some() {
                 PacksRowEffect::DiscardStay
@@ -776,14 +787,14 @@ impl ConfigEditor {
                     let detail = match idx {
                         0 => match &self.pending_behavior {
                             Some(pending) => {
-                                format!(" {BOLD_YELLOW}[ {pending} ]{RESET} {DIM}(pending){RESET}")
+                                format!(" {BOLD_YELLOW}[ {pending} ]{RESET} {DIM}{}{RESET}", icons.pending_label())
                             }
                             None => format!(" {BOLD_CYAN}[ {} ]{RESET}", self.packs_behavior),
                         },
                         1 => format!(" {DIM}({} defined){RESET}", self.aliases.len()),
                         2 => match &self.pending_icon_style {
                             Some(pending) => {
-                                format!(" {BOLD_YELLOW}[ {pending} ]{RESET} {DIM}(pending){RESET}")
+                                format!(" {BOLD_YELLOW}[ {pending} ]{RESET} {DIM}{}{RESET}", icons.pending_label())
                             }
                             None => format!(" {BOLD_CYAN}[ {} ]{RESET}", self.icon_style),
                         },
@@ -923,7 +934,7 @@ impl ConfigEditor {
                     ));
                     continue;
                 }
-                Key::Up => {
+                Key::Up | Key::Char('k') => {
                     self.pending_behavior = None;
                     self.pending_icon_style = None;
                     if selected == 0 {
@@ -932,7 +943,7 @@ impl ConfigEditor {
                         selected -= 1;
                     }
                 }
-                Key::Down => {
+                Key::Down | Key::Char('j') => {
                     self.pending_behavior = None;
                     self.pending_icon_style = None;
                     if selected + 1 >= menu_items.len() {
@@ -1101,14 +1112,14 @@ impl ConfigEditor {
 
             let key = read_key_from(input)?;
             match key {
-                Key::Up => {
+                Key::Up | Key::Char('k') => {
                     if selected == 0 {
                         selected = options.len() - 1;
                     } else {
                         selected -= 1;
                     }
                 }
-                Key::Down => {
+                Key::Down | Key::Char('j') => {
                     if selected + 1 >= options.len() {
                         selected = 0;
                     } else {
@@ -1252,14 +1263,14 @@ impl ConfigEditor {
 
             let key = read_key_from(input)?;
             match key {
-                Key::Up => {
+                Key::Up | Key::Char('k') => {
                     if selected == 0 {
                         selected = options.len() - 1;
                     } else {
                         selected -= 1;
                     }
                 }
-                Key::Down => {
+                Key::Down | Key::Char('j') => {
                     if selected + 1 >= options.len() {
                         selected = 0;
                     } else {
@@ -1453,14 +1464,14 @@ impl ConfigEditor {
 
             let key = read_key_from(input)?;
             match key {
-                Key::Up => {
+                Key::Up | Key::Char('k') => {
                     if selected == 0 {
                         selected = total_rows - 1;
                     } else {
                         selected -= 1;
                     }
                 }
-                Key::Down => {
+                Key::Down | Key::Char('j') => {
                     if selected + 1 >= total_rows {
                         selected = 0;
                     } else {
@@ -1552,7 +1563,7 @@ impl ConfigEditor {
 
             let key = read_key_from(input)?;
             match key {
-                Key::Up | Key::Down => delete_sel = 1 - delete_sel,
+                Key::Up | Key::Down | Key::Char('k') | Key::Char('j') => delete_sel = 1 - delete_sel,
                 Key::Enter => {
                     if delete_sel == 0 {
                         self.aliases.remove(alias_name);
@@ -1685,14 +1696,14 @@ impl ConfigEditor {
 
             let key = read_key_from(input)?;
             match key {
-                Key::Up => {
+                Key::Up | Key::Char('k') => {
                     if selected == 0 {
                         selected = choices.len() - 1;
                     } else {
                         selected -= 1;
                     }
                 }
-                Key::Down => {
+                Key::Down | Key::Char('j') => {
                     if selected + 1 >= choices.len() {
                         selected = 0;
                     } else {
@@ -1842,7 +1853,7 @@ impl ConfigEditor {
 
             let key = read_key_from(input)?;
             match key {
-                Key::Up | Key::Down => sel = 1 - sel,
+                Key::Up | Key::Down | Key::Char('k') | Key::Char('j') => sel = 1 - sel,
                 Key::Enter => {
                     if sel == 0 {
                         let parsed = crate::config::parse_global_config(EXAMPLE_GLOBAL_CONFIG)
@@ -2651,6 +2662,7 @@ custom = "!echo hello"
         assert_eq!(universal.back_label(), "[<- Back]");
         assert_eq!(universal.add_alias_label(), "[+ Add new alias]");
         assert_eq!(universal.arrow(), "->");
+        assert_eq!(universal.pending_label(), "(pending)");
 
         let nerd = UiIcons::new(true);
         assert_eq!(nerd.pointer(), "\u{f054}"); //  nf-fa-chevron_right
@@ -2661,6 +2673,33 @@ custom = "!echo hello"
         assert_eq!(nerd.back_label(), "[\u{f060} Back]"); //  nf-fa-arrow_left
         assert_eq!(nerd.add_alias_label(), "[\u{f067} Add new alias]"); //  nf-fa-plus
         assert_eq!(nerd.arrow(), "\u{f061}"); //  nf-fa-arrow_right
+        assert_eq!(nerd.pending_label(), "(\u{f017} pending)");
+    }
+
+    #[test]
+    fn test_pending_state_renders_clock_icon_when_nerd_fonts_enabled() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-pending-clock-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        editor.icon_style = "nerd-font".to_string();
+
+        // On row 0 (Packs default behavior), press Tab -> pending state, then Esc to cancel
+        let input_bytes = b"\t\x1b";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let _ = editor.run(&mut reader, &mut output).unwrap();
+        let out = String::from_utf8_lossy(&output);
+
+        assert!(
+            out.contains("(\u{f017} pending)"),
+            "Pending state must render clock icon '(\\u{{f017}} pending)' when Nerd Fonts is active, got:\n{out}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
@@ -2824,6 +2863,69 @@ nerd_fonts = true
         assert!(!rendered.contains("\u{f487}"), "Main menu must NOT contain decorative package icon, rendered:\n{rendered}");
         assert!(!rendered.contains("\u{f120}"), "Main menu must NOT contain decorative terminal icon, rendered:\n{rendered}");
         assert!(!rendered.contains("\u{f03d8}"), "Main menu must NOT contain decorative palette icon, rendered:\n{rendered}");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_vim_keys_navigation_j_and_k() {
+        assert_eq!(
+            packs_row_transition("default", None, &Key::Char('j')),
+            PacksRowEffect::Move
+        );
+        assert_eq!(
+            packs_row_transition("default", None, &Key::Char('k')),
+            PacksRowEffect::Move
+        );
+        assert_eq!(
+            icon_style_row_transition("unicode", None, &Key::Char('j')),
+            PacksRowEffect::Move
+        );
+        assert_eq!(
+            icon_style_row_transition("unicode", None, &Key::Char('k')),
+            PacksRowEffect::Move
+        );
+
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-vim-nav-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        assert_eq!(editor.icon_style, "unicode");
+
+        // Test vim navigation in menu_icon_style:
+        // Initially selected starts at current option: 1 (unicode)
+        // 'j' -> moves to 2 (nerd-font)
+        // '\r' -> confirms nerd-font
+        let input_bytes = b"j\r";
+        let mut out = Vec::new();
+        editor.menu_icon_style(&mut &input_bytes[..], &mut out).unwrap();
+        assert_eq!(editor.icon_style, "nerd-font", "Navigating with 'j' in submenu must select nerd-font");
+
+        // Test vim navigation 'k' (moving up):
+        // Initially selected starts at current option: 2 (nerd-font)
+        // 'k' -> moves up to 1 (unicode)
+        // '\r' -> confirms unicode
+        let input_bytes_k = b"k\r";
+        let mut out_k = Vec::new();
+        editor.menu_icon_style(&mut &input_bytes_k[..], &mut out_k).unwrap();
+        assert_eq!(editor.icon_style, "unicode", "Navigating with 'k' in submenu must move up to select unicode");
+
+        // Test vim navigation in main menu:
+        // Row 0: Packs default behavior
+        // Row 1: Command aliases
+        // Row 2: Icon style
+        // 'j' -> Row 1
+        // 'j' -> Row 2
+        // '\r' -> enters menu_icon_style
+        // In submenu: initially at 1 (unicode)
+        // 'j' -> Row 2 (nerd-font)
+        // '\r' -> confirms nerd-font
+        // '\x1b' -> exits main menu
+        let main_input = b"jj\rj\r\x1b";
+        let mut main_out = Vec::new();
+        let _ = editor.run(&mut &main_input[..], &mut main_out).unwrap();
+        assert_eq!(editor.icon_style, "nerd-font", "Navigating with 'j' in main menu must open Icon style and apply changes");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
