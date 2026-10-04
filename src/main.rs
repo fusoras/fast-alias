@@ -1214,8 +1214,8 @@ fn display_namespace_help(config: &Config, namespace: &str) {
     println!("{BOLD_CYAN}Namespace {WHITE}:{raw_ns}{RESET}:");
     println!("  {DIM}Usage: fa {raw_ns} <command> [args...]{RESET}\n");
     println!("{BOLD_CYAN}Commands:{RESET}");
-    for (command_key, command) in commands {
-        println!("  {}", crate::engine::format_command_line(command_key, command));
+    for line in format_namespace_commands_aligned(commands) {
+        println!("{line}");
     }
     if let Some(env_map) = config.alias_env.get(&ns_key)
         && !env_map.is_empty()
@@ -1233,6 +1233,49 @@ fn display_namespace_help(config: &Config, namespace: &str) {
             println!("  {DIM}{k}{RESET} = {v}");
         }
     }
+}
+
+pub(crate) fn format_namespace_commands_aligned(
+    commands: &std::collections::BTreeMap<String, crate::config::Command>,
+) -> Vec<String> {
+    let mut entries = Vec::new();
+    for (command_key, command) in commands {
+        let mut name = command_key.to_string();
+        if !command.aliases.is_empty() {
+            name.push_str(", ");
+            name.push_str(&command.aliases.join(", "));
+        }
+        let sig_raw = if let Some(sig) = command.argument_signature() {
+            format!(" {sig}")
+        } else if let Some(sig) = crate::engine::extract_argument_signature(&command.command) {
+            format!(" {sig}")
+        } else {
+            String::new()
+        };
+        let sig_colored = if let Some(sig) = command.argument_signature() {
+            format!(" {WHITE}{sig}{RESET}")
+        } else if let Some(sig) = crate::engine::extract_argument_signature(&command.command) {
+            format!(" {WHITE}{sig}{RESET}")
+        } else {
+            String::new()
+        };
+        let raw_len = name.len() + sig_raw.len();
+        let colored_cmd = format!("{BOLD_BLUE}{name}{RESET}{sig_colored}");
+        let desc = command.description.as_deref().unwrap_or("").to_string();
+        entries.push((raw_len, colored_cmd, desc));
+    }
+
+    let max_len = entries.iter().map(|(len, _, _)| *len).max().unwrap_or(0);
+    let mut out = Vec::new();
+    for (raw_len, colored_cmd, desc) in entries {
+        if desc.is_empty() {
+            out.push(format!("  {colored_cmd}"));
+        } else {
+            let padding = " ".repeat(max_len.saturating_sub(raw_len));
+            out.push(format!("  {colored_cmd}{padding}   - {DIM_GRAY}{desc}{RESET}"));
+        }
+    }
+    out
 }
 
 pub(crate) fn unknown_alias_error(name: &str, config: &Config) -> String {
@@ -1561,7 +1604,7 @@ fn format_help_with_inline_aliases(input: &str) -> String {
                 } else if rest.is_empty() {
                     out.push(format!("  {name}"));
                 } else {
-                    out.push(format!("  {name:<width$}  {rest}", width = max_name_len));
+                    out.push(format!("  {name:<width$}   - {rest}", width = max_name_len));
                 }
             }
             continue;
@@ -1936,6 +1979,85 @@ down = { command = "docker compose down" }
             !formatted.contains("-seSearch"),
             "Help output must not fuse alias with description (-seSearch): got:\n{formatted}"
         );
+    }
+
+    #[test]
+    fn test_format_help_with_inline_aliases_renders_aligned_hyphens() {
+        let mut cmd = Cli::command();
+        let raw_help = cmd.render_help().to_string();
+        let formatted = format_help_with_inline_aliases(&raw_help);
+        assert!(
+            formatted.contains("   - "),
+            "Help output Commands: section must render aligned hyphen separator '   - ', got:\n{formatted}"
+        );
+    }
+
+    #[test]
+    fn test_namespace_commands_aligned_format() {
+        use std::collections::BTreeMap;
+        let mut commands = BTreeMap::new();
+        commands.insert(
+            "add-repository".to_string(),
+            crate::config::Command {
+                command: "echo add".to_string(),
+                description: Some("Add entries to apt sources.list".to_string()),
+                ..Default::default()
+            },
+        );
+        commands.insert(
+            "autoclean".to_string(),
+            crate::config::Command {
+                command: "echo clean".to_string(),
+                description: Some("Erase cache for packages no longer available".to_string()),
+                ..Default::default()
+            },
+        );
+        commands.insert(
+            "autopurge".to_string(),
+            crate::config::Command {
+                command: "echo purge".to_string(),
+                description: Some("Erase system-wide config files left by removed packages".to_string()),
+                ..Default::default()
+            },
+        );
+        commands.insert(
+            "autoremove".to_string(),
+            crate::config::Command {
+                command: "echo remove".to_string(),
+                description: Some("Remove dependency packages no longer required".to_string()),
+                ..Default::default()
+            },
+        );
+        commands.insert(
+            "build".to_string(),
+            crate::config::Command {
+                command: "echo build".to_string(),
+                description: Some("Build binary or source packages from sources".to_string()),
+                ..Default::default()
+            },
+        );
+        commands.insert(
+            "build-dep".to_string(),
+            crate::config::Command {
+                command: "echo build-dep".to_string(),
+                description: Some("Configure build-dependencies for source packages".to_string()),
+                ..Default::default()
+            },
+        );
+        commands.insert(
+            "changelog".to_string(),
+            crate::config::Command {
+                command: "echo changelog".to_string(),
+                description: Some("View a package's changelog".to_string()),
+                ..Default::default()
+            },
+        );
+
+        let lines = format_namespace_commands_aligned(&commands);
+        let joined = lines.join("\n");
+        assert!(joined.contains(&format!("  {BOLD_BLUE}add-repository{RESET}   - {DIM_GRAY}Add entries to apt sources.list{RESET}")));
+        assert!(joined.contains(&format!("  {BOLD_BLUE}autoclean{RESET}        - {DIM_GRAY}Erase cache for packages no longer available{RESET}")));
+        assert!(joined.contains(&format!("  {BOLD_BLUE}build{RESET}            - {DIM_GRAY}Build binary or source packages from sources{RESET}")));
     }
 
     #[test]
