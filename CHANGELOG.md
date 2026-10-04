@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Vim-style navigation (`j` / `k`): full support for moving down with `j` and up with `k` alongside arrow keys across all menus, submenus, and confirmation dialogs.
 - Nerd Font iconography support (`ui.icons`): toggle between `"unicode"` (clean universal symbols) and `"nerd-font"` (Nerd Font glyph repertoire) with live glyph previews in the selection submenu, standardized `[<- Back]` navigation, and clean typography.
 - Quick save shortcut (`s`): save configuration changes to disk anytime without leaving the menu, complete with dynamic home path formatting (`~/...`) and non-intrusive status feedback.
-- Custom argument signatures and documentation (`args`): explicitly declare positional argument names and documentation for command aliases using structured token arrays (`args = ["<input>", "[output]"]`), object arrays (`args = [{ name = "input", description = "..." }]`), or table syntax (`[alias.sec.cmd.args]`). Displays custom signatures in `fa list` and namespace listings, and renders usage signatures and aligned argument documentation in `fa --show <command>`. Rejects ambiguous single strings.
+- Custom argument signatures and documentation (`args`): explicitly declare positional argument names and documentation for command aliases using structured token arrays (`args = ["<input>", "[output]"]`), object arrays (`args = [{ name = "input", description = "..." }]`), or table syntax (`[alias.sec.cmd.args]`). Displays custom signatures in `fa --list` and namespace listings, and renders usage signatures and aligned argument documentation in `fa --show <command>` (or `fa -sh`). Rejects ambiguous single strings.
 - `[alias]` table synonym: support singular `[alias.<section>]` and `[alias.<section>.<command>]` interchangeably with plural `[aliases]`, allowing cleaner single-command definitions while merging coexisting tables seamlessly; full editor schema and source tracking support.
 
 - Alias environment variable injection (`env`, `env_force`, `_env`, `_env_force`): declare custom environment variables scoped to aliases or namespaces directly in TOML. Supports fallback mode (`env`, `_env` applied only if unset in system) and forced mode (`env_force`, `_env_force` overriding terminal environment). Values dynamically expand tildes (`~`), existing variables (`$VAR`, `${VAR}`), and fallback syntax (`${VAR:-default}`).
@@ -30,17 +30,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Packs catalog display (Option 2): `fa --list -p` formats packs showing the bundle name and description (`• <name> · <description>`) with indented components (`components: <comp1>, ...`).
 - `fa --template add <recipe> <path>...` (`fa -t add`): copy files or directories recursively into a recipe's template directory under `~/.config/fa/templates/` (respecting `template_base` and `templates_dir`), with interactive confirmation on overwrite and `-f` / `--force` to skip prompts.
 - Packs global behavior & default pack: added `~/.config/fa/config.toml` support with `packs.default_behavior` (`list`, `default`, `error`); renamed recipe field to `default_pack` (with backwards-compatible `default` alias); validated that recipes declaring `default_pack` require `default_behavior = "default"` in global config.
-- Packs system: install modular components and asset bundles into the current project via `fa new <recipe> [pack/component]` using `packs_dir`, `templates_dir`, and `[[steps]]` `create` declarations with dynamic `{{component}}` substitution; includes `docs/packs.md`.
+- Packs system: install modular components and asset bundles into the current project via `fa --new <recipe> [pack/component]` (`fa -n`) using `packs_dir`, `templates_dir`, and `[[steps]]` `create` declarations with dynamic `{{component}}` substitution; includes `docs/packs.md`.
 - `final_message` recipe option: customize the post-scaffold success message in `recipes.toml` / `recipes.d/*.toml` with automatic variable substitution (`{{name}}`, `{name}`).
 - Neutral post-scaffold navigation hint: `Run 'cd <project-name>' to go to project` replaces the hardcoded `node --run dev` fallback.
-- `fa show`: displays `Final Message:` for recipes, showing the configured custom message or the default navigation hint.
-- `fa recipe` (`new` / `edit` / `validate`): create or edit recipe files under `~/.config/fa/recipes.d/` opened in `$VISUAL`/`$EDITOR`; `validate` checks all config files or a single recipe by name and reports parse errors plus duplicate recipe keys. No flags, no trust prompt; new unit tests in `src/recipe.rs`.
+- `fa --show` (`fa -sh`): displays `Final Message:` for recipes, showing the configured custom message or the default navigation hint.
+- `fa --recipe` (`fa -r`) (`new` / `edit` / `validate`): create or edit recipe files under `~/.config/fa/recipes.d/` opened in `$VISUAL`/`$EDITOR`; `validate` checks all config files or a single recipe by name and reports parse errors plus duplicate recipe keys. No flags, no trust prompt; new unit tests in `src/recipe.rs`.
+
+### Changed
+
+- Standardized CLI help command listings: inverted alias display order so short flag aliases appear before long command names (e.g. `-n, --new`, `-l, --list`, `-se, --search`, `-sh, --show`, `-a, --alias`, `-r, --recipe`, `-t, --template`, `-co, --config`).
+- Aligned command listing format: formatted `Commands:` output using aligned hyphen separators (`  -n, --new   - Description`) for consistent terminal readability across top-level and namespaced help.
+- Help commands reordering: grouped administrative/lifecycle commands (`--self-update`, `--self-uninstall`) at the end of the commands list right after `-co, --config` and preceding `help`.
 
 ### Fixed
 
 - Resilient recipe editing and diagnostics: `fa -r edit` and `fa -r validate` now continue gracefully when config files have syntax or parse errors instead of aborting before opening the editor; added support for `fa -r edit recipes` to edit primary config, and raw text searching for malformed files.
 - CLI help column alignment: dynamically calculates maximum command name width in `format_help_with_inline_aliases` with guaranteed 2-space padding, fixing an issue where command flags and descriptions were rendered without spacing.
-- CLI help: `fa <command> --help` / `fa help <command>` now render that command's own help instead of always falling back to the top-level help (`render_cli_help` preserves subcommand context, e.g. `fa recipe --help`, `fa help recipe new`); top-level help keeps inline aliases.
+- CLI help: `fa <command> --help` / `fa help <command>` now render that command's own help instead of always falling back to the top-level help (`render_cli_help` preserves subcommand context, e.g. `fa --recipe --help`, `fa help --recipe new`); top-level help keeps inline aliases.
 
 ## [v0.1.0-beta.4] - 2026-09-21
 
