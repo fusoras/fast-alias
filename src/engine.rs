@@ -539,13 +539,15 @@ pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
                 } else {
                     preflight(&rendered)?;
                     let label = step.description.as_deref().unwrap_or(step.command.as_deref().unwrap_or(""));
+                    // Neutral progress marker first; the ✓ is only printed
+                    // once the step has actually run successfully.
+                    println!("  {DIM}→{RESET} {label}");
                     if step.install {
                         run_shell_quiet_with_spinner(&rendered, label)?;
-                        println!("  {BOLD_GREEN}✓{RESET} {label}");
                     } else {
-                        println!("  {BOLD_GREEN}✓{RESET} {label}");
                         run_shell(&rendered)?;
                     }
+                    println!("  {BOLD_GREEN}✓{RESET} {label}");
                 }
                 if Some(idx) == last_install_idx && opts.pin_versions {
                     if opts.dry_run {
