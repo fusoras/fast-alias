@@ -418,31 +418,41 @@ impl ConfigEditor {
         ];
 
         let mut selected = 0;
+        let mut last_lines_drawn = 0;
 
         loop {
-            write!(output, "\x1b[H\x1b[2J")?; // Clear screen and home cursor
+            if last_lines_drawn > 0 {
+                write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+            }
+            let mut lines = 0;
             writeln!(
                 output,
                 "{BOLD_CYAN}╭─────────────────────────────────────────────────────────────╮{RESET}"
             )?;
+            lines += 1;
             writeln!(
                 output,
                 "{BOLD_CYAN}│{RESET}  {BOLD_WHITE}Fast-Alias Configuration{RESET}  {DIM}•{RESET}  {DIM}{}{RESET}",
                 self.config_path.display()
             )?;
+            lines += 1;
             writeln!(
                 output,
                 "{BOLD_CYAN}╰─────────────────────────────────────────────────────────────╯{RESET}"
             )?;
+            lines += 1;
             writeln!(
                 output,
                 " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Main Menu{RESET}"
             )?;
+            lines += 1;
 
             if let Some(msg) = &self.status_message {
                 writeln!(output, "\n  {msg}\n")?;
+                lines += 3;
             } else {
                 writeln!(output)?;
+                lines += 1;
             }
 
             for (i, item) in menu_items.iter().enumerate() {
@@ -464,11 +474,15 @@ impl ConfigEditor {
                 } else {
                     writeln!(output, "  {marker} {item}{detail}")?;
                 }
+                lines += 1;
             }
             writeln!(
                 output,
                 "\n {DIM}Navigate with ↑/↓, Enter to select, Esc to cancel{RESET}"
             )?;
+            lines += 2;
+
+            last_lines_drawn = lines;
             output.flush()?;
 
             let key = read_key_from(input)?;
@@ -489,30 +503,42 @@ impl ConfigEditor {
                 }
                 Key::Enter => match selected {
                     0 => {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                        last_lines_drawn = 0;
                         self.menu_packs_behavior(input, output)?;
                     }
                     1 => {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                        last_lines_drawn = 0;
                         self.menu_aliases(input, output)?;
                     }
                     2 => {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                        last_lines_drawn = 0;
                         self.action_open_editor(output)?;
                     }
                     3 => {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                        last_lines_drawn = 0;
                         self.action_reset_defaults(input, output)?;
                     }
                     4 => {
                         self.save()?;
-                        write!(output, "\x1b[H\x1b[2J")?;
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                         writeln!(
                             output,
-                            "{BOLD_GREEN}✓{RESET} Configuration saved to {BOLD_WHITE}{}{RESET}",
+                            "{BOLD_GREEN}✔{RESET} Configuration saved to {BOLD_WHITE}{}{RESET}",
                             self.config_path.display()
                         )?;
                         output.flush()?;
                         return Ok(true);
                     }
                     5 => {
-                        write!(output, "\x1b[H\x1b[2J")?;
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                         writeln!(output, "{DIM}Configuration changes discarded.{RESET}")?;
                         output.flush()?;
                         return Ok(false);
@@ -520,7 +546,7 @@ impl ConfigEditor {
                     _ => {}
                 },
                 Key::Esc => {
-                    write!(output, "\x1b[H\x1b[2J")?;
+                    write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                     writeln!(output, "{DIM}Configuration cancelled.{RESET}")?;
                     output.flush()?;
                     return Ok(false);
@@ -549,13 +575,23 @@ impl ConfigEditor {
             _ => 0,
         };
 
+        let mut last_lines_drawn = 0;
+
         loop {
-            write!(output, "\x1b[H\x1b[2J")?;
-            writeln!(output, "{BOLD_CYAN}Packs Default Behavior{RESET}")?;
+            if last_lines_drawn > 0 {
+                write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+            }
+            let mut lines = 0;
             writeln!(
                 output,
-                "{DIM}Select behavior when 'fa --new <recipe>' is run without a pack argument:{RESET}\n"
+                " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Packs Default Behavior{RESET}"
             )?;
+            lines += 1;
+            writeln!(
+                output,
+                " {DIM}Select behavior when 'fa --new <recipe>' is run without a pack argument:{RESET}\n"
+            )?;
+            lines += 2;
 
             for (i, (val, desc)) in options.iter().enumerate() {
                 let is_sel = i == selected;
@@ -584,7 +620,15 @@ impl ConfigEditor {
                         val
                     )?;
                 }
+                lines += 1;
             }
+            writeln!(
+                output,
+                "\n {DIM}Navigate with ↑/↓, Enter to select, Esc to return{RESET}"
+            )?;
+            lines += 2;
+
+            last_lines_drawn = lines;
             output.flush()?;
 
             let key = read_key_from(input)?;
@@ -611,9 +655,19 @@ impl ConfigEditor {
                             "{BOLD_GREEN}✔ Packs default behavior updated to '{chosen}'{RESET}"
                         ));
                     }
+                    if last_lines_drawn > 0 {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                    }
                     return Ok(());
                 }
-                Key::Esc => return Ok(()),
+                Key::Esc => {
+                    if last_lines_drawn > 0 {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                    }
+                    return Ok(());
+                }
                 _ => {}
             }
         }
@@ -626,6 +680,7 @@ impl ConfigEditor {
         output: &mut W,
     ) -> anyhow::Result<()> {
         let mut selected = 0;
+        let mut last_lines_drawn = 0;
 
         loop {
             let alias_list: Vec<(String, String)> = self
@@ -643,17 +698,25 @@ impl ConfigEditor {
                 selected = total_rows.saturating_sub(1);
             }
 
-            write!(output, "\x1b[H\x1b[2J")?;
-            writeln!(output, "{BOLD_CYAN}Command Aliases Manager{RESET}")?;
+            if last_lines_drawn > 0 {
+                write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+            }
+            let mut lines = 0;
             writeln!(
                 output,
-                "{DIM}↑/↓: navigate, Enter on alias to delete, Esc to return{RESET}\n"
+                " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Command Aliases{RESET}"
             )?;
+            lines += 1;
+            writeln!(
+                output,
+                " {DIM}↑/↓: navigate, Enter on alias to delete, Esc to return{RESET}\n"
+            )?;
+            lines += 2;
 
             // Render [+ Add new alias]
             let is_add = selected == 0;
             let add_marker = if is_add {
-                format!("{BOLD_CYAN}>{RESET}")
+                format!("{BOLD_GREEN}▸{RESET}")
             } else {
                 " ".to_string()
             };
@@ -665,6 +728,7 @@ impl ConfigEditor {
             } else {
                 writeln!(output, "  {add_marker} [+ Add new alias]\n")?;
             }
+            lines += 2;
 
             // Calculate max width for alias column
             let max_k_len = alias_list
@@ -680,28 +744,37 @@ impl ConfigEditor {
                 "ALIAS",
                 width = max_k_len
             )?;
+            lines += 1;
             writeln!(
                 output,
                 "    {DIM}{}{RESET}",
                 "-".repeat(max_k_len.max(5) + 30)
             )?;
+            lines += 1;
 
             if alias_list.is_empty() {
                 writeln!(output, "    {DIM}(No aliases configured){RESET}")?;
+                lines += 1;
             } else {
                 for (idx, (k, v)) in alias_list.iter().enumerate() {
                     let row_idx = idx + 1;
                     let is_sel = selected == row_idx;
                     let marker = if is_sel {
-                        format!("{BOLD_CYAN}>{RESET}")
+                        format!("{BOLD_GREEN}▸{RESET}")
                     } else {
                         " ".to_string()
+                    };
+
+                    let badge = if v.starts_with('!') {
+                        format!("{BOLD_MAGENTA}[shell]{RESET}")
+                    } else {
+                        format!("{BOLD_CYAN}[native]{RESET}")
                     };
 
                     if is_sel {
                         writeln!(
                             output,
-                            "  {marker} {BOLD_YELLOW}{:<width$}{RESET}  ->  {BOLD_WHITE}{}{RESET}",
+                            "  {marker} {BOLD_YELLOW}{:<width$}{RESET}  ->  {BOLD_WHITE}{}{RESET}  {badge}",
                             k,
                             v,
                             width = max_k_len
@@ -709,12 +782,13 @@ impl ConfigEditor {
                     } else {
                         writeln!(
                             output,
-                            "  {marker} {:<width$}  {DIM}->{RESET}  {}",
+                            "  {marker} {:<width$}  {DIM}->{RESET}  {}  {badge}",
                             k,
                             v,
                             width = max_k_len
                         )?;
                     }
+                    lines += 1;
                 }
             }
 
@@ -723,11 +797,12 @@ impl ConfigEditor {
                 "    {DIM}{}{RESET}",
                 "-".repeat(max_k_len.max(5) + 30)
             )?;
+            lines += 1;
 
             let back_idx = alias_list.len() + 1;
             let is_back = selected == back_idx;
             let back_marker = if is_back {
-                format!("{BOLD_CYAN}>{RESET}")
+                format!("{BOLD_GREEN}▸{RESET}")
             } else {
                 " ".to_string()
             };
@@ -739,6 +814,9 @@ impl ConfigEditor {
             } else {
                 writeln!(output, "  {back_marker} [Back to main menu]")?;
             }
+            lines += 1;
+
+            last_lines_drawn = lines;
             output.flush()?;
 
             let key = read_key_from(input)?;
@@ -759,16 +837,36 @@ impl ConfigEditor {
                 }
                 Key::Enter => {
                     if selected == 0 {
+                        if last_lines_drawn > 0 {
+                            write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                            output.flush()?;
+                            last_lines_drawn = 0;
+                        }
                         self.action_add_alias(input, output)?;
                     } else if selected == back_idx {
+                        if last_lines_drawn > 0 {
+                            write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                            output.flush()?;
+                        }
                         return Ok(());
                     } else {
                         // Existing alias selected: offer deletion
                         let alias_to_delete = alias_list[selected - 1].0.clone();
+                        if last_lines_drawn > 0 {
+                            write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                            output.flush()?;
+                            last_lines_drawn = 0;
+                        }
                         self.prompt_delete_alias(&alias_to_delete, input, output)?;
                     }
                 }
-                Key::Esc => return Ok(()),
+                Key::Esc => {
+                    if last_lines_drawn > 0 {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                    }
+                    return Ok(());
+                }
                 _ => {}
             }
         }
@@ -781,26 +879,22 @@ impl ConfigEditor {
         input: &mut R,
         output: &mut W,
     ) -> anyhow::Result<()> {
-        write!(output, "\x1b[H\x1b[2J")?;
-        writeln!(
-            output,
-            "{BOLD_YELLOW}Delete alias '{alias_name}'?{RESET}\n"
-        )?;
-        writeln!(output, "  > Yes, delete this alias")?;
-        writeln!(output, "    No, keep it")?;
-        output.flush()?;
-
+        let mut last_lines_drawn = 0;
         let mut delete_sel = 0;
         loop {
-            write!(output, "\x1b[H\x1b[2J")?;
+            if last_lines_drawn > 0 {
+                write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+            }
+            let mut lines = 0;
             writeln!(
                 output,
-                "{BOLD_YELLOW}Delete alias '{alias_name}'?{RESET}\n"
+                " {BOLD_YELLOW}Delete alias '{alias_name}'?{RESET}\n"
             )?;
+            lines += 2;
             let opts = ["Yes, delete this alias", "No, keep it"];
             for (i, opt) in opts.iter().enumerate() {
                 let marker = if i == delete_sel {
-                    format!("{BOLD_CYAN}>{RESET}")
+                    format!("{BOLD_GREEN}▸{RESET}")
                 } else {
                     " ".to_string()
                 };
@@ -809,7 +903,9 @@ impl ConfigEditor {
                 } else {
                     writeln!(output, "  {marker} {opt}")?;
                 }
+                lines += 1;
             }
+            last_lines_drawn = lines;
             output.flush()?;
 
             let key = read_key_from(input)?;
@@ -822,9 +918,19 @@ impl ConfigEditor {
                             "{BOLD_YELLOW}✔ Deleted alias '{alias_name}'{RESET}"
                         ));
                     }
+                    if last_lines_drawn > 0 {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                    }
                     return Ok(());
                 }
-                Key::Esc => return Ok(()),
+                Key::Esc => {
+                    if last_lines_drawn > 0 {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                    }
+                    return Ok(());
+                }
                 _ => {}
             }
         }
@@ -838,19 +944,35 @@ impl ConfigEditor {
         input: &mut R,
         output: &mut W,
     ) -> anyhow::Result<()> {
-        write!(output, "\x1b[H\x1b[2J")?;
-        writeln!(output, "{BOLD_CYAN}Add New Command Alias{RESET}")?;
+        let mut lines = 0;
         writeln!(
             output,
-            "{DIM}Type the alias shortcut (e.g. 'c', 'st', 'b') and press Enter (Esc to cancel):{RESET}\n"
+            " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Add New Command Alias{RESET}"
         )?;
+        lines += 1;
+        writeln!(
+            output,
+            " {DIM}Type the alias shortcut (e.g. 'c', 'st', 'b') and press Enter (Esc to cancel):{RESET}\n"
+        )?;
+        lines += 2;
+        let mut last_lines_drawn = lines;
+        output.flush()?;
 
         // 1. Line editor for alias name:
-        let name_opt = prompt_line_raw("Alias name: ", input, output)?;
+        let name_opt = prompt_line_raw(" Alias name: ", input, output)?;
+        last_lines_drawn += 1;
         let Some(name) = name_opt else {
+            if last_lines_drawn > 0 {
+                write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                output.flush()?;
+            }
             return Ok(());
         };
         if name.trim().is_empty() {
+            if last_lines_drawn > 0 {
+                write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                output.flush()?;
+            }
             return Ok(());
         }
         let name = name.trim().to_string();
@@ -864,21 +986,27 @@ impl ConfigEditor {
         choices.push(("[Cancel]".to_string(), "Cancel alias creation".to_string()));
 
         let mut selected = 0;
+        let mut picker_lines_drawn = last_lines_drawn;
         let final_cmd = loop {
-            write!(output, "\x1b[H\x1b[2J")?;
+            if picker_lines_drawn > 0 {
+                write!(output, "\r\x1b[{}A\x1b[J", picker_lines_drawn)?;
+            }
+            let mut plines = 0;
             writeln!(
                 output,
-                "{BOLD_CYAN}Select Target Command for '{name}':{RESET}"
+                " {BOLD_CYAN}Select Target Command for '{name}':{RESET}"
             )?;
+            plines += 1;
             writeln!(
                 output,
-                "{DIM}↑/↓: navigate, Enter: select, Esc: cancel{RESET}\n"
+                " {DIM}↑/↓: navigate, Enter: select, Esc: cancel{RESET}\n"
             )?;
+            plines += 2;
 
             for (i, (cmd, desc)) in choices.iter().enumerate() {
                 let is_sel = i == selected;
                 let marker = if is_sel {
-                    format!("{BOLD_CYAN}>{RESET}")
+                    format!("{BOLD_GREEN}▸{RESET}")
                 } else {
                     " ".to_string()
                 };
@@ -896,7 +1024,9 @@ impl ConfigEditor {
                         cmd
                     )?;
                 }
+                plines += 1;
             }
+            picker_lines_drawn = plines;
             output.flush()?;
 
             let key = read_key_from(input)?;
@@ -918,31 +1048,56 @@ impl ConfigEditor {
                 Key::Enter => {
                     if selected == choices.len() - 1 {
                         // Cancel
+                        if picker_lines_drawn > 0 {
+                            write!(output, "\r\x1b[{}A\x1b[J", picker_lines_drawn)?;
+                            output.flush()?;
+                        }
                         return Ok(());
                     } else if selected == choices.len() - 2 {
                         // Custom command
-                        write!(output, "\x1b[H\x1b[2J")?;
+                        if picker_lines_drawn > 0 {
+                            write!(output, "\r\x1b[{}A\x1b[J", picker_lines_drawn)?;
+                            output.flush()?;
+                        }
                         writeln!(
                             output,
-                            "{BOLD_CYAN}Custom Command for '{name}'{RESET}"
+                            " {BOLD_CYAN}Custom Command for '{name}'{RESET}"
                         )?;
                         writeln!(
                             output,
-                            "{DIM}Prefix external shell commands with '!' (e.g. '!git status'):{RESET}\n"
+                            " {DIM}Prefix external shell commands with '!' (e.g. '!git status'):{RESET}\n"
                         )?;
-                        let custom = prompt_line_raw("Command: ", input, output)?;
+                        let custom = prompt_line_raw(" Command: ", input, output)?;
+                        write!(output, "\r\x1b[3A\x1b[J")?;
+                        output.flush()?;
                         if let Some(cmd_val) = custom
                             && !cmd_val.trim().is_empty()
                         {
-                            break cmd_val.trim().to_string();
+                            let trimmed = cmd_val.trim();
+                            if trimmed.starts_with('!') {
+                                break trimmed.to_string();
+                            } else {
+                                break format!("!{trimmed}");
+                            }
                         } else {
                             return Ok(());
                         }
                     } else {
-                        break choices[selected].0.clone();
+                        let chosen = choices[selected].0.clone();
+                        if picker_lines_drawn > 0 {
+                            write!(output, "\r\x1b[{}A\x1b[J", picker_lines_drawn)?;
+                            output.flush()?;
+                        }
+                        break chosen;
                     }
                 }
-                Key::Esc => return Ok(()),
+                Key::Esc => {
+                    if picker_lines_drawn > 0 {
+                        write!(output, "\r\x1b[{}A\x1b[J", picker_lines_drawn)?;
+                        output.flush()?;
+                    }
+                    return Ok(());
+                }
                 _ => {}
             }
         };
@@ -987,23 +1142,22 @@ impl ConfigEditor {
         input: &mut R,
         output: &mut W,
     ) -> anyhow::Result<()> {
-        write!(output, "\x1b[H\x1b[2J")?;
-        writeln!(
-            output,
-            "{BOLD_YELLOW}Reset all configuration to initial defaults?{RESET}\n"
-        )?;
-
+        let mut last_lines_drawn = 0;
         let mut sel = 1; // default to No
         loop {
-            write!(output, "\x1b[H\x1b[2J")?;
+            if last_lines_drawn > 0 {
+                write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+            }
+            let mut lines = 0;
             writeln!(
                 output,
-                "{BOLD_YELLOW}Reset all configuration to initial defaults?{RESET}\n"
+                " {BOLD_YELLOW}Reset all configuration to initial defaults?{RESET}\n"
             )?;
+            lines += 2;
             let opts = ["Yes, reset to defaults", "No, keep current settings"];
             for (i, opt) in opts.iter().enumerate() {
                 let marker = if i == sel {
-                    format!("{BOLD_CYAN}>{RESET}")
+                    format!("{BOLD_GREEN}▸{RESET}")
                 } else {
                     " ".to_string()
                 };
@@ -1012,7 +1166,9 @@ impl ConfigEditor {
                 } else {
                     writeln!(output, "  {marker} {opt}")?;
                 }
+                lines += 1;
             }
+            last_lines_drawn = lines;
             output.flush()?;
 
             let key = read_key_from(input)?;
@@ -1028,9 +1184,19 @@ impl ConfigEditor {
                             "{BOLD_YELLOW}✔ Reset configuration to defaults (unsaved){RESET}"
                         ));
                     }
+                    if last_lines_drawn > 0 {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                    }
                     return Ok(());
                 }
-                Key::Esc => return Ok(()),
+                Key::Esc => {
+                    if last_lines_drawn > 0 {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                    }
+                    return Ok(());
+                }
                 _ => {}
             }
         }
