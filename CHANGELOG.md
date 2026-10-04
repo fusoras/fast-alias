@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Custom argument signatures and documentation (`args`): explicitly declare positional argument names and documentation for command aliases using structured token arrays (`args = ["<input>", "[output]"]`), object arrays (`args = [{ name = "input", description = "..." }]`), or table syntax (`[alias.sec.cmd.args]`). Displays custom signatures in `fa list` and namespace listings, and renders usage signatures and aligned argument documentation in `fa --show <command>`. Rejects ambiguous single strings.
 - `[alias]` table synonym: support singular `[alias.<section>]` and `[alias.<section>.<command>]` interchangeably with plural `[aliases]`, allowing cleaner single-command definitions while merging coexisting tables seamlessly; full editor schema and source tracking support.
 
 - Alias environment variable injection (`env`, `env_force`, `_env`, `_env_force`): declare custom environment variables scoped to aliases or namespaces directly in TOML. Supports fallback mode (`env`, `_env` applied only if unset in system) and forced mode (`env_force`, `_env_force` overriding terminal environment). Values dynamically expand tildes (`~`), existing variables (`$VAR`, `${VAR}`), and fallback syntax (`${VAR:-default}`).
