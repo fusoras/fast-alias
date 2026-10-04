@@ -247,7 +247,14 @@ pub fn recipe_edit_path(config_dir: &Path, name: &str) -> anyhow::Result<PathBuf
             let target_recipe = format!("[recipes.{name}]");
             let target_alias = format!("[aliases.{name}]");
             let target_ns = format!("[aliases.\":{name}\"]");
-            if raw.contains(&target_recipe) || raw.contains(&target_alias) || raw.contains(&target_ns) {
+            let target_alias_singular = format!("[alias.{name}]");
+            let target_ns_singular = format!("[alias.\":{name}\"]");
+            if raw.contains(&target_recipe)
+                || raw.contains(&target_alias)
+                || raw.contains(&target_ns)
+                || raw.contains(&target_alias_singular)
+                || raw.contains(&target_ns_singular)
+            {
                 found = Some(path);
             }
         }
@@ -968,6 +975,37 @@ mod tests {
         .unwrap();
         let target_path = recipe_edit_path(&dir2, "my-target").expect("should find file containing target section even with syntax error");
         assert_eq!(target_path, dir2.join("recipes.d/malformed.toml"));
+    }
+
+    #[test]
+    fn test_recipe_edit_path_with_singular_alias() {
+        let dir = temp_dir("edit-singular-alias");
+        fs::write(
+            dir.join("recipes.d/tools.toml"),
+            "[alias.wrapper.upscayl]\ncommand = \"flatpak run upscayl\"\n",
+        )
+        .unwrap();
+
+        let path = recipe_edit_path(&dir, "wrapper").expect("should resolve alias section 'wrapper'");
+        assert_eq!(path, dir.join("recipes.d/tools.toml"));
+
+        // Test fallback on file with syntax error containing [alias.broken_sec] or [alias.":ns"]
+        let dir2 = temp_dir("edit-singular-alias-malformed");
+        fs::write(
+            dir2.join("recipes.d/malformed.toml"),
+            "[alias.my_broken_sec]\ninvalid_toml = = =\n",
+        )
+        .unwrap();
+        let path2 = recipe_edit_path(&dir2, "my_broken_sec").expect("should resolve malformed file containing [alias.my_broken_sec]");
+        assert_eq!(path2, dir2.join("recipes.d/malformed.toml"));
+
+        fs::write(
+            dir2.join("recipes.d/malformed_ns.toml"),
+            "[alias.\":my_broken_ns\"]\ninvalid_toml = = =\n",
+        )
+        .unwrap();
+        let path3 = recipe_edit_path(&dir2, "my_broken_ns").expect("should resolve malformed file containing [alias.\":my_broken_ns\"]");
+        assert_eq!(path3, dir2.join("recipes.d/malformed_ns.toml"));
     }
 
     #[test]

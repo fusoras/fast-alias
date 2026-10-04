@@ -20,6 +20,16 @@
           "$ref": "#/definitions/Alias"
         }
       }
+    },
+    "alias": {
+      "type": "object",
+      "description": "Map of alias sections containing named command aliases (synonym for 'aliases').",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {
+          "$ref": "#/definitions/Alias"
+        }
+      }
     }
   },
   "definitions": {

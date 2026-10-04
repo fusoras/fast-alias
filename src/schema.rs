@@ -54,6 +54,37 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
           "$ref": "#/definitions/Alias"
         }
       }
+    },
+    "alias": {
+      "type": "object",
+      "description": "Map of alias sections containing named command aliases (synonym for 'aliases').",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "_vars": {
+            "type": "object",
+            "description": "Namespace template variables substituted via {{KEY}} within this section.",
+            "additionalProperties": { "type": "string" }
+          },
+          "_env": {
+            "oneOf": [
+              { "type": "object", "additionalProperties": { "type": "string" } },
+              { "type": "string" }
+            ],
+            "description": "Shared fallback environment variables for all commands in this namespace."
+          },
+          "_env_force": {
+            "oneOf": [
+              { "type": "object", "additionalProperties": { "type": "string" } },
+              { "type": "string" }
+            ],
+            "description": "Shared forced environment variables for all commands in this namespace."
+          }
+        },
+        "additionalProperties": {
+          "$ref": "#/definitions/Alias"
+        }
+      }
     }
   },
   "definitions": {

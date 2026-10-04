@@ -558,6 +558,8 @@ struct RawConfig {
     vars: BTreeMap<String, String>,
     #[serde(default)]
     aliases: BTreeMap<String, BTreeMap<String, toml::Value>>,
+    #[serde(default)]
+    pub alias: BTreeMap<String, BTreeMap<String, toml::Value>>,
 }
 
 impl<'de> Deserialize<'de> for Config {
@@ -577,7 +579,12 @@ impl<'de> Deserialize<'de> for Config {
 
         let mut section_vars: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
 
-        for (section, entries) in raw.aliases {
+        let mut raw_aliases = raw.aliases;
+        for (sec, entries) in raw.alias {
+            raw_aliases.entry(sec).or_default().extend(entries);
+        }
+
+        for (section, entries) in raw_aliases {
             for (key, val) in entries {
                 if key == "_env" {
                     let spec: EnvSpec = val.try_into().map_err(serde::de::Error::custom)?;
@@ -1449,7 +1456,10 @@ pub fn annotate_sources(config: &mut Config, path: &Path, content: &str) {
                         recipe.source_line = Some(line_num);
                     }
                 }
-            } else if let Some(rest) = inner.strip_prefix("aliases.") {
+            } else if let Some(rest) = inner
+                .strip_prefix("aliases.")
+                .or_else(|| inner.strip_prefix("alias."))
+            {
                 let parts = split_toml_path(rest);
                 if parts.len() == 1 {
                     context = Context::AliasSection(parts[0].clone());
@@ -2567,6 +2577,64 @@ create-img-anima = { description = "{{SD_DESCRIPTION}} estilo anime: <prompt> <o
         assert_eq!(loaded.len(), 1);
 
         let _ = fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_alias_singular_table_standalone() {
+        let toml_str = r#"
+[alias.wrapper.upscayl]
+command = "flatpak run org.upscayl.Upscayl"
+description = "AI image upscaler"
+"#;
+        let config: Config = toml::from_str(toml_str).expect("Should parse TOML with [alias.section.cmd]");
+        let cmd = config
+            .aliases
+            .get("wrapper")
+            .and_then(|w| w.get("upscayl"))
+            .expect("wrapper.upscayl must exist in config.aliases");
+        assert_eq!(cmd.command, "flatpak run org.upscayl.Upscayl");
+        assert_eq!(cmd.description.as_deref(), Some("AI image upscaler"));
+    }
+
+    #[test]
+    fn test_alias_and_aliases_coexist_and_merge() {
+        let toml_str = r#"
+[alias.sec]
+foo = { command = "echo foo" }
+
+[aliases.sec]
+bar = { command = "echo bar" }
+
+[alias.other]
+baz = { command = "echo baz" }
+"#;
+        let config: Config = toml::from_str(toml_str).expect("Should parse TOML with both [alias] and [aliases]");
+        let sec = config.aliases.get("sec").expect("section 'sec' must exist");
+        assert!(sec.contains_key("foo"), "foo from [alias.sec] must be present");
+        assert!(sec.contains_key("bar"), "bar from [aliases.sec] must be present");
+        assert!(config.aliases.contains_key("other"), "other from [alias.other] must be present");
+    }
+
+    #[test]
+    fn test_alias_source_annotation() {
+        let toml_str = r#"
+[alias.wrapper.upscayl]
+command = "flatpak run org.upscayl.Upscayl"
+
+[alias.tools]
+tool1 = { command = "echo 1" }
+"#;
+        let mut config: Config = toml::from_str(toml_str).expect("Should parse config");
+        let dummy_path = PathBuf::from("/dummy/recipes.d/tools.toml");
+        annotate_sources(&mut config, &dummy_path, toml_str);
+
+        let upscayl = &config.aliases["wrapper"]["upscayl"];
+        assert_eq!(upscayl.source_file, Some(dummy_path.clone()));
+        assert_eq!(upscayl.source_line, Some(2));
+
+        let tool1 = &config.aliases["tools"]["tool1"];
+        assert_eq!(tool1.source_file, Some(dummy_path));
+        assert_eq!(tool1.source_line, Some(6));
     }
 }
 
