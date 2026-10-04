@@ -31,6 +31,10 @@ pub const EXAMPLE_GLOBAL_CONFIG: &str = r##"[packs]
 # "error" -> raises an error requiring an explicit pack or component
 default_behavior = "list"
 
+[ui]
+# Enable Nerd Fonts glyphs instead of standard Unicode symbols:
+nerd_fonts = false
+
 [alias]
 # Command aliases (Git style)
 # Native fa command shortcuts:
@@ -367,9 +371,18 @@ impl Default for PacksSettings {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct UiSettings {
+    /// Enable Nerd Fonts glyphs instead of standard Unicode symbols
+    #[serde(default)]
+    pub nerd_fonts: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct GlobalConfig {
     #[serde(default)]
     pub packs: PacksSettings,
+    #[serde(default)]
+    pub ui: UiSettings,
     #[serde(default, alias = "aliases")]
     pub alias: BTreeMap<String, String>,
 }

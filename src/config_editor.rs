@@ -314,8 +314,110 @@ pub fn prompt_line_raw<R: Read, W: Write>(
 #[derive(Debug, Clone, Default)]
 pub struct ConfigDelta {
     pub packs_behavior: Option<String>,
+    pub nerd_fonts: Option<bool>,
     pub aliases: BTreeMap<String, String>,
     pub reset_to_defaults: bool,
+}
+
+/// Icon and symbol palette used across the configuration TUI.
+/// Defaults to standard universal Unicode symbols; switches to Nerd Font glyphs when enabled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UiIcons {
+    pub nerd_fonts: bool,
+}
+
+impl UiIcons {
+    pub fn new(nerd_fonts: bool) -> Self {
+        Self { nerd_fonts }
+    }
+
+    /// Selection pointer marker.
+    /// Universal: "▸" (\u{25b8})
+    /// Nerd Font: "" (\u{f054})
+    pub fn pointer(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f054}"
+        } else {
+            "▸"
+        }
+    }
+
+    /// Success / notification checkmark.
+    /// Universal: "✔" (\u{2714})
+    /// Nerd Font: "" (\u{f00c})
+    pub fn check(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f00c}"
+        } else {
+            "✔"
+        }
+    }
+
+    /// Selection list checkmark.
+    /// Universal: "✓" (\u{2713})
+    /// Nerd Font: "" (\u{f00c})
+    pub fn selection_check(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f00c}"
+        } else {
+            "✓"
+        }
+    }
+
+    /// Banner dot divider.
+    /// Universal: "•" (\u{2022})
+    /// Nerd Font: "" (\u{f444})
+    pub fn dot(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f444}"
+        } else {
+            "•"
+        }
+    }
+
+    /// Breadcrumb chevron separator.
+    /// Universal: "›" (\u{203a})
+    /// Nerd Font: "" (\u{f054})
+    pub fn breadcrumb(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f054}"
+        } else {
+            "›"
+        }
+    }
+
+    /// Back button label.
+    /// Universal: "[<- Back]"
+    /// Nerd Font: "[ Back]" (\u{f060})
+    pub fn back_label(&self) -> &'static str {
+        if self.nerd_fonts {
+            "[\u{f060} Back]"
+        } else {
+            "[<- Back]"
+        }
+    }
+
+    /// Add new alias button label.
+    /// Universal: "[+ Add new alias]"
+    /// Nerd Font: "[ Add new alias]" (\u{f067})
+    pub fn add_alias_label(&self) -> &'static str {
+        if self.nerd_fonts {
+            "[\u{f067} Add new alias]"
+        } else {
+            "[+ Add new alias]"
+        }
+    }
+
+    /// Directional arrow for alias mapping (`foo -> bar`).
+    /// Universal: "->"
+    /// Nerd Font: "" (\u{f061})
+    pub fn arrow(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{f061}"
+        } else {
+            "->"
+        }
+    }
 }
 
 /// Applies a `ConfigDelta` to existing `config.toml` content using `toml_edit`
@@ -342,6 +444,19 @@ pub fn apply_config_delta(existing_toml: &str, delta: &ConfigDelta) -> anyhow::R
                 doc["packs"] = Item::Table(Table::new());
             }
             doc["packs"]["default_behavior"] = toml_edit::value(behavior.as_str());
+        }
+    }
+
+    // 2. UI settings (nerd_fonts):
+    if let Some(nf) = delta.nerd_fonts {
+        let is_default_nf = !nf;
+        let has_ui = doc.contains_table("ui") || doc.contains_key("ui");
+
+        if !is_default_nf || has_ui {
+            if !has_ui {
+                doc["ui"] = Item::Table(Table::new());
+            }
+            doc["ui"]["nerd_fonts"] = toml_edit::value(nf);
         }
     }
 
@@ -470,6 +585,7 @@ pub struct ConfigEditor {
     packs_behavior: String,
     /// Tab-cycled value not yet confirmed with Enter on the main menu.
     pending_behavior: Option<String>,
+    nerd_fonts: bool,
     aliases: BTreeMap<String, String>,
     status_message: Option<String>,
 }
@@ -485,6 +601,7 @@ impl ConfigEditor {
 
         let parsed = crate::config::parse_global_config(&initial_content).unwrap_or_default();
         let packs_behavior = parsed.packs.default_behavior;
+        let nerd_fonts = parsed.ui.nerd_fonts;
         let aliases = parsed.alias;
 
         Ok(Self {
@@ -492,6 +609,7 @@ impl ConfigEditor {
             initial_content,
             packs_behavior,
             pending_behavior: None,
+            nerd_fonts,
             aliases,
             status_message: None,
         })
@@ -502,6 +620,7 @@ impl ConfigEditor {
         let menu_items = [
             "Packs default behavior",
             "Command aliases",
+            "Nerd Fonts icons",
             "Open in editor",
             "Reset to defaults",
             "Save and exit",
@@ -512,12 +631,13 @@ impl ConfigEditor {
         let mut last_lines_drawn = 0;
 
         loop {
+            let icons = UiIcons::new(self.nerd_fonts);
             if last_lines_drawn > 0 {
                 write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
             }
             let mut lines = 0;
             let path_str = format_path_with_tilde(&self.config_path);
-            let prefix = "  Fast-Alias Configuration  •  ";
+            let prefix = format!("  Fast-Alias Configuration  {}  ", icons.dot());
             let min_inner_w = 61;
             let content_w = prefix.chars().count() + path_str.chars().count() + 2;
             let inner_w = content_w.max(min_inner_w);
@@ -531,7 +651,8 @@ impl ConfigEditor {
             lines += 1;
             writeln!(
                 output,
-                "{BOLD_CYAN}│{RESET}  {BOLD_WHITE}Fast-Alias Configuration{RESET}  {DIM}•{RESET}  {DIM}{path_str}{RESET}{right_pad}{BOLD_CYAN}│{RESET}"
+                "{BOLD_CYAN}│{RESET}  {BOLD_WHITE}Fast-Alias Configuration{RESET}  {DIM}{}{RESET}  {DIM}{path_str}{RESET}{right_pad}{BOLD_CYAN}│{RESET}",
+                icons.dot()
             )?;
             lines += 1;
             writeln!(
@@ -542,7 +663,8 @@ impl ConfigEditor {
             lines += 1;
             writeln!(
                 output,
-                " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Main Menu{RESET}"
+                " {BOLD_CYAN}fa config{RESET} {DIM}{}{RESET} {BOLD_WHITE}Main Menu{RESET}",
+                icons.breadcrumb()
             )?;
             lines += 1;
 
@@ -550,14 +672,15 @@ impl ConfigEditor {
                 ("SETTINGS", &[
                     (0, "Packs default behavior"),
                     (1, "Command aliases"),
+                    (2, "Nerd Fonts icons"),
                 ]),
                 ("ADVANCED", &[
-                    (2, "Open in editor"),
-                    (3, "Reset to defaults"),
+                    (3, "Open in editor"),
+                    (4, "Reset to defaults"),
                 ]),
                 ("SESSION", &[
-                    (4, "Save and exit"),
-                    (5, "Cancel"),
+                    (5, "Save and exit"),
+                    (6, "Cancel"),
                 ]),
             ];
 
@@ -570,7 +693,7 @@ impl ConfigEditor {
                 for &(idx, item) in items.iter() {
                     let is_sel = idx == selected;
                     let marker = if is_sel {
-                        format!("{BOLD_GREEN}▸{RESET}")
+                        format!("{BOLD_GREEN}{}{RESET}", icons.pointer())
                     } else {
                         " ".to_string()
                     };
@@ -583,6 +706,10 @@ impl ConfigEditor {
                             None => format!(" {BOLD_CYAN}[ {} ]{RESET}", self.packs_behavior),
                         },
                         1 => format!(" {DIM}({} defined){RESET}", self.aliases.len()),
+                        2 => {
+                            let state_str = if self.nerd_fonts { "on" } else { "off" };
+                            format!(" {BOLD_CYAN}[ {state_str} ]{RESET}")
+                        }
                         _ => String::new(),
                     };
 
@@ -615,6 +742,11 @@ impl ConfigEditor {
                     output,
                     " {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Tab{RESET}{DIM} to cycle value, {RESET}{BOLD_CYAN}s{RESET}{DIM} to save, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
                 )?;
+            } else if selected == 2 {
+                writeln!(
+                    output,
+                    " {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM}/{RESET}{BOLD_CYAN}Tab{RESET}{DIM} to toggle, {RESET}{BOLD_CYAN}s{RESET}{DIM} to save, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
+                )?;
             } else {
                 writeln!(
                     output,
@@ -644,8 +776,10 @@ impl ConfigEditor {
                     PacksRowEffect::Confirm(value) => {
                         self.packs_behavior = value.clone();
                         self.pending_behavior = None;
+                        let cur_icons = UiIcons::new(self.nerd_fonts);
                         self.status_message = Some(format!(
-                            "{BOLD_GREEN}✔ '{value}' applied successfully{RESET}"
+                            "{BOLD_GREEN}{} '{value}' applied successfully{RESET}",
+                            cur_icons.check()
                         ));
                         continue;
                     }
@@ -665,14 +799,33 @@ impl ConfigEditor {
                 }
             }
 
+            // Inline toggle of "Nerd Fonts icons" via Tab/BackTab
+            if selected == 2 {
+                match key {
+                    Key::Tab | Key::BackTab => {
+                        self.nerd_fonts = !self.nerd_fonts;
+                        let new_icons = UiIcons::new(self.nerd_fonts);
+                        let state_str = if self.nerd_fonts { "enabled" } else { "disabled" };
+                        self.status_message = Some(format!(
+                            "{BOLD_GREEN}{} Nerd Fonts icons {state_str}{RESET}",
+                            new_icons.check()
+                        ));
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+
             match key {
                 Key::Char('s') | Key::Char('S') => {
                     if let Some(pending) = self.pending_behavior.take() {
                         self.packs_behavior = pending;
                     }
                     self.save()?;
+                    let cur_icons = UiIcons::new(self.nerd_fonts);
                     self.status_message = Some(format!(
-                        "{BOLD_GREEN}✔ Configuration saved{RESET}"
+                        "{BOLD_GREEN}{} Configuration saved{RESET}",
+                        cur_icons.check()
                     ));
                     continue;
                 }
@@ -704,29 +857,40 @@ impl ConfigEditor {
                         self.menu_aliases(input, output)?;
                     }
                     2 => {
-                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
-                        output.flush()?;
-                        last_lines_drawn = 0;
-                        self.action_open_editor(output)?;
+                        self.nerd_fonts = !self.nerd_fonts;
+                        let new_icons = UiIcons::new(self.nerd_fonts);
+                        let state_str = if self.nerd_fonts { "enabled" } else { "disabled" };
+                        self.status_message = Some(format!(
+                            "{BOLD_GREEN}{} Nerd Fonts icons {state_str}{RESET}",
+                            new_icons.check()
+                        ));
                     }
                     3 => {
                         write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                         output.flush()?;
                         last_lines_drawn = 0;
-                        self.action_reset_defaults(input, output)?;
+                        self.action_open_editor(output)?;
                     }
                     4 => {
+                        write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        output.flush()?;
+                        last_lines_drawn = 0;
+                        self.action_reset_defaults(input, output)?;
+                    }
+                    5 => {
                         self.save()?;
                         write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                        let cur_icons = UiIcons::new(self.nerd_fonts);
                         writeln!(
                             output,
-                            "{BOLD_GREEN}✔{RESET} Configuration saved to {BOLD_WHITE}{}{RESET}",
+                            "{BOLD_GREEN}{}{RESET} Configuration saved to {BOLD_WHITE}{}{RESET}",
+                            cur_icons.check(),
                             self.config_path.display()
                         )?;
                         output.flush()?;
                         return Ok(true);
                     }
-                    5 => {
+                    6 => {
                         write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                         writeln!(output, "{DIM}Configuration changes discarded.{RESET}")?;
                         output.flush()?;
@@ -751,8 +915,10 @@ impl ConfigEditor {
         input: &mut R,
         output: &mut W,
     ) -> anyhow::Result<()> {
+        let icons = UiIcons::new(self.nerd_fonts);
+        let back_label = icons.back_label();
         let options = [
-            ("[<- Back]", ""),
+            (back_label, ""),
             ("list", "Displays all available packs and components (default)"),
             ("default", "Automatically installs the pack specified in recipe default_pack"),
             ("error", "Raises an error requiring an explicit pack or component"),
@@ -773,7 +939,8 @@ impl ConfigEditor {
             let mut lines = 0;
             writeln!(
                 output,
-                " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Packs Default Behavior{RESET}"
+                " {BOLD_CYAN}fa config{RESET} {DIM}{}{RESET} {BOLD_WHITE}Packs Default Behavior{RESET}",
+                icons.breadcrumb()
             )?;
             lines += 1;
             writeln!(
@@ -785,16 +952,16 @@ impl ConfigEditor {
             for (i, (val, desc)) in options.iter().enumerate() {
                 let is_sel = i == selected;
                 let marker = if is_sel {
-                    format!("{BOLD_GREEN}▸{RESET}")
+                    format!("{BOLD_GREEN}{}{RESET}", icons.pointer())
                 } else {
                     " ".to_string()
                 };
 
                 if i == 0 {
                     if is_sel {
-                        writeln!(output, "  {marker} {BOLD_WHITE}[<- Back]{RESET}")?;
+                        writeln!(output, "  {marker} {BOLD_WHITE}{back_label}{RESET}")?;
                     } else {
-                        writeln!(output, "  {marker} [<- Back]")?;
+                        writeln!(output, "  {marker} {back_label}")?;
                     }
                     lines += 1;
                     continue;
@@ -805,7 +972,7 @@ impl ConfigEditor {
                 }
 
                 let current_marker = if *val == self.packs_behavior.as_str() {
-                    format!(" {BOLD_GREEN}✓{RESET}")
+                    format!(" {BOLD_GREEN}{}{RESET}", icons.selection_check())
                 } else {
                     String::new()
                 };
@@ -855,7 +1022,8 @@ impl ConfigEditor {
                         let chosen = options[selected].0;
                         self.packs_behavior = chosen.to_string();
                         self.status_message = Some(format!(
-                            "{BOLD_GREEN}✔ '{chosen}' applied successfully{RESET}"
+                            "{BOLD_GREEN}{} '{chosen}' applied successfully{RESET}",
+                            icons.check()
                         ));
                     }
                     if last_lines_drawn > 0 {
@@ -882,6 +1050,9 @@ impl ConfigEditor {
         input: &mut R,
         output: &mut W,
     ) -> anyhow::Result<()> {
+        let icons = UiIcons::new(self.nerd_fonts);
+        let back_label = icons.back_label();
+        let add_label = icons.add_alias_label();
         let mut selected = 0;
         let mut last_lines_drawn = 0;
 
@@ -893,7 +1064,7 @@ impl ConfigEditor {
                 .collect();
 
             // Total selectable rows:
-            // 0: [Back to main menu]
+            // 0: [<- Back]
             // 1: [+ Add new alias]
             // 2..=len+1: existing aliases
             let total_rows = alias_list.len() + 2;
@@ -907,7 +1078,8 @@ impl ConfigEditor {
             let mut lines = 0;
             writeln!(
                 output,
-                " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Command Aliases{RESET}"
+                " {BOLD_CYAN}fa config{RESET} {DIM}{}{RESET} {BOLD_WHITE}Command Aliases{RESET}",
+                icons.breadcrumb()
             )?;
             lines += 1;
             writeln!(output)?;
@@ -916,17 +1088,17 @@ impl ConfigEditor {
             // Render [<- Back]
             let is_back = selected == 0;
             let back_marker = if is_back {
-                format!("{BOLD_GREEN}▸{RESET}")
+                format!("{BOLD_GREEN}{}{RESET}", icons.pointer())
             } else {
                 " ".to_string()
             };
             if is_back {
                 writeln!(
                     output,
-                    "  {back_marker} {BOLD_WHITE}[<- Back]{RESET}"
+                    "  {back_marker} {BOLD_WHITE}{back_label}{RESET}"
                 )?;
             } else {
-                writeln!(output, "  {back_marker} [<- Back]")?;
+                writeln!(output, "  {back_marker} {back_label}")?;
             }
             lines += 1;
             writeln!(output)?;
@@ -935,17 +1107,17 @@ impl ConfigEditor {
             // Render [+ Add new alias]
             let is_add = selected == 1;
             let add_marker = if is_add {
-                format!("{BOLD_GREEN}▸{RESET}")
+                format!("{BOLD_GREEN}{}{RESET}", icons.pointer())
             } else {
                 " ".to_string()
             };
             if is_add {
                 writeln!(
                     output,
-                    "  {add_marker} {BOLD_GREEN}[+ Add new alias]{RESET}\n"
+                    "  {add_marker} {BOLD_GREEN}{add_label}{RESET}\n"
                 )?;
             } else {
-                writeln!(output, "  {add_marker} [+ Add new alias]\n")?;
+                writeln!(output, "  {add_marker} {add_label}\n")?;
             }
             lines += 2;
 
@@ -979,7 +1151,7 @@ impl ConfigEditor {
                     let row_idx = idx + 2;
                     let is_sel = selected == row_idx;
                     let marker = if is_sel {
-                        format!("{BOLD_GREEN}▸{RESET}")
+                        format!("{BOLD_GREEN}{}{RESET}", icons.pointer())
                     } else {
                         " ".to_string()
                     };
@@ -993,16 +1165,18 @@ impl ConfigEditor {
                     if is_sel {
                         writeln!(
                             output,
-                            "  {marker} {BOLD_YELLOW}{:<width$}{RESET}  ->  {BOLD_WHITE}{}{RESET}  {badge}",
+                            "  {marker} {BOLD_YELLOW}{:<width$}{RESET}  {}  {BOLD_WHITE}{}{RESET}  {badge}",
                             k,
+                            icons.arrow(),
                             v,
                             width = max_k_len
                         )?;
                     } else {
                         writeln!(
                             output,
-                            "  {marker} {:<width$}  {DIM}->{RESET}  {}  {badge}",
+                            "  {marker} {:<width$}  {DIM}{}{RESET}  {}  {badge}",
                             k,
+                            icons.arrow(),
                             v,
                             width = max_k_len
                         )?;
@@ -1045,7 +1219,7 @@ impl ConfigEditor {
                 }
                 Key::Enter => {
                     if selected == 0 {
-                        // [Back to main menu]
+                        // [<- Back]
                         if last_lines_drawn > 0 {
                             write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                             output.flush()?;
@@ -1089,6 +1263,7 @@ impl ConfigEditor {
         input: &mut R,
         output: &mut W,
     ) -> anyhow::Result<()> {
+        let icons = UiIcons::new(self.nerd_fonts);
         let mut last_lines_drawn = 0;
         let mut delete_sel = 0;
         loop {
@@ -1104,7 +1279,7 @@ impl ConfigEditor {
             let opts = ["Yes, delete this alias", "No, keep it"];
             for (i, opt) in opts.iter().enumerate() {
                 let marker = if i == delete_sel {
-                    format!("{BOLD_GREEN}▸{RESET}")
+                    format!("{BOLD_GREEN}{}{RESET}", icons.pointer())
                 } else {
                     " ".to_string()
                 };
@@ -1132,7 +1307,8 @@ impl ConfigEditor {
                     if delete_sel == 0 {
                         self.aliases.remove(alias_name);
                         self.status_message = Some(format!(
-                            "{BOLD_YELLOW}✔ Deleted alias '{alias_name}'{RESET}"
+                            "{BOLD_YELLOW}{} Deleted alias '{alias_name}'{RESET}",
+                            icons.check()
                         ));
                     }
                     if last_lines_drawn > 0 {
@@ -1161,10 +1337,13 @@ impl ConfigEditor {
         input: &mut R,
         output: &mut W,
     ) -> anyhow::Result<()> {
+        let icons = UiIcons::new(self.nerd_fonts);
+        let back_label = icons.back_label();
         let mut lines = 0;
         writeln!(
             output,
-            " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Add New Command Alias{RESET}"
+            " {BOLD_CYAN}fa config{RESET} {DIM}{}{RESET} {BOLD_WHITE}Add New Command Alias{RESET}",
+            icons.breadcrumb()
         )?;
         lines += 1;
         writeln!(
@@ -1196,7 +1375,7 @@ impl ConfigEditor {
 
         // 2. Select command from native command list:
         let mut choices: Vec<(String, String)> = Vec::new();
-        choices.push(("[<- Back]".to_string(), "Cancel alias creation".to_string()));
+        choices.push((back_label.to_string(), "Cancel alias creation".to_string()));
         for (cmd, desc) in NATIVE_COMMANDS {
             choices.push((cmd.to_string(), desc.to_string()));
         }
@@ -1224,7 +1403,7 @@ impl ConfigEditor {
                 }
                 let is_sel = i == selected;
                 let marker = if is_sel {
-                    format!("{BOLD_GREEN}▸{RESET}")
+                    format!("{BOLD_GREEN}{}{RESET}", icons.pointer())
                 } else {
                     " ".to_string()
                 };
@@ -1328,7 +1507,9 @@ impl ConfigEditor {
         };
 
         self.status_message = Some(format!(
-            "{BOLD_GREEN}✔ Added alias '{name}' -> '{final_cmd}'{RESET}"
+            "{BOLD_GREEN}{} Added alias '{name}' {} '{final_cmd}'{RESET}",
+            icons.check(),
+            icons.arrow()
         ));
         self.aliases.insert(name, final_cmd);
         Ok(())
@@ -1351,6 +1532,7 @@ impl ConfigEditor {
             self.initial_content = reloaded.clone();
             if let Ok(cfg) = crate::config::parse_global_config(&reloaded) {
                 self.packs_behavior = cfg.packs.default_behavior;
+                self.nerd_fonts = cfg.ui.nerd_fonts;
                 self.aliases = cfg.alias;
             }
         }
@@ -1367,6 +1549,7 @@ impl ConfigEditor {
         input: &mut R,
         output: &mut W,
     ) -> anyhow::Result<()> {
+        let icons = UiIcons::new(self.nerd_fonts);
         let mut last_lines_drawn = 0;
         let mut sel = 1; // default to No
         loop {
@@ -1382,7 +1565,7 @@ impl ConfigEditor {
             let opts = ["Yes, reset to defaults", "No, keep current settings"];
             for (i, opt) in opts.iter().enumerate() {
                 let marker = if i == sel {
-                    format!("{BOLD_GREEN}▸{RESET}")
+                    format!("{BOLD_GREEN}{}{RESET}", icons.pointer())
                 } else {
                     " ".to_string()
                 };
@@ -1411,9 +1594,12 @@ impl ConfigEditor {
                         let parsed = crate::config::parse_global_config(EXAMPLE_GLOBAL_CONFIG)
                             .unwrap_or_default();
                         self.packs_behavior = parsed.packs.default_behavior;
+                        self.nerd_fonts = parsed.ui.nerd_fonts;
                         self.aliases = parsed.alias;
+                        let cur_icons = UiIcons::new(self.nerd_fonts);
                         self.status_message = Some(format!(
-                            "{BOLD_YELLOW}✔ Reset configuration to defaults (unsaved){RESET}"
+                            "{BOLD_YELLOW}{} Reset configuration to defaults (unsaved){RESET}",
+                            cur_icons.check()
                         ));
                     }
                     if last_lines_drawn > 0 {
@@ -1438,6 +1624,7 @@ impl ConfigEditor {
     pub fn save(&self) -> anyhow::Result<()> {
         let delta = ConfigDelta {
             packs_behavior: Some(self.packs_behavior.clone()),
+            nerd_fonts: Some(self.nerd_fonts),
             aliases: self.aliases.clone(),
             reset_to_defaults: false,
         };
@@ -1513,6 +1700,7 @@ l = "--list"
 
         let delta = ConfigDelta {
             packs_behavior: Some("default".to_string()),
+            nerd_fonts: None,
             aliases,
             reset_to_defaults: false,
         };
@@ -1552,6 +1740,7 @@ n = "--new"
 
         let delta = ConfigDelta {
             packs_behavior: Some("list".to_string()),
+            nerd_fonts: None,
             aliases,
             reset_to_defaults: false,
         };
@@ -1579,6 +1768,7 @@ rm_me = "--recipe rm"
 
         let delta = ConfigDelta {
             packs_behavior: None,
+            nerd_fonts: None,
             aliases,
             reset_to_defaults: false,
         };
@@ -1601,6 +1791,7 @@ custom = "!echo hello"
 
         let delta = ConfigDelta {
             packs_behavior: None,
+            nerd_fonts: None,
             aliases: BTreeMap::new(),
             reset_to_defaults: true,
         };
@@ -2154,5 +2345,130 @@ custom = "!echo hello"
 
         let other = Path::new("/var/log/fa.log");
         assert_eq!(format_path_with_tilde(other), "/var/log/fa.log");
+    }
+
+    #[test]
+    fn test_ui_icons_universal_vs_nerd_fonts() {
+        let universal = UiIcons::new(false);
+        assert_eq!(universal.pointer(), "▸");
+        assert_eq!(universal.check(), "✔");
+        assert_eq!(universal.selection_check(), "✓");
+        assert_eq!(universal.dot(), "•");
+        assert_eq!(universal.breadcrumb(), "›");
+        assert_eq!(universal.back_label(), "[<- Back]");
+        assert_eq!(universal.add_alias_label(), "[+ Add new alias]");
+        assert_eq!(universal.arrow(), "->");
+
+        let nerd = UiIcons::new(true);
+        assert_eq!(nerd.pointer(), "\u{f054}"); //  nf-fa-chevron_right
+        assert_eq!(nerd.check(), "\u{f00c}"); //  nf-fa-check
+        assert_eq!(nerd.selection_check(), "\u{f00c}"); //  nf-fa-check
+        assert_eq!(nerd.dot(), "\u{f444}"); //  nf-oct-dot_fill
+        assert_eq!(nerd.breadcrumb(), "\u{f054}"); //  nf-fa-chevron_right
+        assert_eq!(nerd.back_label(), "[\u{f060} Back]"); //  nf-fa-arrow_left
+        assert_eq!(nerd.add_alias_label(), "[\u{f067} Add new alias]"); //  nf-fa-plus
+        assert_eq!(nerd.arrow(), "\u{f061}"); //  nf-fa-arrow_right
+    }
+
+    #[test]
+    fn test_global_config_parses_and_serializes_ui_nerd_fonts() {
+        let toml_default = r#"[packs]
+default_behavior = "list"
+"#;
+        let parsed_def = crate::config::parse_global_config(toml_default).unwrap();
+        assert!(!parsed_def.ui.nerd_fonts, "Default nerd_fonts must be false");
+
+        let toml_nerd = r#"[ui]
+nerd_fonts = true
+"#;
+        let parsed_nerd = crate::config::parse_global_config(toml_nerd).unwrap();
+        assert!(parsed_nerd.ui.nerd_fonts, "Explicit nerd_fonts = true must parse to true");
+
+        // Delta serialization
+        let delta = ConfigDelta {
+            packs_behavior: None,
+            nerd_fonts: Some(true),
+            aliases: BTreeMap::new(),
+            reset_to_defaults: false,
+        };
+        let updated = apply_config_delta(toml_default, &delta).unwrap();
+        assert!(updated.contains("[ui]"), "Must insert [ui] section");
+        assert!(updated.contains("nerd_fonts = true"), "Must persist nerd_fonts = true");
+
+        let parsed_updated = crate::config::parse_global_config(&updated).unwrap();
+        assert!(parsed_updated.ui.nerd_fonts);
+    }
+
+    #[test]
+    fn test_config_editor_toggles_nerd_fonts_and_switches_glyphs() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-toggle-nf-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        assert!(!editor.nerd_fonts, "Initial nerd_fonts state must be false");
+
+        // Main menu navigation:
+        // row 0: Packs default behavior
+        // row 1: Command aliases
+        // row 2: Nerd Fonts icons
+        // Send: Down (\x1b[B), Down (\x1b[B), Enter (\r) -> toggles to true, Esc (\x1b) -> cancel/exit
+        let input_bytes = b"\x1b[B\x1b[B\r\x1b";
+        let mut output = Vec::new();
+        let _ = editor.run(&mut &input_bytes[..], &mut output).unwrap();
+
+        assert!(editor.nerd_fonts, "Pressing Enter on row 2 must toggle nerd_fonts to true");
+        let rendered = String::from_utf8_lossy(&output);
+        assert!(
+            rendered.contains("[ on ]"),
+            "Toggled state must render '[ on ]', rendered:\n{rendered}"
+        );
+        assert!(
+            rendered.contains("\u{f00c}"),
+            "Confirmation status message must render Nerd Font checkmark '\\u{{f00c}}', rendered:\n{rendered}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_submenus_render_nerd_font_glyphs_when_enabled() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-sub-nf-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        editor.nerd_fonts = true;
+        editor.aliases.insert("g".to_string(), "git status".to_string());
+
+        // Test menu_packs_behavior renders [ Back]
+        let mut out_packs = Vec::new();
+        editor.menu_packs_behavior(&mut &b"\x1b"[..], &mut out_packs).unwrap();
+        let rendered_packs = String::from_utf8_lossy(&out_packs);
+        assert!(
+            rendered_packs.contains("[\u{f060} Back]"),
+            "Packs menu must render Nerd Font back label '[\u{f060} Back]', rendered:\n{rendered_packs}"
+        );
+
+        // Test menu_aliases renders [ Back], [ Add new alias], and arrow 
+        let mut out_aliases = Vec::new();
+        editor.menu_aliases(&mut &b"\x1b"[..], &mut out_aliases).unwrap();
+        let rendered_aliases = String::from_utf8_lossy(&out_aliases);
+        assert!(
+            rendered_aliases.contains("[\u{f060} Back]"),
+            "Aliases menu must render Nerd Font back label '[\u{f060} Back]', rendered:\n{rendered_aliases}"
+        );
+        assert!(
+            rendered_aliases.contains("[\u{f067} Add new alias]"),
+            "Aliases menu must render Nerd Font add alias label '[\u{f067} Add new alias]', rendered:\n{rendered_aliases}"
+        );
+        assert!(
+            rendered_aliases.contains("\u{f061}"),
+            "Aliases table must render Nerd Font arrow '\\u{{f061}}', rendered:\n{rendered_aliases}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }
