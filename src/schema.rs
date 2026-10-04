@@ -199,6 +199,49 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
           "type": "array",
           "items": { "type": "string" },
           "description": "Optional short alias names for this command."
+        },
+        "args": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "List of positional argument signatures (e.g. ['<input>', '[output]'])."
+            },
+            {
+              "type": "array",
+              "items": { "$ref": "#/definitions/CommandArg" },
+              "description": "List of documented argument objects."
+            },
+            {
+              "type": "object",
+              "additionalProperties": {
+                "oneOf": [
+                  { "$ref": "#/definitions/CommandArg" },
+                  { "type": "string" }
+                ]
+              },
+              "description": "Map of documented arguments keyed by position number or name."
+            }
+          ],
+          "description": "Positional arguments signature and documentation for this alias command."
+        }
+      },
+      "additionalProperties": false
+    },
+    "CommandArg": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Argument name (e.g. 'input', '<input>', or '[output]')."
+        },
+        "description": {
+          "type": "string",
+          "description": "Help description for this argument."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether this argument is required (defaults to false for '[...]', true otherwise)."
         }
       },
       "additionalProperties": false

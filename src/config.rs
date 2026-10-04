@@ -235,6 +235,20 @@ pub struct PackDefinition {
     pub components: Vec<String>,
 }
 
+/// Positional argument specification for an alias command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandArg {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_true")]
+    pub required: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
 /// Executable command declared in the alias catalog, invoked via `fa alias <name>`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Command {
@@ -243,6 +257,8 @@ pub struct Command {
     pub platform: Option<String>,
     #[serde(default)]
     pub aliases: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_args")]
+    pub args: Vec<CommandArg>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
@@ -251,6 +267,29 @@ pub struct Command {
     pub source_file: Option<PathBuf>,
     #[serde(skip)]
     pub source_line: Option<usize>,
+}
+
+impl Command {
+    /// Formats the explicit argument signature (e.g. `<input> [output]`).
+    /// Returns `None` if no arguments are explicitly defined.
+    pub fn argument_signature(&self) -> Option<String> {
+        if self.args.is_empty() {
+            return None;
+        }
+        let sig = self
+            .args
+            .iter()
+            .map(|arg| {
+                if arg.required {
+                    format!("<{}>", arg.name)
+                } else {
+                    format!("[{}]", arg.name)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        Some(sig)
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -535,6 +574,138 @@ impl EnvSpec {
     }
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum ArgsSpec {
+    Tokens(Vec<String>),
+    DetailedList(Vec<RawArgItem>),
+    DetailedMap(toml::Table),
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct RawArgItem {
+    pub name: Option<String>,
+    pub description: Option<String>,
+    pub required: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(untagged)]
+pub enum RawArgEntry {
+    Object(RawArgItem),
+    Description(String),
+}
+
+pub fn parse_arg_spec(
+    name_str: &str,
+    description: Option<String>,
+    explicit_required: Option<bool>,
+) -> CommandArg {
+    let t = name_str.trim();
+    let (clean_name, default_required) = if t.starts_with('[') && t.ends_with(']') && t.len() >= 2 {
+        (t[1..t.len() - 1].trim().to_string(), false)
+    } else if t.starts_with('<') && t.ends_with('>') && t.len() >= 2 {
+        (t[1..t.len() - 1].trim().to_string(), true)
+    } else {
+        (t.to_string(), true)
+    };
+
+    let required = explicit_required.unwrap_or(default_required);
+    CommandArg {
+        name: clean_name,
+        description: description.map(|d| d.trim().to_string()).filter(|d| !d.is_empty()),
+        required,
+    }
+}
+
+impl ArgsSpec {
+    pub fn into_command_args(self) -> anyhow::Result<Vec<CommandArg>> {
+        match self {
+            ArgsSpec::Tokens(tokens) => {
+                let args = tokens
+                    .into_iter()
+                    .map(|tok| parse_arg_spec(&tok, None, None))
+                    .collect();
+                Ok(args)
+            }
+            ArgsSpec::DetailedList(items) => {
+                let mut args = Vec::new();
+                for (idx, item) in items.into_iter().enumerate() {
+                    let name = item
+                        .name
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "alias argument at index {} in list must have a non-empty 'name'",
+                                idx + 1
+                            )
+                        })?;
+                    args.push(parse_arg_spec(name, item.description, item.required));
+                }
+                Ok(args)
+            }
+            ArgsSpec::DetailedMap(table) => {
+                let all_numeric =
+                    !table.is_empty() && table.keys().all(|k| k.parse::<usize>().is_ok());
+                let mut args = Vec::new();
+                if all_numeric {
+                    let mut entries: Vec<(usize, toml::Value)> = Vec::new();
+                    for (k, v) in table {
+                        let idx = k.parse::<usize>().unwrap();
+                        entries.push((idx, v));
+                    }
+                    entries.sort_by_key(|&(idx, _)| idx);
+                    for (idx, val) in entries {
+                        let entry: RawArgEntry = val.try_into().map_err(|e| {
+                            anyhow::anyhow!(
+                                "failed to parse argument definition at index {idx}: {e}"
+                            )
+                        })?;
+                        let (name, desc, req) = match entry {
+                            RawArgEntry::Object(item) => (
+                                item.name.unwrap_or_else(|| format!("arg{idx}")),
+                                item.description,
+                                item.required,
+                            ),
+                            RawArgEntry::Description(d) => (format!("arg{idx}"), Some(d), None),
+                        };
+                        args.push(parse_arg_spec(&name, desc, req));
+                    }
+                } else {
+                    for (key, val) in table {
+                        let entry: RawArgEntry = val.try_into().map_err(|e| {
+                            anyhow::anyhow!("failed to parse argument definition '{key}': {e}")
+                        })?;
+                        let (name, desc, req) = match entry {
+                            RawArgEntry::Object(item) => (
+                                item.name.unwrap_or(key),
+                                item.description,
+                                item.required,
+                            ),
+                            RawArgEntry::Description(d) => (key, Some(d), None),
+                        };
+                        args.push(parse_arg_spec(&name, desc, req));
+                    }
+                }
+                Ok(args)
+            }
+        }
+    }
+}
+
+fn deserialize_args<'de, D>(deserializer: D) -> Result<Vec<CommandArg>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<ArgsSpec>::deserialize(deserializer)?;
+    match opt {
+        Some(spec) => spec.into_command_args().map_err(serde::de::Error::custom),
+        None => Ok(Vec::new()),
+    }
+}
+
 #[derive(Deserialize)]
 struct RawCommand {
     command: Option<String>,
@@ -542,6 +713,8 @@ struct RawCommand {
     platform: Option<String>,
     #[serde(default)]
     aliases: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_args")]
+    args: Vec<CommandArg>,
     #[serde(default)]
     env: Option<EnvSpec>,
     #[serde(default)]
@@ -602,6 +775,7 @@ impl<'de> Deserialize<'de> for Config {
                         description: raw_cmd.description,
                         platform: raw_cmd.platform,
                         aliases: raw_cmd.aliases,
+                        args: raw_cmd.args,
                         env: raw_cmd.env.map(|e| e.into_map()).unwrap_or_default(),
                         env_force: raw_cmd.env_force.map(|e| e.into_map()).unwrap_or_default(),
                         source_file: None,
@@ -641,6 +815,13 @@ impl<'de> Deserialize<'de> for Config {
                         && desc.contains(&placeholder)
                     {
                         *desc = desc.replace(&placeholder, v);
+                    }
+                    for arg in &mut cmd.args {
+                        if let Some(desc) = &mut arg.description
+                            && desc.contains(&placeholder)
+                        {
+                            *desc = desc.replace(&placeholder, v);
+                        }
                     }
                     for env_val in cmd.env.values_mut() {
                         if env_val.contains(&placeholder) {
@@ -2635,6 +2816,115 @@ tool1 = { command = "echo 1" }
         let tool1 = &config.aliases["tools"]["tool1"];
         assert_eq!(tool1.source_file, Some(dummy_path));
         assert_eq!(tool1.source_line, Some(6));
+    }
+
+    #[test]
+    fn test_command_args_list_of_tokens() {
+        let toml_str = r#"
+[aliases.img.convert]
+command = "convert $1 $2"
+args = ["<input>", "[output]"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let cmd = &config.aliases["img"]["convert"];
+        assert_eq!(cmd.args.len(), 2);
+        assert_eq!(cmd.args[0].name, "input");
+        assert!(cmd.args[0].required);
+        assert_eq!(cmd.args[0].description, None);
+        assert_eq!(cmd.args[1].name, "output");
+        assert!(!cmd.args[1].required);
+        assert_eq!(cmd.argument_signature(), Some("<input> [output]".to_string()));
+    }
+
+    #[test]
+    fn test_command_args_list_of_objects() {
+        let toml_str = r#"
+[aliases.img.convert]
+command = "convert $1 $2"
+args = [
+    { name = "input", description = "Input image path" },
+    { name = "output", description = "Output directory", required = false }
+]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let cmd = &config.aliases["img"]["convert"];
+        assert_eq!(cmd.args.len(), 2);
+        assert_eq!(cmd.args[0].name, "input");
+        assert!(cmd.args[0].required);
+        assert_eq!(cmd.args[0].description.as_deref(), Some("Input image path"));
+        assert_eq!(cmd.args[1].name, "output");
+        assert!(!cmd.args[1].required);
+        assert_eq!(cmd.args[1].description.as_deref(), Some("Output directory"));
+        assert_eq!(cmd.argument_signature(), Some("<input> [output]".to_string()));
+    }
+
+    #[test]
+    fn test_command_args_table_numeric_keys() {
+        let toml_str = r#"
+[aliases.img.convert]
+command = "convert $1 $2"
+description = "Convert image"
+
+[aliases.img.convert.args]
+1 = { name = "input", description = "Input image path" }
+2 = { name = "output", description = "Output directory", required = false }
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let cmd = &config.aliases["img"]["convert"];
+        assert_eq!(cmd.args.len(), 2);
+        assert_eq!(cmd.args[0].name, "input");
+        assert!(cmd.args[0].required);
+        assert_eq!(cmd.args[1].name, "output");
+        assert!(!cmd.args[1].required);
+        assert_eq!(cmd.argument_signature(), Some("<input> [output]".to_string()));
+    }
+
+    #[test]
+    fn test_command_args_table_named_keys() {
+        let toml_str = r#"
+[aliases.img.convert]
+command = "convert $1 $2"
+
+[aliases.img.convert.args]
+input = { description = "Input image path" }
+output = { description = "Output directory", required = false }
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let cmd = &config.aliases["img"]["convert"];
+        assert_eq!(cmd.args.len(), 2);
+        assert_eq!(cmd.args[0].name, "input");
+        assert!(cmd.args[0].required);
+        assert_eq!(cmd.args[1].name, "output");
+        assert!(!cmd.args[1].required);
+        assert_eq!(cmd.argument_signature(), Some("<input> [output]".to_string()));
+    }
+
+    #[test]
+    fn test_command_args_single_string_fails() {
+        let toml_str = r#"
+[aliases.img.convert]
+command = "convert $1 $2"
+args = "<input> [output]"
+"#;
+        let res: Result<Config, _> = toml::from_str(toml_str);
+        assert!(res.is_err(), "Single string for args must be rejected");
+    }
+
+    #[test]
+    fn test_command_args_template_var_substitution() {
+        let toml_str = r#"
+[vars]
+EXT = "avif"
+
+[aliases.img.convert]
+command = "convert $1 $2"
+args = [
+    { name = "input", description = "Input {{EXT}} file" }
+]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let cmd = &config.aliases["img"]["convert"];
+        assert_eq!(cmd.args[0].description.as_deref(), Some("Input avif file"));
     }
 }
 

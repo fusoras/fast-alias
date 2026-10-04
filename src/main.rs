@@ -1271,6 +1271,30 @@ pub fn format_command_details(cmd: &Command, section: &str, key: &str) -> String
     if !cmd.aliases.is_empty() {
         out.push_str(&format!("Aliases: {}\n", cmd.aliases.join(", ")));
     }
+    if let Some(sig) = cmd.argument_signature() {
+        out.push_str(&format!("Usage: fa {display_name} {sig}\n"));
+    }
+    if !cmd.args.is_empty() && cmd.args.iter().any(|a| a.description.is_some()) {
+        out.push_str("Arguments:\n");
+        let max_len = cmd
+            .args
+            .iter()
+            .map(|a| a.name.len() + 2)
+            .max()
+            .unwrap_or(0);
+        for a in &cmd.args {
+            let label = if a.required {
+                format!("<{}>", a.name)
+            } else {
+                format!("[{}]", a.name)
+            };
+            if let Some(desc) = &a.description {
+                out.push_str(&format!("  {label:<max_len$}  {desc}\n"));
+            } else {
+                out.push_str(&format!("  {label}\n"));
+            }
+        }
+    }
     if !cmd.env.is_empty() {
         out.push_str("Environment:\n");
         for (k, v) in &cmd.env {
@@ -2198,6 +2222,7 @@ description = "Next.js TS"
             description: Some("List skills".to_string()),
             platform: None,
             aliases: vec![],
+            args: vec![],
             env: env_map,
             env_force: force_map,
             source_file: Some(PathBuf::from("/home/user/.config/fa/recipes.d/skills.toml")),
@@ -2212,6 +2237,34 @@ description = "Next.js TS"
         assert!(output.contains("Environment (forced):"), "Output must contain forced section");
         assert!(output.contains("MODEL_PATH = /models/coder.gguf"), "Output must display forced env");
         assert!(output.contains("bunx tabernaculo list"), "Output must contain the command");
+    }
+
+    #[test]
+    fn test_format_command_details_shows_args_usage_and_documentation() {
+        let cmd = crate::config::Command {
+            command: "convert $1 $2".to_string(),
+            description: Some("Convert images".to_string()),
+            platform: None,
+            aliases: vec!["cnv".to_string()],
+            args: vec![
+                crate::config::CommandArg {
+                    name: "input".to_string(),
+                    description: Some("Source path".to_string()),
+                    required: true,
+                },
+                crate::config::CommandArg {
+                    name: "output".to_string(),
+                    description: Some("Destination directory".to_string()),
+                    required: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let out = format_command_details(&cmd, "img", "convert");
+        assert!(out.contains("Usage: fa convert <input> [output]"), "Must show Usage line: got {out}");
+        assert!(out.contains("Arguments:"), "Must show Arguments block: got {out}");
+        assert!(out.contains("<input>") && out.contains("Source path"), "Must document input arg: got {out}");
+        assert!(out.contains("[output]") && out.contains("Destination directory"), "Must document output arg: got {out}");
     }
 
     #[test]

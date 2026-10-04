@@ -1072,7 +1072,9 @@ pub fn format_command_line(command_key: &str, command: &crate::config::Command) 
         name.push_str(", ");
         name.push_str(&command.aliases.join(", "));
     }
-    let sig_str = if let Some(sig) = extract_argument_signature(&command.command) {
+    let sig_str = if let Some(sig) = command.argument_signature() {
+        format!(" {WHITE}{sig}{RESET}")
+    } else if let Some(sig) = extract_argument_signature(&command.command) {
         format!(" {WHITE}{sig}{RESET}")
     } else {
         String::new()
@@ -1997,6 +1999,30 @@ components = ["toggle-theme", "btn-ally"]
         let line = format_command_line("resize", &cmd);
         assert!(line.contains("<arg1> <arg2>"), "expected signature in line: {line}");
         assert!(line.contains("Resize image"));
+    }
+
+    #[test]
+    fn test_format_command_line_uses_explicit_argument_signature() {
+        let cmd = crate::config::Command {
+            command: "magick $1 $2".to_string(),
+            description: Some("Resize image".to_string()),
+            args: vec![
+                crate::config::CommandArg {
+                    name: "source".to_string(),
+                    description: None,
+                    required: true,
+                },
+                crate::config::CommandArg {
+                    name: "target".to_string(),
+                    description: None,
+                    required: false,
+                },
+            ],
+            ..Default::default()
+        };
+        let line = format_command_line("resize", &cmd);
+        assert!(line.contains("<source> [target]"), "expected explicit signature, got: {line}");
+        assert!(!line.contains("<arg1>"), "should not contain inferred arg1");
     }
 
     #[test]
