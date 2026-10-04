@@ -984,16 +984,101 @@ pub fn format_list_line(recipe_key: &str, recipe: &Recipe) -> String {
     format!("{BOLD_BLUE}{name}{RESET} · {DIM_GRAY}{}{RESET}", recipe.description)
 }
 
+/// Extracts positional argument signature (e.g. `<arg1> <arg2>`, `<arg1> [arg2]`, `[args...]`)
+/// from a command template string.
+pub fn extract_argument_signature(command_str: &str) -> Option<String> {
+    fn has_pos_var(cmd: &str, i: usize) -> bool {
+        if cmd.contains(&format!("${{{i}")) || cmd.contains(&format!("{{{{{i}")) {
+            return true;
+        }
+        let pattern = format!("${i}");
+        let mut search_from = 0;
+        while let Some(pos) = cmd[search_from..].find(&pattern) {
+            let abs_pos = search_from + pos;
+            let after_idx = abs_pos + pattern.len();
+            if after_idx >= cmd.len() || !cmd.as_bytes()[after_idx].is_ascii_digit() {
+                return true;
+            }
+            search_from = after_idx;
+        }
+        false
+    }
+
+    fn has_pos_default(cmd: &str, i: usize) -> bool {
+        cmd.contains(&format!("${{{i}:-"))
+            || cmd.contains(&format!("${{{i}:"))
+            || cmd.contains(&format!("{{{{{i}:-"))
+            || cmd.contains(&format!("{{{{{i}:"))
+    }
+
+    let mut max_pos = 0;
+    for i in 1..=20 {
+        if has_pos_var(command_str, i) {
+            max_pos = i;
+        }
+    }
+
+    if max_pos > 0 {
+        let mut parts = Vec::new();
+        for i in 1..=max_pos {
+            if has_pos_default(command_str, i) {
+                parts.push(format!("[arg{i}]"));
+            } else {
+                parts.push(format!("<arg{i}>"));
+            }
+        }
+        if command_str.contains("$@") || command_str.contains("$*") {
+            parts.push("[args...]".to_string());
+        }
+        return Some(parts.join(" "));
+    }
+
+    if command_str.contains("$@") || command_str.contains("$*") {
+        return Some("[args...]".to_string());
+    }
+
+    // Check for explicit placeholder tokens like <input> <output>
+    let mut placeholders = Vec::new();
+    let mut cursor = 0;
+    while let Some(start) = command_str[cursor..].find('<') {
+        let abs_start = cursor + start;
+        if let Some(end) = command_str[abs_start..].find('>') {
+            let abs_end = abs_start + end;
+            let token = &command_str[abs_start..=abs_end];
+            let inner = &token[1..token.len() - 1];
+            if !inner.is_empty()
+                && !inner.contains(' ')
+                && inner.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+            {
+                placeholders.push(token.to_string());
+            }
+            cursor = abs_end + 1;
+        } else {
+            break;
+        }
+    }
+    if !placeholders.is_empty() {
+        return Some(placeholders.join(" "));
+    }
+
+    None
+}
+
 /// Formats a single-line list entry for an executable command.
-/// Canonical name with its aliases (comma-separated), then the description.
+/// Canonical name with its aliases (comma-separated), optional argument signature, then the description.
 pub fn format_command_line(command_key: &str, command: &crate::config::Command) -> String {
     let mut name = command_key.to_string();
     if !command.aliases.is_empty() {
         name.push_str(", ");
         name.push_str(&command.aliases.join(", "));
     }
+    let sig_str = if let Some(sig) = extract_argument_signature(&command.command) {
+        format!(" {WHITE}{sig}{RESET}")
+    } else {
+        String::new()
+    };
     let description = command.description.as_deref().unwrap_or("");
-    format!("{BOLD_BLUE}{name}{RESET} · {DIM_GRAY}{description}{RESET}")
+    format!("{BOLD_BLUE}{name}{RESET}{sig_str} · {DIM_GRAY}{description}{RESET}")
 }
 
 /// Formats an alias section header for `fa list` (`<section>:`).
@@ -1879,6 +1964,39 @@ components = ["toggle-theme", "btn-ally"]
         assert!(line.contains("build"));
         assert!(line.contains("fb, bld"));
         assert!(line.contains("Build the project"));
+    }
+
+    #[test]
+    fn test_extract_argument_signature_positional() {
+        assert_eq!(
+            extract_argument_signature("avifenc -s 0 -q 50 $1 -o $2"),
+            Some("<arg1> <arg2>".to_string())
+        );
+        assert_eq!(
+            extract_argument_signature("oxipng -o 4 ${1:-in.png} ${2:out.png}"),
+            Some("[arg1] [arg2]".to_string())
+        );
+        assert_eq!(
+            extract_argument_signature("docker run --rm -it $1 $@"),
+            Some("<arg1> [args...]".to_string())
+        );
+        assert_eq!(
+            extract_argument_signature("tool <input> <output>"),
+            Some("<input> <output>".to_string())
+        );
+        assert_eq!(extract_argument_signature("git status"), None);
+    }
+
+    #[test]
+    fn test_format_command_line_includes_argument_signature() {
+        let cmd = crate::config::Command {
+            command: "magick $1 -resize 50% $2".to_string(),
+            description: Some("Resize image".to_string()),
+            ..Default::default()
+        };
+        let line = format_command_line("resize", &cmd);
+        assert!(line.contains("<arg1> <arg2>"), "expected signature in line: {line}");
+        assert!(line.contains("Resize image"));
     }
 
     #[test]
