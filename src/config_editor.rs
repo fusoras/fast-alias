@@ -33,6 +33,8 @@ pub enum Key {
     Enter,
     Esc,
     Backspace,
+    Tab,
+    BackTab,
     Char(char),
     Other,
 }
@@ -61,6 +63,7 @@ unsafe extern "C" {
 
 #[cfg(unix)]
 #[repr(C)]
+#[allow(dead_code)]
 struct PollFd {
     fd: i32,
     events: i16,
@@ -68,7 +71,7 @@ struct PollFd {
 }
 
 #[cfg(unix)]
-#[allow(unsafe_code)]
+#[allow(unsafe_code, dead_code)]
 unsafe extern "C" {
     fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
 }
@@ -228,6 +231,7 @@ pub fn read_key_from<R: Read>(reader: &mut R) -> io::Result<Key> {
 
     match buf[0] {
         b'\r' | b'\n' => Ok(Key::Enter),
+        b'\t' => Ok(Key::Tab), // ASCII 9
         0x7f | 0x08 => Ok(Key::Backspace),
         0x03 => Ok(Key::Esc), // Ctrl+C maps to Esc/Cancel
         0x1b => {
@@ -249,6 +253,7 @@ pub fn read_key_from<R: Read>(reader: &mut R) -> io::Result<Key> {
                     b'B' => Ok(Key::Down),
                     b'C' => Ok(Key::Right),
                     b'D' => Ok(Key::Left),
+                    b'Z' => Ok(Key::BackTab), // Shift-Tab escape sequence "\x1b[Z"
                     b'3' => {
                         // Delete key ~ sequence
                         let mut tilde = [0u8; 1];
@@ -375,11 +380,84 @@ pub fn apply_config_delta(existing_toml: &str, delta: &ConfigDelta) -> anyhow::R
     Ok(doc.to_string())
 }
 
+/// Valid `packs.default_behavior` values in inline cycle order.
+const PACKS_BEHAVIOR_VALUES: [&str; 3] = ["list", "default", "error"];
+
+/// Cycles to the adjacent `packs.default_behavior` value.
+/// Unknown values are treated as the first option.
+fn cycle_packs_behavior(current: &str, forward: bool) -> String {
+    let idx = PACKS_BEHAVIOR_VALUES
+        .iter()
+        .position(|v| *v == current)
+        .unwrap_or(0);
+    let len = PACKS_BEHAVIOR_VALUES.len();
+    let next = if forward {
+        (idx + 1) % len
+    } else {
+        (idx + len - 1) % len
+    };
+    PACKS_BEHAVIOR_VALUES[next].to_string()
+}
+
+/// Effect produced by a key press while the cursor is on the
+/// "Packs default behavior" row of the main menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PacksRowEffect {
+    /// Tab/BackTab: update the pending (unconfirmed) value.
+    Cycle(String),
+    /// Enter with a pending value: confirm it into the saved value.
+    Confirm(String),
+    /// Enter without a pending value: open the detailed sub-menu.
+    OpenSubMenu,
+    /// Up/Down: discard the pending value, then move the cursor.
+    Move,
+    /// Esc with a pending value: discard it and stay in the menu.
+    DiscardStay,
+    /// Esc without a pending value: leave the menu.
+    Exit,
+    /// Key not handled by the inline editor.
+    Ignore,
+}
+
+/// Pure state transition for the inline edit of "Packs default behavior".
+/// `confirmed` is the stored value, `pending` the unconfirmed cycled value.
+fn packs_row_transition(
+    confirmed: &str,
+    pending: Option<&str>,
+    key: &Key,
+) -> PacksRowEffect {
+    match key {
+        Key::Tab => PacksRowEffect::Cycle(cycle_packs_behavior(
+            pending.unwrap_or(confirmed),
+            true,
+        )),
+        Key::BackTab => PacksRowEffect::Cycle(cycle_packs_behavior(
+            pending.unwrap_or(confirmed),
+            false,
+        )),
+        Key::Enter => match pending {
+            Some(value) => PacksRowEffect::Confirm(value.to_string()),
+            None => PacksRowEffect::OpenSubMenu,
+        },
+        Key::Up | Key::Down => PacksRowEffect::Move,
+        Key::Esc => {
+            if pending.is_some() {
+                PacksRowEffect::DiscardStay
+            } else {
+                PacksRowEffect::Exit
+            }
+        }
+        _ => PacksRowEffect::Ignore,
+    }
+}
+
 /// Interactive TUI manager for fast-alias configuration.
 pub struct ConfigEditor {
     config_path: PathBuf,
     initial_content: String,
     packs_behavior: String,
+    /// Tab-cycled value not yet confirmed with Enter on the main menu.
+    pending_behavior: Option<String>,
     aliases: BTreeMap<String, String>,
     status_message: Option<String>,
 }
@@ -401,6 +479,7 @@ impl ConfigEditor {
             config_path,
             initial_content,
             packs_behavior,
+            pending_behavior: None,
             aliases,
             status_message: None,
         })
@@ -450,42 +529,108 @@ impl ConfigEditor {
             if let Some(msg) = &self.status_message {
                 writeln!(output, "\n  {msg}\n")?;
                 lines += 3;
-            } else {
+            }
+
+            let categories: [(&str, &[(usize, &str)]); 3] = [
+                ("SETTINGS", &[
+                    (0, "Packs default behavior"),
+                    (1, "Command aliases"),
+                ]),
+                ("ADVANCED", &[
+                    (2, "Open in editor"),
+                    (3, "Reset to defaults"),
+                ]),
+                ("SESSION", &[
+                    (4, "Save and exit"),
+                    (5, "Cancel"),
+                ]),
+            ];
+
+            for (cat_name, items) in categories.iter() {
                 writeln!(output)?;
                 lines += 1;
-            }
-
-            for (i, item) in menu_items.iter().enumerate() {
-                let is_sel = i == selected;
-                let marker = if is_sel {
-                    format!("{BOLD_GREEN}▸{RESET}")
-                } else {
-                    " ".to_string()
-                };
-
-                let detail = match i {
-                    0 => format!(" {BOLD_CYAN}[ {} ]{RESET}", self.packs_behavior),
-                    1 => format!(" {DIM}({} defined){RESET}", self.aliases.len()),
-                    _ => String::new(),
-                };
-
-                if is_sel {
-                    writeln!(output, "  {marker} {BOLD_WHITE}{item}{RESET}{detail}")?;
-                } else {
-                    writeln!(output, "  {marker} {item}{detail}")?;
-                }
+                writeln!(output, " {BOLD_CYAN}{cat_name}{RESET}")?;
                 lines += 1;
+
+                for &(idx, item) in items.iter() {
+                    let is_sel = idx == selected;
+                    let marker = if is_sel {
+                        format!("{BOLD_GREEN}▸{RESET}")
+                    } else {
+                        " ".to_string()
+                    };
+
+                    let detail = match idx {
+                        0 => match &self.pending_behavior {
+                            Some(pending) => {
+                                format!(" {BOLD_YELLOW}[ {pending} ]{RESET} {DIM}(pending){RESET}")
+                            }
+                            None => format!(" {BOLD_CYAN}[ {} ]{RESET}", self.packs_behavior),
+                        },
+                        1 => format!(" {DIM}({} defined){RESET}", self.aliases.len()),
+                        _ => String::new(),
+                    };
+
+                    if is_sel {
+                        writeln!(output, "    {marker} {BOLD_WHITE}{item}{RESET}{detail}")?;
+                    } else {
+                        writeln!(output, "    {marker} {item}{detail}")?;
+                    }
+                    lines += 1;
+                }
             }
-            writeln!(
-                output,
+            let footer = if self.pending_behavior.is_some() {
+                "\n {DIM}Tab/Shift-Tab: cycle value, Enter: confirm, ↑/↓: discard + move, Esc: discard{RESET}"
+            } else if selected == 0 {
+                "\n {DIM}Navigate with ↑/↓, Enter to select, Tab to cycle value, Esc to cancel{RESET}"
+            } else {
                 "\n {DIM}Navigate with ↑/↓, Enter to select, Esc to cancel{RESET}"
-            )?;
+            };
+            writeln!(output, "{footer}")?;
             lines += 2;
 
             last_lines_drawn = lines;
             output.flush()?;
 
             let key = read_key_from(input)?;
+
+            // Inline edit of "Packs default behavior": Tab/BackTab cycle a
+            // pending value, Enter confirms it, ↑/↓ or Esc discard it.
+            if selected == 0 {
+                let effect = packs_row_transition(
+                    &self.packs_behavior,
+                    self.pending_behavior.as_deref(),
+                    &key,
+                );
+                match effect {
+                    PacksRowEffect::Cycle(value) => {
+                        self.pending_behavior = Some(value);
+                        continue;
+                    }
+                    PacksRowEffect::Confirm(value) => {
+                        self.packs_behavior = value.clone();
+                        self.pending_behavior = None;
+                        self.status_message = Some(format!(
+                            "{BOLD_GREEN}✔ '{value}' applied successfully{RESET}"
+                        ));
+                        continue;
+                    }
+                    PacksRowEffect::DiscardStay => {
+                        self.pending_behavior = None;
+                        continue;
+                    }
+                    PacksRowEffect::Move => {
+                        // Discard the pending value, then fall through so the
+                        // regular ↑/↓ branches move the cursor.
+                        self.pending_behavior = None;
+                    }
+                    // OpenSubMenu / Exit / Ignore: handled by the match below.
+                    PacksRowEffect::OpenSubMenu
+                    | PacksRowEffect::Exit
+                    | PacksRowEffect::Ignore => {}
+                }
+            }
+
             match key {
                 Key::Up => {
                     if selected == 0 {
@@ -563,16 +708,16 @@ impl ConfigEditor {
         output: &mut W,
     ) -> anyhow::Result<()> {
         let options = [
+            ("[Back]", "Return to main menu"),
             ("list", "Displays all available packs and components (default)"),
             ("default", "Automatically installs the pack specified in recipe default_pack"),
             ("error", "Raises an error requiring an explicit pack or component"),
-            ("[Back]", "Return to main menu"),
         ];
 
         let mut selected = match self.packs_behavior.as_str() {
-            "default" => 1,
-            "error" => 2,
-            _ => 0,
+            "default" => 2,
+            "error" => 3,
+            _ => 1,
         };
 
         let mut last_lines_drawn = 0;
@@ -596,7 +741,7 @@ impl ConfigEditor {
             for (i, (val, desc)) in options.iter().enumerate() {
                 let is_sel = i == selected;
                 let marker = if is_sel {
-                    format!("{BOLD_CYAN}>{RESET}")
+                    format!("{BOLD_GREEN}▸{RESET}")
                 } else {
                     " ".to_string()
                 };
@@ -648,11 +793,11 @@ impl ConfigEditor {
                     }
                 }
                 Key::Enter => {
-                    if selected < 3 {
+                    if selected > 0 && selected < options.len() {
                         let chosen = options[selected].0;
                         self.packs_behavior = chosen.to_string();
                         self.status_message = Some(format!(
-                            "{BOLD_GREEN}✔ Packs default behavior updated to '{chosen}'{RESET}"
+                            "{BOLD_GREEN}✔ '{chosen}' applied successfully{RESET}"
                         ));
                     }
                     if last_lines_drawn > 0 {
@@ -690,9 +835,9 @@ impl ConfigEditor {
                 .collect();
 
             // Total selectable rows:
-            // 0: [+ Add new alias]
-            // 1..=len: existing aliases
-            // len + 1: [Back to main menu]
+            // 0: [Back to main menu]
+            // 1: [+ Add new alias]
+            // 2..=len+1: existing aliases
             let total_rows = alias_list.len() + 2;
             if selected >= total_rows {
                 selected = total_rows.saturating_sub(1);
@@ -713,8 +858,25 @@ impl ConfigEditor {
             )?;
             lines += 2;
 
+            // Render [Back to main menu]
+            let is_back = selected == 0;
+            let back_marker = if is_back {
+                format!("{BOLD_GREEN}▸{RESET}")
+            } else {
+                " ".to_string()
+            };
+            if is_back {
+                writeln!(
+                    output,
+                    "  {back_marker} {BOLD_WHITE}[Back to main menu]{RESET}"
+                )?;
+            } else {
+                writeln!(output, "  {back_marker} [Back to main menu]")?;
+            }
+            lines += 1;
+
             // Render [+ Add new alias]
-            let is_add = selected == 0;
+            let is_add = selected == 1;
             let add_marker = if is_add {
                 format!("{BOLD_GREEN}▸{RESET}")
             } else {
@@ -757,7 +919,7 @@ impl ConfigEditor {
                 lines += 1;
             } else {
                 for (idx, (k, v)) in alias_list.iter().enumerate() {
-                    let row_idx = idx + 1;
+                    let row_idx = idx + 2;
                     let is_sel = selected == row_idx;
                     let marker = if is_sel {
                         format!("{BOLD_GREEN}▸{RESET}")
@@ -799,23 +961,6 @@ impl ConfigEditor {
             )?;
             lines += 1;
 
-            let back_idx = alias_list.len() + 1;
-            let is_back = selected == back_idx;
-            let back_marker = if is_back {
-                format!("{BOLD_GREEN}▸{RESET}")
-            } else {
-                " ".to_string()
-            };
-            if is_back {
-                writeln!(
-                    output,
-                    "  {back_marker} {BOLD_WHITE}[Back to main menu]{RESET}"
-                )?;
-            } else {
-                writeln!(output, "  {back_marker} [Back to main menu]")?;
-            }
-            lines += 1;
-
             last_lines_drawn = lines;
             output.flush()?;
 
@@ -837,21 +982,23 @@ impl ConfigEditor {
                 }
                 Key::Enter => {
                     if selected == 0 {
+                        // [Back to main menu]
+                        if last_lines_drawn > 0 {
+                            write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                            output.flush()?;
+                        }
+                        return Ok(());
+                    } else if selected == 1 {
+                        // [+ Add new alias]
                         if last_lines_drawn > 0 {
                             write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                             output.flush()?;
                             last_lines_drawn = 0;
                         }
                         self.action_add_alias(input, output)?;
-                    } else if selected == back_idx {
-                        if last_lines_drawn > 0 {
-                            write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
-                            output.flush()?;
-                        }
-                        return Ok(());
                     } else {
                         // Existing alias selected: offer deletion
-                        let alias_to_delete = alias_list[selected - 1].0.clone();
+                        let alias_to_delete = alias_list[selected - 2].0.clone();
                         if last_lines_drawn > 0 {
                             write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                             output.flush()?;
@@ -978,12 +1125,12 @@ impl ConfigEditor {
         let name = name.trim().to_string();
 
         // 2. Select command from native command list:
-        let mut choices: Vec<(String, String)> = NATIVE_COMMANDS
-            .iter()
-            .map(|(cmd, desc)| (cmd.to_string(), desc.to_string()))
-            .collect();
-        choices.push(("[Custom command...]".to_string(), "Enter a custom shell command".to_string()));
+        let mut choices: Vec<(String, String)> = Vec::new();
         choices.push(("[Cancel]".to_string(), "Cancel alias creation".to_string()));
+        for (cmd, desc) in NATIVE_COMMANDS {
+            choices.push((cmd.to_string(), desc.to_string()));
+        }
+        choices.push(("[Custom command...]".to_string(), "Enter a custom shell command".to_string()));
 
         let mut selected = 0;
         let mut picker_lines_drawn = last_lines_drawn;
@@ -1046,14 +1193,14 @@ impl ConfigEditor {
                     }
                 }
                 Key::Enter => {
-                    if selected == choices.len() - 1 {
+                    if selected == 0 {
                         // Cancel
                         if picker_lines_drawn > 0 {
                             write!(output, "\r\x1b[{}A\x1b[J", picker_lines_drawn)?;
                             output.flush()?;
                         }
                         return Ok(());
-                    } else if selected == choices.len() - 2 {
+                    } else if selected == choices.len() - 1 {
                         // Custom command
                         if picker_lines_drawn > 0 {
                             write!(output, "\r\x1b[{}A\x1b[J", picker_lines_drawn)?;
@@ -1456,6 +1603,159 @@ custom = "!echo hello"
 
         let mut down_bytes = &b"\x1b[B"[..];
         assert_eq!(read_key_from(&mut down_bytes).unwrap(), Key::Down);
+    }
+
+    #[test]
+    fn test_tab_cycles_packs_behavior_inline() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-tabcycle-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        // Tab, Tab, Shift-Tab (cycles backwards), then Esc discards the pending
+        // value; the trailing EOF read is reported as Esc and leaves the menu.
+        let input_bytes = b"\t\t\x1b[Z\x1b";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let res = editor.run(&mut reader, &mut output).unwrap();
+        assert!(!res, "Main menu must cancel (no save) after cycling");
+
+        let out = String::from_utf8_lossy(&output);
+        assert!(
+            out.contains("[ default ]"),
+            "Tab must cycle 'list' -> 'default' inline, rendered output:\n{out}"
+        );
+        assert!(
+            out.contains("[ error ]"),
+            "Tab must cycle 'default' -> 'error' inline, rendered output:\n{out}"
+        );
+        assert_eq!(
+            editor.packs_behavior, "list",
+            "Cycling alone must never modify the confirmed value"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_enter_confirms_tab_cycled_packs_behavior() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-tabconfirm-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        // Tab cicles to 'default' (pending), Enter confirms it.
+        let input_bytes = b"\t\r";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let res = editor.run(&mut reader, &mut output).unwrap();
+        assert!(!res, "Main menu must cancel (no save) after confirming");
+
+        assert_eq!(
+            editor.packs_behavior, "default",
+            "Enter with a pending Tab-cycled value must commit it"
+        );
+        let out = String::from_utf8_lossy(&output);
+        assert!(
+            out.contains("✔ 'default' applied successfully"),
+            "Minimal confirmation status message must be rendered, output:\n{out}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_main_menu_rendered_categories_and_indentation() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-cat-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        let input_bytes = b"\x1b";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let res = editor.run(&mut reader, &mut output).unwrap();
+        assert!(!res);
+
+        let out = String::from_utf8_lossy(&output);
+        assert!(out.contains("SETTINGS"), "Main menu must render SETTINGS category");
+        assert!(out.contains("ADVANCED"), "Main menu must render ADVANCED category");
+        assert!(out.contains("SESSION"), "Main menu must render SESSION category");
+        assert!(
+            out.contains(&format!("    {BOLD_GREEN}▸{RESET} ")),
+            "Selected item under category must be indented with 4 spaces"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_arrow_discards_tab_cycled_packs_behavior() {
+        // Down arrow: discards the pending value, then moves the cursor.
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-tabdown-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        let input_bytes = b"\t\x1b[B";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+        let res = editor.run(&mut reader, &mut output).unwrap();
+        assert!(!res, "Main menu must cancel (no save) after navigating");
+
+        assert_eq!(
+            editor.packs_behavior, "list",
+            "Down arrow must restore the confirmed value"
+        );
+        let out = String::from_utf8_lossy(&output);
+        assert_eq!(
+            out.matches("[ default ]").count(),
+            1,
+            "Pending value must render exactly once and be discarded, output:\n{out}"
+        );
+        assert!(
+            out.contains(&format!(
+                "    {BOLD_GREEN}▸{RESET} {BOLD_WHITE}Command aliases{RESET}"
+            )),
+            "Cursor must move down after discarding, output:\n{out}"
+        );
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        // Up arrow: same discard behavior, cursor wraps to the last row.
+        let temp_dir_up =
+            std::env::temp_dir().join(format!("fa-test-cfg-tabup-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir_up);
+        fs::create_dir_all(&temp_dir_up).unwrap();
+
+        let mut editor_up = ConfigEditor::new(&temp_dir_up).unwrap();
+        let input_up = b"\t\x1b[A";
+        let mut reader_up = &input_up[..];
+        let mut output_up = Vec::new();
+        let res_up = editor_up.run(&mut reader_up, &mut output_up).unwrap();
+        assert!(!res_up, "Main menu must cancel (no save) after navigating");
+
+        assert_eq!(
+            editor_up.packs_behavior, "list",
+            "Up arrow must restore the confirmed value"
+        );
+        let out_up = String::from_utf8_lossy(&output_up);
+        assert_eq!(
+            out_up.matches("[ default ]").count(),
+            1,
+            "Pending value must render exactly once and be discarded, output:\n{out_up}"
+        );
+        assert!(
+            out_up.contains(&format!("    {BOLD_GREEN}▸{RESET} {BOLD_WHITE}Cancel{RESET}")),
+            "Cursor must wrap up to the last row after discarding, output:\n{out_up}"
+        );
+        let _ = fs::remove_dir_all(&temp_dir_up);
     }
 
     #[test]
