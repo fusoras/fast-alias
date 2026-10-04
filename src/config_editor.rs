@@ -56,6 +56,7 @@ struct Termios {
 unsafe extern "C" {
     fn tcgetattr(fd: i32, termios_p: *mut Termios) -> i32;
     fn tcsetattr(fd: i32, optional_actions: i32, termios_p: *const Termios) -> i32;
+    fn read(fd: i32, buf: *mut u8, count: usize) -> isize;
 }
 
 #[cfg(unix)]
@@ -72,11 +73,37 @@ unsafe extern "C" {
     fn poll(fds: *mut PollFd, nfds: usize, timeout: i32) -> i32;
 }
 
+#[cfg(unix)]
+static ORIG_TERMIOS: std::sync::Mutex<Option<Termios>> = std::sync::Mutex::new(None);
+
+/// Unbuffered reader directly accessing stdin fd 0 to prevent userspace buffering
+/// from intercepting multi-byte escape sequences like arrow keys.
+pub struct RawTerminalStdin;
+
+impl Read for RawTerminalStdin {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        #[cfg(unix)]
+        {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            #[allow(unsafe_code)]
+            let res = unsafe { read(0, buf.as_mut_ptr(), buf.len()) };
+            if res < 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(res as usize)
+        }
+        #[cfg(not(unix))]
+        {
+            io::stdin().read(buf)
+        }
+    }
+}
+
 /// RAII Guard that manages raw terminal mode.
 /// Restores the original terminal attributes and re-enables cursor on exit or panic.
 pub struct RawModeGuard {
-    #[cfg(unix)]
-    orig_termios: Option<Termios>,
     active: bool,
 }
 
@@ -90,51 +117,77 @@ impl RawModeGuard {
             let mut orig = std::mem::MaybeUninit::<Termios>::zeroed();
             if unsafe { tcgetattr(fd, orig.as_mut_ptr()) } == 0 {
                 let orig = unsafe { orig.assume_init() };
-                let mut raw = orig;
-
-                // ECHO | ICANON | IEXTEN | ISIG
-                raw.c_lflag &= !(0x0008 | 0x0002 | 0x8000 | 0x0001);
-                // BRKINT | ICRNL | INPCK | ISTRIP | IXON
-                raw.c_iflag &= !(0x0002 | 0x0100 | 0x0010 | 0x0020 | 0x0400);
-                // CS8
-                raw.c_cflag |= 0x0030;
-                // VMIN = 1, VTIME = 0
-                raw.c_cc[6] = 1;
-                raw.c_cc[5] = 0;
-
-                let _ = unsafe { tcsetattr(fd, 0, &raw) };
-                // Hide cursor during interactive menu navigation
-                print!("\x1b[?25l");
-                let _ = io::stdout().flush();
+                if let Ok(mut lock) = ORIG_TERMIOS.lock() {
+                    *lock = Some(orig);
+                }
+                Self::enable_raw(&orig)?;
                 return Ok(Self {
-                    orig_termios: Some(orig),
                     active: true,
                 });
             }
         }
         Ok(Self {
-            #[cfg(unix)]
-            orig_termios: None,
             active: false,
         })
     }
 
-    pub fn restore(&mut self) {
-        if self.active {
-            #[cfg(unix)]
+    #[allow(unsafe_code)]
+    fn enable_raw(orig: &Termios) -> io::Result<()> {
+        #[cfg(unix)]
+        {
+            use std::os::fd::AsRawFd;
+            let fd = io::stdin().as_raw_fd();
+            let mut raw = *orig;
+
+            // ECHO | ICANON | IEXTEN | ISIG
+            raw.c_lflag &= !(0x0008 | 0x0002 | 0x8000 | 0x0001);
+            // BRKINT | ICRNL | INPCK | ISTRIP | IXON
+            raw.c_iflag &= !(0x0002 | 0x0100 | 0x0010 | 0x0020 | 0x0400);
+            // CS8
+            raw.c_cflag |= 0x0030;
+            // VMIN = 1, VTIME = 0
+            raw.c_cc[6] = 1;
+            raw.c_cc[5] = 0;
+
+            let _ = unsafe { tcsetattr(fd, 0, &raw) };
+            print!("\x1b[?25l");
+            let _ = io::stdout().flush();
+        }
+        Ok(())
+    }
+
+    pub fn suspend() {
+        #[cfg(unix)]
+        {
+            if let Ok(lock) = ORIG_TERMIOS.lock()
+                && let Some(ref orig) = *lock
             {
-                if let Some(ref orig) = self.orig_termios {
-                    use std::os::fd::AsRawFd;
-                    let fd = io::stdin().as_raw_fd();
-                    #[allow(unsafe_code)]
-                    unsafe {
-                        tcsetattr(fd, 0, orig);
-                    }
+                use std::os::fd::AsRawFd;
+                let fd = io::stdin().as_raw_fd();
+                #[allow(unsafe_code)]
+                unsafe {
+                    tcsetattr(fd, 0, orig);
                 }
             }
-            // Show cursor and reset styles
             print!("\x1b[?25h\x1b[0m");
             let _ = io::stdout().flush();
+        }
+    }
+
+    pub fn resume() {
+        #[cfg(unix)]
+        {
+            if let Ok(lock) = ORIG_TERMIOS.lock()
+                && let Some(ref orig) = *lock
+            {
+                let _ = Self::enable_raw(orig);
+            }
+        }
+    }
+
+    pub fn restore(&mut self) {
+        if self.active {
+            Self::suspend();
             self.active = false;
         }
     }
@@ -907,10 +960,10 @@ impl ConfigEditor {
         self.save()?;
 
         // Suspend raw mode so editor has normal terminal access
-        print!("\x1b[?25h\x1b[0m");
-        let _ = io::stdout().flush();
-
-        crate::recipe::open_editor(&self.config_path)?;
+        RawModeGuard::suspend();
+        let edit_res = crate::recipe::open_editor(&self.config_path);
+        RawModeGuard::resume();
+        edit_res?;
 
         // Reload content from disk in case user edited it in the editor
         if self.config_path.is_file() {
@@ -1029,12 +1082,11 @@ pub fn run_interactive_config_inner<R: Read, W: Write>(
 /// Entrypoint for interactive configuration from CLI.
 pub fn run_interactive_config(user_dir: &Path) -> anyhow::Result<()> {
     let is_terminal = io::stdin().is_terminal();
-    let stdin = io::stdin();
+    let mut raw_stdin = RawTerminalStdin;
     let stdout = io::stdout();
-    let mut stdin_lock = stdin.lock();
     let mut stdout_lock = stdout.lock();
 
-    run_interactive_config_inner(user_dir, is_terminal, &mut stdin_lock, &mut stdout_lock)
+    run_interactive_config_inner(user_dir, is_terminal, &mut raw_stdin, &mut stdout_lock)
 }
 
 #[cfg(test)]
