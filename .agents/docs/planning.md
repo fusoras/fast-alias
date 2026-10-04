@@ -25,13 +25,12 @@
 - TOML UX enhancements: JSON Schema generation (`schema/recipe.schema.json` & fallback `~/.local/state/fa/recipe.schema.json`), clean minimal recipe scaffolding (`fa -r new <name>`), and `alias` scaffold preset (`fa -r new <name> alias`)
 - Git-style `[alias]` in `~/.config/fa/config.toml`: native multi-token and single-token expansions alongside `!` shell commands
 - Namespaced command aliases (`[aliases.":<namespace>"]`): isolated command namespaces with `fa <namespace> <command>` syntax, root command execution (`fa <namespace>`), automatic help fallback, and strict isolation preventing leakage into global aliases
+- Interactive recipe picker on bare `fa -n` (TTY only): interactive numbered recipe selection menu and project directory prompt when invoked without arguments in an interactive terminal
+- Namespace argument signatures in help (`fa <namespace>`): automatic extraction and display of positional argument signatures (`<arg1> <arg2>`, `<arg1> [arg2]`, `[args...]`, `<input> <output>`) beside command names in namespace listings and command help
+- Variable typo suggestions in `fa -r validate`: automatic "Did you mean?" suggestions using Levenshtein distance for undeclared variable placeholders in `[[steps]]` and `[create]` that closely match declared `[variables]` or builtins
 
 ## Next 🔲
 
-- **1. Search description parity (`fa --search`)**: include `recipe.description` in `fa --search` search haystack to achieve parity with `all_commands()` command descriptions.
-- **2. Interactive recipe picker on bare `fa -n` (TTY only)**: when `fa --new` / `fa -n` is run without arguments in an interactive terminal, prompt the user with a numbered list of available recipes instead of aborting with a missing-argument error.
-- **3. Namespace argument signatures in help**: extract and display positional argument signatures (e.g. `<arg1> <arg2>` inferred from `$1`, `$2` or placeholders) beside command descriptions in `fa <namespace>` listings.
-- **4. Variable typo suggestions in `fa -r validate`**: provide "Did you mean?" suggestions using Levenshtein distance for undeclared variable placeholders in `[[steps]]` that closely match declared `[variables]`.
 - Pinning beyond Node: `pin_versions` only handles `package.json`; decide TOML-declared per-ecosystem rules vs keep Node-only
 
 ## Proposed features (research-backed, medium-term roadmap)
