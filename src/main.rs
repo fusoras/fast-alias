@@ -599,7 +599,16 @@ fn is_recipe_or_help_cmd(args: &[String]) -> bool {
     )
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() {
+    if let Err(err) = run_cli() {
+        print_fatal_error(&err);
+        std::process::exit(1);
+    }
+}
+
+/// Runs the CLI. Split out of `main` so failures can be rendered with the
+/// project's own error style instead of Rust's raw `Error: ...` output.
+fn run_cli() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
 
     // Hidden internal subprocess: refreshes the cached latest release in
@@ -1143,6 +1152,29 @@ fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Renders an `anyhow` error (plus a readable cause chain) on stderr using the
+/// project's style: a red bold `✗` prefix and up to two `caused by` levels, so
+/// long chains stay short. The caller exits with status 1.
+fn print_fatal_error(err: &anyhow::Error) {
+    let message = err.to_string();
+    let mut lines = message.lines();
+    if let Some(first) = lines.next() {
+        eprintln!("{BOLD_RED}✗{RESET} {first}");
+    }
+    for line in lines {
+        eprintln!("  {line}");
+    }
+
+    const MAX_CAUSES: usize = 2;
+    let causes: Vec<String> = err.chain().skip(1).map(|cause| cause.to_string()).collect();
+    for cause in causes.iter().take(MAX_CAUSES) {
+        eprintln!("  {DIM_GRAY}caused by:{RESET} {cause}");
+    }
+    if causes.len() > MAX_CAUSES {
+        eprintln!("  {DIM_GRAY}… and {} more cause(s){RESET}", causes.len() - MAX_CAUSES);
+    }
 }
 
 fn display_namespace_help(config: &Config, namespace: &str) {
