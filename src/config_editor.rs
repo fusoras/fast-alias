@@ -752,7 +752,7 @@ impl ConfigEditor {
         output: &mut W,
     ) -> anyhow::Result<()> {
         let options = [
-            ("[Back]", "Return to main menu"),
+            ("[<- Back]", ""),
             ("list", "Displays all available packs and components (default)"),
             ("default", "Automatically installs the pack specified in recipe default_pack"),
             ("error", "Raises an error requiring an explicit pack or component"),
@@ -783,16 +783,26 @@ impl ConfigEditor {
             lines += 2;
 
             for (i, (val, desc)) in options.iter().enumerate() {
-                if i == 1 {
-                    writeln!(output)?;
-                    lines += 1;
-                }
                 let is_sel = i == selected;
                 let marker = if is_sel {
                     format!("{BOLD_GREEN}▸{RESET}")
                 } else {
                     " ".to_string()
                 };
+
+                if i == 0 {
+                    if is_sel {
+                        writeln!(output, "  {marker} {BOLD_WHITE}[<- Back]{RESET}")?;
+                    } else {
+                        writeln!(output, "  {marker} [<- Back]")?;
+                    }
+                    lines += 1;
+                    continue;
+                }
+                if i == 1 {
+                    writeln!(output)?;
+                    lines += 1;
+                }
 
                 let current_marker = if *val == self.packs_behavior.as_str() {
                     format!(" {BOLD_GREEN}✓{RESET}")
@@ -903,7 +913,7 @@ impl ConfigEditor {
             writeln!(output)?;
             lines += 1;
 
-            // Render [Back to main menu]
+            // Render [<- Back]
             let is_back = selected == 0;
             let back_marker = if is_back {
                 format!("{BOLD_GREEN}▸{RESET}")
@@ -913,10 +923,10 @@ impl ConfigEditor {
             if is_back {
                 writeln!(
                     output,
-                    "  {back_marker} {BOLD_WHITE}[Back to main menu]{RESET}"
+                    "  {back_marker} {BOLD_WHITE}[<- Back]{RESET}"
                 )?;
             } else {
-                writeln!(output, "  {back_marker} [Back to main menu]")?;
+                writeln!(output, "  {back_marker} [<- Back]")?;
             }
             lines += 1;
             writeln!(output)?;
@@ -1186,7 +1196,7 @@ impl ConfigEditor {
 
         // 2. Select command from native command list:
         let mut choices: Vec<(String, String)> = Vec::new();
-        choices.push(("[Cancel]".to_string(), "Cancel alias creation".to_string()));
+        choices.push(("[<- Back]".to_string(), "Cancel alias creation".to_string()));
         for (cmd, desc) in NATIVE_COMMANDS {
             choices.push((cmd.to_string(), desc.to_string()));
         }
@@ -1817,7 +1827,7 @@ custom = "!echo hello"
         editor.menu_aliases(&mut &b"\x1b"[..], &mut out).unwrap();
 
         let rendered = String::from_utf8_lossy(&out);
-        let back_pos = rendered.find("[Back to main menu]").expect("Must render [Back to main menu]");
+        let back_pos = rendered.find("[<- Back]").expect("Must render [<- Back]");
         let hint_pos = rendered.find("Navigate with").expect("Must render navigation hint");
 
         assert!(
@@ -2080,10 +2090,10 @@ custom = "!echo hello"
 
         let rendered = String::from_utf8_lossy(&out);
         let lines: Vec<&str> = rendered.lines().collect();
-        let back_idx = lines.iter().position(|l| l.contains("[Back]")).expect("Must have [Back]");
+        let back_idx = lines.iter().position(|l| l.contains("[<- Back]")).expect("Must have [<- Back]");
         assert!(
             lines[back_idx + 1].trim().is_empty(),
-            "Line directly following [Back] must be empty (separation), but got: {:?}",
+            "Line directly following [<- Back] must be empty (separation), but got: {:?}",
             lines[back_idx + 1]
         );
 
@@ -2102,11 +2112,34 @@ custom = "!echo hello"
 
         let rendered = String::from_utf8_lossy(&out);
         let lines: Vec<&str> = rendered.lines().collect();
-        let back_idx = lines.iter().position(|l| l.contains("[Back to main menu]")).expect("Must have [Back to main menu]");
+        let back_idx = lines.iter().position(|l| l.contains("[<- Back]")).expect("Must have [<- Back]");
         assert!(
             lines[back_idx + 1].trim().is_empty(),
-            "Line directly following [Back to main menu] must be empty (separation), but got: {:?}",
+            "Line directly following [<- Back] must be empty (separation), but got: {:?}",
             lines[back_idx + 1]
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_menu_packs_behavior_back_button_is_standardized() {
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-backpack-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        let mut out = Vec::new();
+        editor.menu_packs_behavior(&mut &b"\x1b"[..], &mut out).unwrap();
+
+        let rendered = String::from_utf8_lossy(&out);
+        assert!(
+            rendered.contains("[<- Back]"),
+            "Packs behavior menu must render standardized '[<- Back]', rendered:\n{rendered}"
+        );
+        assert!(
+            !rendered.contains("Return to main menu"),
+            "Packs behavior menu must NOT render 'Return to main menu'"
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
