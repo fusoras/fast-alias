@@ -1357,7 +1357,9 @@ fn show_recipe(config: &Config, key: &str) {
 
 fn format_recipe_details(recipe: &crate::config::Recipe, key: &str) -> String {
     let mut out = String::new();
-    out.push_str(&format!("Recipe: {key}\n"));
+    // Styled header, mirroring the cyan `Command:` label used by `--show` for
+    // commands/aliases.
+    out.push_str(&format!("{BOLD_CYAN}Recipe:{RESET} {key}\n"));
     if let Some(loc) = format_source_location(recipe.source_file.as_deref(), recipe.source_line) {
         out.push_str(&format!("Defined in: {loc}\n"));
     }
@@ -1377,14 +1379,25 @@ fn format_recipe_details(recipe: &crate::config::Recipe, key: &str) -> String {
         }
     if let Some(tooling) = &recipe.tooling {
         out.push_str("\nTooling:\n");
+        // Align the label column the same way `--show` aligns command
+        // arguments with `{label:<max_len$}`.
+        let mut entries: Vec<(&str, &crate::config::Tool)> = Vec::new();
         if let Some(l) = &tooling.linter {
-            out.push_str(&format!("  - linter: {} (script: {})\n", l.tool, l.script.as_deref().unwrap_or("-")));
+            entries.push(("linter:", l));
         }
         if let Some(f) = &tooling.formatter {
-            out.push_str(&format!("  - formatter: {} (script: {})\n", f.tool, f.script.as_deref().unwrap_or("-")));
+            entries.push(("formatter:", f));
         }
         if let Some(c) = &tooling.check {
-            out.push_str(&format!("  - check: {} (script: {})\n", c.tool, c.script.as_deref().unwrap_or("-")));
+            entries.push(("check:", c));
+        }
+        let max_len = entries.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
+        for (label, tool) in entries {
+            out.push_str(&format!(
+                "  - {label:<max_len$} {} (script: {})\n",
+                tool.tool,
+                tool.script.as_deref().unwrap_or("-")
+            ));
         }
     }
     if !recipe.files.is_empty() {
@@ -2307,7 +2320,10 @@ description = "Next.js TS"
             ..Default::default()
         };
         let output = format_recipe_details(&recipe, "next-ts");
-        assert!(output.contains("Recipe: next-ts"));
+        assert!(
+            output.contains(&format!("{BOLD_CYAN}Recipe:{RESET} next-ts")),
+            "Recipe header must use the styled cyan label like `--show` for commands, got:\n{output:?}"
+        );
         assert!(output.contains("Defined in:"), "Output must contain 'Defined in:'");
         assert!(output.contains("recipes.toml (line 5)"));
     }
