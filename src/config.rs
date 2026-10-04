@@ -418,7 +418,7 @@ pub fn parse_global_config(content: &str) -> anyhow::Result<GlobalConfig> {
 /// 3. Top-level tables where each table contains `components = [...]`
 /// 4. Root table containing `components = [...]` (single pack file)
 pub fn parse_packs_from_toml(content: &str, file_stem: &str) -> Vec<Pack> {
-    let Ok(val) = content.parse::<toml::Value>() else {
+    let Ok(val) = toml::from_str::<toml::Value>(content) else {
         return Vec::new();
     };
 
@@ -2925,6 +2925,21 @@ args = [
         let config: Config = toml::from_str(toml_str).unwrap();
         let cmd = &config.aliases["img"]["convert"];
         assert_eq!(cmd.args[0].description.as_deref(), Some("Input avif file"));
+    }
+
+    #[test]
+    fn test_toml_1_1_multiline_inline_tables_and_trailing_commas() {
+        let toml_str = r#"
+[aliases.demo]
+hello = {
+    command = "echo 'Hello TOML 1.1!'",
+    description = "Multiline inline table with trailing comma",
+}
+"#;
+        let config: Config = toml::from_str(toml_str).expect("TOML 1.1 multiline inline table should parse cleanly");
+        let cmd = &config.aliases["demo"]["hello"];
+        assert_eq!(cmd.command, "echo 'Hello TOML 1.1!'");
+        assert_eq!(cmd.description.as_deref(), Some("Multiline inline table with trailing comma"));
     }
 }
 
