@@ -631,12 +631,16 @@ fn validate_toml_file(config_dir: &Path, file_path: &Path, issues: &mut Vec<Vali
                             && !builtins.contains(&var)
                             && !declared_vars.contains(var)
                         {
+                            let mut candidates: Vec<&str> =
+                                declared_vars.iter().map(|s| s.as_str()).collect();
+                            candidates.extend_from_slice(&builtins);
+                            let sugg = suggest_closest(var, &candidates);
                             issues.push(ValidationIssue {
                                 severity: IssueSeverity::Warning,
                                 message: format!(
                                     "placeholder '{{{{{var}}}}}' is used in steps/create of recipe '{recipe_name}', but not declared under [variables]"
                                 ),
-                                suggestion: None,
+                                suggestion: sugg,
                             });
                         }
                         start = idx + close + 2;
@@ -1296,6 +1300,43 @@ description = "Echo"
         let msgs = issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
         assert!(msgs.contains("orphan_var"), "Must warn about orphan variable");
         assert!(msgs.contains("warning:"), "Must be categorized as warning");
+    }
+
+    #[test]
+    fn test_recipe_validate_suggests_typo_for_undeclared_variable() {
+        let dir = temp_dir("val-typo-sugg");
+        fs::write(
+            dir.join("recipes.toml"),
+            r#"[recipes.my-rec]
+name = "My Rec"
+description = "Valid"
+
+[recipes.my-rec.variables.database_url]
+prompt = "Database connection URL"
+default = "sqlite://data.db"
+
+[[recipes.my-rec.steps]]
+command = "echo {{databse_url}}"
+description = "Echo"
+"#,
+        ).unwrap();
+        let (issues, has_errors) = recipe_diagnostics(&dir, None).unwrap();
+        let msgs = issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        assert!(!has_errors, "Warnings must not count as errors, got:\n{msgs}");
+        let issue = issues
+            .iter()
+            .find(|i| i.message.contains("databse_url"))
+            .expect("must find issue for databse_url");
+        assert_eq!(
+            issue.suggestion,
+            Some("database_url".to_string()),
+            "expected suggestion 'database_url' for typo 'databse_url'"
+        );
+        let formatted = issue.to_string();
+        assert!(
+            formatted.contains("Did you mean 'database_url'?"),
+            "formatted issue must contain Did you mean, got: {formatted}"
+        );
     }
 
     #[test]
