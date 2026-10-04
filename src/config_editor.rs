@@ -430,6 +430,17 @@ impl UiIcons {
             "(pending)"
         }
     }
+
+    /// Unsaved / dirty indicator dot.
+    /// Universal: "•" (\u{2022})
+    /// Nerd Font: "" (\u{ea71}, nf-cod-circle_filled)
+    pub fn unsaved_dot(&self) -> &'static str {
+        if self.nerd_fonts {
+            "\u{ea71}"
+        } else {
+            "•"
+        }
+    }
 }
 
 /// Applies a `ConfigDelta` to existing `config.toml` content using `toml_edit`
@@ -655,13 +666,16 @@ pub fn format_path_with_tilde(path: &Path) -> String {
 pub struct ConfigEditor {
     config_path: PathBuf,
     initial_content: String,
-    packs_behavior: String,
+    pub packs_behavior: String,
+    pub saved_packs_behavior: String,
     /// Tab-cycled value not yet confirmed with Enter on the main menu.
-    pending_behavior: Option<String>,
+    pub pending_behavior: Option<String>,
     pub icon_style: String,
+    pub saved_icon_style: String,
     /// Tab-cycled value not yet confirmed with Enter on the main menu.
     pub pending_icon_style: Option<String>,
-    aliases: BTreeMap<String, String>,
+    pub aliases: BTreeMap<String, String>,
+    pub saved_aliases: BTreeMap<String, String>,
     status_message: Option<String>,
 }
 
@@ -683,14 +697,21 @@ impl ConfigEditor {
         };
         let aliases = parsed.alias;
 
+        let saved_packs_behavior = packs_behavior.clone();
+        let saved_icon_style = icon_style.clone();
+        let saved_aliases = aliases.clone();
+
         Ok(Self {
             config_path,
             initial_content,
             packs_behavior,
+            saved_packs_behavior,
             pending_behavior: None,
             icon_style,
+            saved_icon_style,
             pending_icon_style: None,
             aliases,
+            saved_aliases,
             status_message: None,
         })
     }
@@ -699,6 +720,16 @@ impl ConfigEditor {
         self.icon_style == "nerd-font"
             || self.icon_style == "nerd-fonts"
             || self.icon_style == "nerdfont"
+    }
+
+    /// Checks if a main menu element has unsaved or pending changes.
+    pub fn is_item_unsaved(&self, idx: usize) -> bool {
+        match idx {
+            0 => self.pending_behavior.is_some() || self.packs_behavior != self.saved_packs_behavior,
+            1 => self.aliases != self.saved_aliases,
+            2 => self.pending_icon_style.is_some() || self.icon_style != self.saved_icon_style,
+            _ => false,
+        }
     }
 
     /// Renders the main menu and handles user selection.
@@ -801,10 +832,16 @@ impl ConfigEditor {
                         _ => String::new(),
                     };
 
-                    if is_sel {
-                        writeln!(output, "  {marker} {BOLD_WHITE}{item}{RESET}{detail}")?;
+                    let unsaved_marker = if self.is_item_unsaved(idx) {
+                        format!(" {BOLD_YELLOW}{}{RESET}", icons.unsaved_dot())
                     } else {
-                        writeln!(output, "  {marker} {item}{detail}")?;
+                        String::new()
+                    };
+
+                    if is_sel {
+                        writeln!(output, "  {marker} {BOLD_WHITE}{item}{RESET}{detail}{unsaved_marker}")?;
+                    } else {
+                        writeln!(output, "  {marker} {item}{detail}{unsaved_marker}")?;
                     }
                     lines += 1;
                 }
@@ -1792,13 +1829,16 @@ impl ConfigEditor {
             let reloaded = fs::read_to_string(&self.config_path)?;
             self.initial_content = reloaded.clone();
             if let Ok(cfg) = crate::config::parse_global_config(&reloaded) {
-                self.packs_behavior = cfg.packs.default_behavior;
+                self.packs_behavior = cfg.packs.default_behavior.clone();
+                self.saved_packs_behavior = cfg.packs.default_behavior;
                 self.icon_style = if cfg.ui.is_nerd_fonts() {
                     "nerd-font".to_string()
                 } else {
-                    cfg.ui.icons
+                    cfg.ui.icons.clone()
                 };
-                self.aliases = cfg.alias;
+                self.saved_icon_style = self.icon_style.clone();
+                self.aliases = cfg.alias.clone();
+                self.saved_aliases = cfg.alias;
             }
         }
 
@@ -1886,7 +1926,7 @@ impl ConfigEditor {
     }
 
     /// Persists configuration to disk using `apply_config_delta`.
-    pub fn save(&self) -> anyhow::Result<()> {
+    pub fn save(&mut self) -> anyhow::Result<()> {
         let delta = ConfigDelta {
             packs_behavior: Some(self.packs_behavior.clone()),
             icon_style: Some(self.icon_style.clone()),
@@ -1899,7 +1939,11 @@ impl ConfigEditor {
         if let Some(parent) = self.config_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(&self.config_path, updated_toml)?;
+        fs::write(&self.config_path, &updated_toml)?;
+        self.initial_content = updated_toml;
+        self.saved_packs_behavior = self.packs_behavior.clone();
+        self.saved_icon_style = self.icon_style.clone();
+        self.saved_aliases = self.aliases.clone();
         Ok(())
     }
 }
@@ -2663,6 +2707,7 @@ custom = "!echo hello"
         assert_eq!(universal.add_alias_label(), "[+ Add new alias]");
         assert_eq!(universal.arrow(), "->");
         assert_eq!(universal.pending_label(), "(pending)");
+        assert_eq!(universal.unsaved_dot(), "•");
 
         let nerd = UiIcons::new(true);
         assert_eq!(nerd.pointer(), "\u{f054}"); //  nf-fa-chevron_right
@@ -2674,6 +2719,7 @@ custom = "!echo hello"
         assert_eq!(nerd.add_alias_label(), "[\u{f067} Add new alias]"); //  nf-fa-plus
         assert_eq!(nerd.arrow(), "\u{f061}"); //  nf-fa-arrow_right
         assert_eq!(nerd.pending_label(), "(\u{f017} pending)");
+        assert_eq!(nerd.unsaved_dot(), "\u{ea71}"); //  nf-cod-circle_filled
     }
 
     #[test]
@@ -2926,6 +2972,48 @@ nerd_fonts = true
         let mut main_out = Vec::new();
         let _ = editor.run(&mut &main_input[..], &mut main_out).unwrap();
         assert_eq!(editor.icon_style, "nerd-font", "Navigating with 'j' in main menu must open Icon style and apply changes");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_main_menu_renders_unsaved_circle_filled_icon_on_dirty_items() {
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-unsaved-dot-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        editor.icon_style = "nerd-font".to_string();
+        editor.saved_icon_style = "nerd-font".to_string();
+
+        // 1. Initial pristine state: no items have unsaved changes
+        let mut out_pristine = Vec::new();
+        let _ = editor.run(&mut &b"\x1b"[..], &mut out_pristine).unwrap();
+        let rendered_pristine = String::from_utf8_lossy(&out_pristine);
+        assert!(
+            !rendered_pristine.contains("\u{ea71}"),
+            "Pristine main menu must NOT render unsaved circle filled icon"
+        );
+
+        // 2. Modify packs_behavior (dirty)
+        editor.packs_behavior = "error".to_string();
+        let mut out_dirty = Vec::new();
+        let _ = editor.run(&mut &b"\x1b"[..], &mut out_dirty).unwrap();
+        let rendered_dirty = String::from_utf8_lossy(&out_dirty);
+        assert!(
+            rendered_dirty.contains("\u{ea71}"),
+            "Main menu must render nf-cod-circle_filled '\\u{{ea71}}' on unsaved modified items, rendered:\n{rendered_dirty}"
+        );
+
+        // 3. Save configuration -> unsaved icon disappears
+        editor.save().unwrap();
+        let mut out_saved = Vec::new();
+        let _ = editor.run(&mut &b"\x1b"[..], &mut out_saved).unwrap();
+        let rendered_saved = String::from_utf8_lossy(&out_saved);
+        assert!(
+            !rendered_saved.contains("\u{ea71}"),
+            "Saved main menu must NOT render unsaved circle filled icon after saving"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
