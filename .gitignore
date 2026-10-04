@@ -61,6 +61,7 @@ __pycache__/
 *.pyc
 dist/
 build/
+.agents/skills
 
 # Accidental archive downloads in project root
 *.tar.gz
