@@ -1579,11 +1579,11 @@ fn format_help_with_inline_aliases(input: &str) -> String {
                             clean_rest = rest[..alias_start].trim_end().to_string();
                         }
 
-                        let mut full_name = cmd_name.to_string();
-                        if !aliases.is_empty() {
-                            full_name.push_str(", ");
-                            full_name.push_str(&aliases.join(", "));
-                        }
+                        let full_name = if !aliases.is_empty() {
+                            format!("{}, {cmd_name}", aliases.join(", "))
+                        } else {
+                            cmd_name.to_string()
+                        };
 
                         cmd_entries.push((full_name, clean_rest));
                         continue;
@@ -1964,12 +1964,12 @@ down = { command = "docker compose down" }
         let raw_help = cmd.render_help().to_string();
         let formatted = format_help_with_inline_aliases(&raw_help);
         assert!(
-            formatted.contains("--new, -n"),
-            "Help output must display inline subcommand short aliases (--new, -n): got:\n{formatted}"
+            formatted.contains("-n, --new"),
+            "Help output must display inline subcommand short aliases (-n, --new): got:\n{formatted}"
         );
         assert!(
-            formatted.contains("--alias, -a"),
-            "Help output must display inline subcommand aliases (--alias, -a): got:\n{formatted}"
+            formatted.contains("-a, --alias"),
+            "Help output must display inline subcommand aliases (-a, --alias): got:\n{formatted}"
         );
         assert!(
             !formatted.contains("-lList"),
@@ -2162,11 +2162,11 @@ down = { command = "docker compose down" }
             assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
             let output = render_cli_help(&err);
             assert!(
-                output.contains("--new, -n"),
+                output.contains("-n, --new"),
                 "Top-level help ({args:?}) must contain inline alias for --new: got:\n{output}"
             );
             assert!(
-                output.contains("--alias, -a"),
+                output.contains("-a, --alias"),
                 "Top-level help ({args:?}) must contain inline alias for --alias: got:\n{output}"
             );
             assert!(
