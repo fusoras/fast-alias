@@ -1,6 +1,7 @@
 use crate::colors::*;
 use crate::platform::{command_exists, Platform};
 use std::env;
+use std::io::IsTerminal;
 use std::process::Command;
 
 /// Default GitHub repository for release checks (overridable via `FAST_ALIAS_REPO`).
@@ -193,8 +194,18 @@ pub fn check_and_perform_update(
                 .map_err(|e| anyhow::anyhow!("Failed to create temp directory: {e}"))?;
             let tmp_tarball = tmp_dir.join("update.tar.gz");
 
-            let curl_status = Command::new("curl")
-                .arg("-fsSL")
+            // Download progress: show curl's braille progress bar (`-#`) only
+            // when stderr is an interactive terminal; piped/CI stderr keeps the
+            // current silent `-fsSL` behavior. `-s` must be dropped together
+            // with `-#` because curl keeps the progress bar suppressed while
+            // silent mode is on. Failures behave exactly as before.
+            let mut curl = Command::new("curl");
+            if std::io::stderr().is_terminal() {
+                curl.args(["-fL", "-#"]);
+            } else {
+                curl.arg("-fsSL");
+            }
+            let curl_status = curl
                 .arg("-o")
                 .arg(&tmp_tarball)
                 .arg(&download_url)
