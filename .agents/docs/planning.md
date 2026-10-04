@@ -32,6 +32,25 @@
 ## Next 🔲
 
 - Pinning beyond Node: `pin_versions` only handles `package.json`; decide TOML-declared per-ecosystem rules vs keep Node-only
+- **Interactive Visual Configurator (`fa --config` / `fa -c`)**: Interactive visual menu for managing `~/.config/fa/config.toml` with arrow keys (`↑`/`↓`) and `Enter` selection. Focus is on maximum ease of use.
+  - **Menu Navigation & Features (All UI in English)**:
+    - **Packs Default Behavior**: Select between `"list"`, `"default"`, or `"error"`.
+    - **Visual Alias Manager**:
+      - Shows an aligned table of all currently defined aliases (`alias -> original command`).
+      - Top action button: `[+ Add new alias]`.
+      - Interactive prompt for alias name followed by a filterable / arrow-selectable picker of native `fa` commands (or custom `!` shell commands).
+    - **Open in Editor**: Launch `$EDITOR` (or fallback to `nano`/`vim`) directly from the menu.
+    - **Reset to Defaults**: Restore initial clean configuration state.
+    - **Cancel / Save Confirmation**: Clear exit confirmation; `Esc`/`q` exits without altering disk.
+  - **Sparse Configuration & Comment Preservation**:
+    - **Sparse persistence (deltas only)**: Default values are omitted from disk; `config.toml` only reflects explicit user modifications to keep the file clean.
+    - **Comment preservation**: Uses AST-preserving TOML manipulation (`toml_edit`) so user comments, whitespace, and formatting are strictly preserved upon save.
+  - **Architecture Decision (Pending Selection)**:
+    - **Option A (Lightweight interactive library, e.g., `inquire` or `dialoguer`)**: ~120–180 lines in `fa`, +1 crate. Recommended given the need for text input prompts (`[+ Add new alias]`) and filterable command list selection.
+    - **Option B (Native zero-dependency / Raw Mode ANSI basic)**: ~400–600 lines in `fa` (handling raw mode, cursor movement, backspace, string buffers, and list filtering manually), 0 additional crates.
+  - **Safety & Platform Compatibility**:
+    - Strictly non-blocking: must inspect `std::io::stdin().is_terminal()` to gracefully exit or bypass in non-interactive/CI environments (Zero-Hang Policy).
+    - Tested for flawless operation on both Debian and Termux (Android).
 
 ## Proposed features (research-backed, medium-term roadmap)
 
