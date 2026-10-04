@@ -579,6 +579,56 @@ fn packs_row_transition(
     }
 }
 
+/// Valid `ui.icons` values in inline cycle order.
+const ICON_STYLE_VALUES: [&str; 2] = ["unicode", "nerd-font"];
+
+/// Cycles to the adjacent `ui.icons` value.
+/// Unknown values are treated as the first option ("unicode").
+fn cycle_icon_style(current: &str, forward: bool) -> String {
+    let idx = ICON_STYLE_VALUES
+        .iter()
+        .position(|v| *v == current)
+        .unwrap_or(0);
+    let len = ICON_STYLE_VALUES.len();
+    let next = if forward {
+        (idx + 1) % len
+    } else {
+        (idx + len - 1) % len
+    };
+    ICON_STYLE_VALUES[next].to_string()
+}
+
+/// Pure state transition for the inline edit of "Icon style".
+fn icon_style_row_transition(
+    confirmed: &str,
+    pending: Option<&str>,
+    key: &Key,
+) -> PacksRowEffect {
+    match key {
+        Key::Tab => PacksRowEffect::Cycle(cycle_icon_style(
+            pending.unwrap_or(confirmed),
+            true,
+        )),
+        Key::BackTab => PacksRowEffect::Cycle(cycle_icon_style(
+            pending.unwrap_or(confirmed),
+            false,
+        )),
+        Key::Enter => match pending {
+            Some(value) => PacksRowEffect::Confirm(value.to_string()),
+            None => PacksRowEffect::OpenSubMenu,
+        },
+        Key::Up | Key::Down => PacksRowEffect::Move,
+        Key::Esc => {
+            if pending.is_some() {
+                PacksRowEffect::DiscardStay
+            } else {
+                PacksRowEffect::Exit
+            }
+        }
+        _ => PacksRowEffect::Ignore,
+    }
+}
+
 /// Formats a path replacing $HOME with `~` if applicable.
 pub fn format_path_with_tilde(path: &Path) -> String {
     if let Ok(home) = std::env::var("HOME") {
@@ -598,6 +648,8 @@ pub struct ConfigEditor {
     /// Tab-cycled value not yet confirmed with Enter on the main menu.
     pending_behavior: Option<String>,
     pub icon_style: String,
+    /// Tab-cycled value not yet confirmed with Enter on the main menu.
+    pub pending_icon_style: Option<String>,
     aliases: BTreeMap<String, String>,
     status_message: Option<String>,
 }
@@ -626,6 +678,7 @@ impl ConfigEditor {
             packs_behavior,
             pending_behavior: None,
             icon_style,
+            pending_icon_style: None,
             aliases,
             status_message: None,
         })
@@ -728,7 +781,12 @@ impl ConfigEditor {
                             None => format!(" {BOLD_CYAN}[ {} ]{RESET}", self.packs_behavior),
                         },
                         1 => format!(" {DIM}({} defined){RESET}", self.aliases.len()),
-                        2 => format!(" {BOLD_CYAN}[ {} ]{RESET}", self.icon_style),
+                        2 => match &self.pending_icon_style {
+                            Some(pending) => {
+                                format!(" {BOLD_YELLOW}[ {pending} ]{RESET} {DIM}(pending){RESET}")
+                            }
+                            None => format!(" {BOLD_CYAN}[ {} ]{RESET}", self.icon_style),
+                        },
                         _ => String::new(),
                     };
 
@@ -751,12 +809,12 @@ impl ConfigEditor {
             }
             lines += 1;
 
-            if self.pending_behavior.is_some() {
+            if self.pending_behavior.is_some() || self.pending_icon_style.is_some() {
                 writeln!(
                     output,
                     " {DIM}Cycle with {RESET}{BOLD_CYAN}Tab{RESET}{DIM}/{RESET}{BOLD_CYAN}Shift-Tab{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to confirm, {RESET}{BOLD_CYAN}s{RESET}{DIM} to save, {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM} to discard + move, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to discard{RESET}"
                 )?;
-            } else if selected == 0 {
+            } else if selected == 0 || selected == 2 {
                 writeln!(
                     output,
                     " {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Tab{RESET}{DIM} to cycle value, {RESET}{BOLD_CYAN}s{RESET}{DIM} to save, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
@@ -813,10 +871,49 @@ impl ConfigEditor {
                 }
             }
 
+            // Inline edit of "Icon style": Tab/BackTab cycle between "unicode"
+            // and "nerd-font", Enter confirms it, ↑/↓ or Esc discard it.
+            if selected == 2 {
+                let effect = icon_style_row_transition(
+                    &self.icon_style,
+                    self.pending_icon_style.as_deref(),
+                    &key,
+                );
+                match effect {
+                    PacksRowEffect::Cycle(value) => {
+                        self.pending_icon_style = Some(value);
+                        continue;
+                    }
+                    PacksRowEffect::Confirm(value) => {
+                        self.icon_style = value.clone();
+                        self.pending_icon_style = None;
+                        let cur_icons = UiIcons::new(self.is_nerd_fonts());
+                        self.status_message = Some(format!(
+                            "{BOLD_GREEN}{} '{value}' applied successfully{RESET}",
+                            cur_icons.check()
+                        ));
+                        continue;
+                    }
+                    PacksRowEffect::DiscardStay => {
+                        self.pending_icon_style = None;
+                        continue;
+                    }
+                    PacksRowEffect::Move => {
+                        self.pending_icon_style = None;
+                    }
+                    PacksRowEffect::OpenSubMenu
+                    | PacksRowEffect::Exit
+                    | PacksRowEffect::Ignore => {}
+                }
+            }
+
             match key {
                 Key::Char('s') | Key::Char('S') => {
                     if let Some(pending) = self.pending_behavior.take() {
                         self.packs_behavior = pending;
+                    }
+                    if let Some(pending) = self.pending_icon_style.take() {
+                        self.icon_style = pending;
                     }
                     self.save()?;
                     let cur_icons = UiIcons::new(self.is_nerd_fonts());
@@ -827,6 +924,8 @@ impl ConfigEditor {
                     continue;
                 }
                 Key::Up => {
+                    self.pending_behavior = None;
+                    self.pending_icon_style = None;
                     if selected == 0 {
                         selected = menu_items.len() - 1;
                     } else {
@@ -834,6 +933,8 @@ impl ConfigEditor {
                     }
                 }
                 Key::Down => {
+                    self.pending_behavior = None;
+                    self.pending_icon_style = None;
                     if selected + 1 >= menu_items.len() {
                         selected = 0;
                     } else {
@@ -842,6 +943,7 @@ impl ConfigEditor {
                 }
                 Key::Enter => match selected {
                     0 => {
+                        self.pending_behavior = None;
                         write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                         output.flush()?;
                         last_lines_drawn = 0;
@@ -854,6 +956,7 @@ impl ConfigEditor {
                         self.menu_aliases(input, output)?;
                     }
                     2 => {
+                        self.pending_icon_style = None;
                         write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
                         output.flush()?;
                         last_lines_drawn = 0;
@@ -2099,6 +2202,40 @@ custom = "!echo hello"
         assert!(
             out.contains("✔ 'default' applied successfully"),
             "Minimal confirmation status message must be rendered, output:\n{out}"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_tab_cycles_icon_style_inline_and_enter_confirms() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-tabicon-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        assert_eq!(editor.icon_style, "unicode");
+
+        // Navigate to Icon style (Down, Down: \x1b[B\x1b[B)
+        // Tab cycles to 'nerd-font' (pending)
+        // Enter confirms 'nerd-font'
+        // Esc cancels and exits menu
+        let input_bytes = b"\x1b[B\x1b[B\t\r\x1b";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let res = editor.run(&mut reader, &mut output).unwrap();
+        assert!(!res);
+
+        let out = String::from_utf8_lossy(&output);
+        assert!(
+            out.contains("[ nerd-font ]"),
+            "Tab must cycle 'unicode' -> 'nerd-font' inline, rendered output:\n{out}"
+        );
+        assert_eq!(
+            editor.icon_style, "nerd-font",
+            "Enter with pending Tab-cycled icon style must commit it"
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
