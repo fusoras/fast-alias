@@ -19,8 +19,8 @@ use crate::colors::*;
 use crate::config::{Command, Config};
 use crate::engine::{
     check_circular_recursion, check_self_recursion, format_alias_groups, format_command_line,
-    format_list_line, is_supported, preflight, run_new, run_shell_with_env, NewOptions,
-    FA_CALL_STACK_ENV,
+    format_list_line, format_section_header, is_supported, preflight, run_new, run_shell_with_env,
+    NewOptions, FA_CALL_STACK_ENV,
 };
 use crate::platform::Platform;
 use crate::state::State;
@@ -370,6 +370,34 @@ pub(crate) fn recipe_matches_search(
     haystack.push_str(&recipe.description.to_lowercase());
     haystack.contains(&q)
 }
+
+pub(crate) fn command_matches_search(
+    section: &str,
+    key: &str,
+    cmd: &crate::config::Command,
+    query: &str,
+) -> bool {
+    let q = query.to_lowercase();
+    let sec_clean = section.trim_start_matches(':');
+    let display_sec = crate::config::Config::display_section(section);
+    let mut haystack = format!("{key} {section} {sec_clean} {display_sec}");
+    haystack.push(' ');
+    haystack.push_str(&cmd.aliases.join(" "));
+    if let Some(desc) = &cmd.description {
+        haystack.push(' ');
+        haystack.push_str(desc);
+    }
+    for arg in &cmd.args {
+        haystack.push(' ');
+        haystack.push_str(&arg.name);
+        if let Some(desc) = &arg.description {
+            haystack.push(' ');
+            haystack.push_str(desc);
+        }
+    }
+    haystack.to_lowercase().contains(&q)
+}
+
 
 /// Interactively prompts the user to select a recipe from a numbered list.
 pub(crate) fn pick_recipe_from_list<R: std::io::BufRead, W: std::io::Write>(
@@ -923,7 +951,6 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Search { query } => {
-            let q = query.to_lowercase();
             let mut recipes = Vec::new();
             for (key, recipe) in &config.recipes {
                 if !is_scaffold_recipe(recipe) {
@@ -934,16 +961,19 @@ fn main() -> anyhow::Result<()> {
                 }
             }
             let mut commands = Vec::new();
-            for (_, key, cmd) in config.all_commands() {
-                let mut haystack = key.to_lowercase();
-                haystack.push(' ');
-                haystack.push_str(&cmd.aliases.join(" "));
-                if let Some(desc) = &cmd.description {
-                    haystack.push(' ');
-                    haystack.push_str(&desc.to_lowercase());
+            for (section, commands_map) in &config.aliases {
+                let mut matched_in_section = Vec::new();
+                for (command_key, command) in commands_map {
+                    if command_matches_search(section, command_key, command, &query) {
+                        matched_in_section.push(format!("    {}", format_command_line(command_key, command)));
+                    }
                 }
-                if haystack.contains(&q) {
-                    commands.push(format_command_line(key, cmd));
+                if !matched_in_section.is_empty() {
+                    if !commands.is_empty() {
+                        commands.push(String::new());
+                    }
+                    commands.push(format_section_header(section));
+                    commands.extend(matched_in_section);
                 }
             }
             if !recipes.is_empty() {
@@ -962,7 +992,7 @@ fn main() -> anyhow::Result<()> {
                 println!("  {DIM}Usage: fa <name>  (or: fa -a <name>){RESET}");
                 println!();
                 for line in &commands {
-                    println!("  {line}");
+                    println!("{line}");
                 }
             }
         }
@@ -2363,6 +2393,36 @@ description = "Next.js TS"
             "expected recipe search to match keyword in recipe.description"
         );
     }
+
+    #[test]
+    fn test_search_aliases_matches_category_section() {
+        let cmd = crate::config::Command {
+            command: "upscayl -i $1".to_string(),
+            description: Some("AI image upscaler".to_string()),
+            ..Default::default()
+        };
+        assert!(
+            command_matches_search("wrapper", "upscayl", &cmd, "wrapper"),
+            "expected search to match alias category/section"
+        );
+        assert!(
+            command_matches_search(":skills", "ls", &cmd, "skills"),
+            "expected search to match namespaced category without colon"
+        );
+        assert!(
+            command_matches_search("media", "resize", &cmd, "resize"),
+            "expected search to match command name"
+        );
+        assert!(
+            command_matches_search("media", "resize", &cmd, "upscaler"),
+            "expected search to match command description"
+        );
+        assert!(
+            !command_matches_search("media", "resize", &cmd, "nonexistent"),
+            "non-matching query should return false"
+        );
+    }
+
 
     #[test]
     fn test_pick_recipe_from_list_selection() {
