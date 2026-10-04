@@ -526,10 +526,15 @@ impl ConfigEditor {
             )?;
             lines += 1;
 
+            // Reserved 2-line slot for status feedback so menu layout height never shifts
+            writeln!(output)?;
+            lines += 1;
             if let Some(msg) = &self.status_message {
-                writeln!(output, "\n  {msg}\n")?;
-                lines += 3;
+                writeln!(output, "  {msg}")?;
+            } else {
+                writeln!(output)?;
             }
+            lines += 1;
 
             let categories: [(&str, &[(usize, &str)]); 3] = [
                 ("SETTINGS", &[
@@ -549,7 +554,7 @@ impl ConfigEditor {
             for (cat_name, items) in categories.iter() {
                 writeln!(output)?;
                 lines += 1;
-                writeln!(output, " {BOLD_CYAN}{cat_name}{RESET}")?;
+                writeln!(output, " {BOLD_WHITE}{cat_name}{RESET}")?;
                 lines += 1;
 
                 for &(idx, item) in items.iter() {
@@ -572,21 +577,33 @@ impl ConfigEditor {
                     };
 
                     if is_sel {
-                        writeln!(output, "    {marker} {BOLD_WHITE}{item}{RESET}{detail}")?;
+                        writeln!(output, "  {marker} {BOLD_WHITE}{item}{RESET}{detail}")?;
                     } else {
-                        writeln!(output, "    {marker} {item}{detail}")?;
+                        writeln!(output, "  {marker} {item}{detail}")?;
                     }
                     lines += 1;
                 }
             }
-            let footer = if self.pending_behavior.is_some() {
-                "\n {DIM}Tab/Shift-Tab: cycle value, Enter: confirm, ↑/↓: discard + move, Esc: discard{RESET}"
+            // Use positional arguments so DIM and RESET are guaranteed expanded
+            if self.pending_behavior.is_some() {
+                writeln!(
+                    output,
+                    "\n {}Tab/Shift-Tab: cycle value, Enter: confirm, ↑/↓: discard + move, Esc: discard{}",
+                    DIM, RESET
+                )?;
             } else if selected == 0 {
-                "\n {DIM}Navigate with ↑/↓, Enter to select, Tab to cycle value, Esc to cancel{RESET}"
+                writeln!(
+                    output,
+                    "\n {}Navigate with ↑/↓, Enter to select, Tab to cycle value, Esc to cancel{}",
+                    DIM, RESET
+                )?;
             } else {
-                "\n {DIM}Navigate with ↑/↓, Enter to select, Esc to cancel{RESET}"
-            };
-            writeln!(output, "{footer}")?;
+                writeln!(
+                    output,
+                    "\n {}Navigate with ↑/↓, Enter to select, Esc to cancel{}",
+                    DIM, RESET
+                )?;
+            }
             lines += 2;
 
             last_lines_drawn = lines;
@@ -1631,6 +1648,10 @@ custom = "!echo hello"
             out.contains("[ error ]"),
             "Tab must cycle 'default' -> 'error' inline, rendered output:\n{out}"
         );
+        assert!(
+            !out.contains("{DIM}") && !out.contains("{RESET}"),
+            "Footer placeholders must be color-expanded, not emitted literally, output:\n{out}"
+        );
         assert_eq!(
             editor.packs_behavior, "list",
             "Cycling alone must never modify the confirmed value"
@@ -1684,12 +1705,43 @@ custom = "!echo hello"
         assert!(!res);
 
         let out = String::from_utf8_lossy(&output);
-        assert!(out.contains("SETTINGS"), "Main menu must render SETTINGS category");
-        assert!(out.contains("ADVANCED"), "Main menu must render ADVANCED category");
-        assert!(out.contains("SESSION"), "Main menu must render SESSION category");
         assert!(
-            out.contains(&format!("    {BOLD_GREEN}▸{RESET} ")),
-            "Selected item under category must be indented with 4 spaces"
+            out.contains(&format!(" {BOLD_WHITE}SETTINGS{RESET}")),
+            "Main menu category title must be rendered in BOLD_WHITE"
+        );
+        assert!(
+            out.contains(&format!("  {BOLD_GREEN}▸{RESET} ")),
+            "Selected item under category must be indented with 2 spaces"
+        );
+        assert!(
+            !out.contains("{DIM}"),
+            "Literal {{DIM}} placeholder must not leak into rendered output"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_reserved_status_slot_preserves_exact_height() {
+        let temp_dir =
+            std::env::temp_dir().join(format!("fa-test-cfg-height-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor_no_msg = ConfigEditor::new(&temp_dir).unwrap();
+        let mut out_no_msg = Vec::new();
+        editor_no_msg.run(&mut &b"\x1b"[..], &mut out_no_msg).unwrap();
+        let lines_no_msg = String::from_utf8_lossy(&out_no_msg).lines().count();
+
+        let mut editor_with_msg = ConfigEditor::new(&temp_dir).unwrap();
+        editor_with_msg.status_message = Some("✔ 'default' applied successfully".to_string());
+        let mut out_with_msg = Vec::new();
+        editor_with_msg.run(&mut &b"\x1b"[..], &mut out_with_msg).unwrap();
+        let lines_with_msg = String::from_utf8_lossy(&out_with_msg).lines().count();
+
+        assert_eq!(
+            lines_no_msg, lines_with_msg,
+            "Layout height must remain constant: status slot must be reserved"
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
@@ -1722,7 +1774,7 @@ custom = "!echo hello"
         );
         assert!(
             out.contains(&format!(
-                "    {BOLD_GREEN}▸{RESET} {BOLD_WHITE}Command aliases{RESET}"
+                "  {BOLD_GREEN}▸{RESET} {BOLD_WHITE}Command aliases{RESET}"
             )),
             "Cursor must move down after discarding, output:\n{out}"
         );
@@ -1752,7 +1804,7 @@ custom = "!echo hello"
             "Pending value must render exactly once and be discarded, output:\n{out_up}"
         );
         assert!(
-            out_up.contains(&format!("    {BOLD_GREEN}▸{RESET} {BOLD_WHITE}Cancel{RESET}")),
+            out_up.contains(&format!("  {BOLD_GREEN}▸{RESET} {BOLD_WHITE}Cancel{RESET}")),
             "Cursor must wrap up to the last row after discarding, output:\n{out_up}"
         );
         let _ = fs::remove_dir_all(&temp_dir_up);
