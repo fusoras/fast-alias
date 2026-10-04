@@ -132,7 +132,7 @@ enum Commands {
         namespace: String,
     },
     /// Configure fast-alias settings and aliases interactively.
-    #[command(name = "--config", visible_alias = "-c")]
+    #[command(name = "--config", visible_alias = "-co")]
     Config,
 }
 
@@ -208,7 +208,7 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "-v",
     "--namespace-help",
     "--config",
-    "-c",
+    "-co",
 ];
 
 /// Rewrites CLI arguments:
@@ -2151,7 +2151,7 @@ down = { command = "docker compose down" }
         assert!(Cli::try_parse_from(["fa", "--self-update"]).is_ok());
         assert!(Cli::try_parse_from(["fa", "--self-uninstall"]).is_ok());
         assert!(Cli::try_parse_from(["fa", "--config"]).is_ok());
-        assert!(Cli::try_parse_from(["fa", "-c"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "-co"]).is_ok());
     }
 
     #[test]
@@ -2162,7 +2162,7 @@ down = { command = "docker compose down" }
             _ => panic!("Expected Commands::Config"),
         }
 
-        let cli = Cli::try_parse_from(["fa", "-c"]).expect("fa -c should parse");
+        let cli = Cli::try_parse_from(["fa", "-co"]).expect("fa -co should parse");
         match cli.command {
             Some(Commands::Config) => {}
             _ => panic!("Expected Commands::Config"),

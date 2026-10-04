@@ -452,6 +452,17 @@ fn packs_row_transition(
     }
 }
 
+/// Formats a path replacing $HOME with `~` if applicable.
+pub fn format_path_with_tilde(path: &Path) -> String {
+    if let Ok(home) = std::env::var("HOME") {
+        let home_path = Path::new(&home);
+        if let Ok(stripped) = path.strip_prefix(home_path) {
+            return format!("~/{}", stripped.display());
+        }
+    }
+    path.display().to_string()
+}
+
 /// Interactive TUI manager for fast-alias configuration.
 pub struct ConfigEditor {
     config_path: PathBuf,
@@ -505,7 +516,7 @@ impl ConfigEditor {
                 write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
             }
             let mut lines = 0;
-            let path_str = self.config_path.display().to_string();
+            let path_str = format_path_with_tilde(&self.config_path);
             let prefix = "  Fast-Alias Configuration  •  ";
             let min_inner_w = 61;
             let content_w = prefix.chars().count() + path_str.chars().count() + 2;
@@ -772,6 +783,10 @@ impl ConfigEditor {
             lines += 2;
 
             for (i, (val, desc)) in options.iter().enumerate() {
+                if i == 1 {
+                    writeln!(output)?;
+                    lines += 1;
+                }
                 let is_sel = i == selected;
                 let marker = if is_sel {
                     format!("{BOLD_GREEN}▸{RESET}")
@@ -903,6 +918,8 @@ impl ConfigEditor {
             } else {
                 writeln!(output, "  {back_marker} [Back to main menu]")?;
             }
+            lines += 1;
+            writeln!(output)?;
             lines += 1;
 
             // Render [+ Add new alias]
@@ -1191,6 +1208,10 @@ impl ConfigEditor {
             plines += 1;
 
             for (i, (cmd, desc)) in choices.iter().enumerate() {
+                if i == 1 {
+                    writeln!(output)?;
+                    plines += 1;
+                }
                 let is_sel = i == selected;
                 let marker = if is_sel {
                     format!("{BOLD_GREEN}▸{RESET}")
@@ -1992,6 +2013,9 @@ custom = "!echo hello"
         fs::create_dir_all(&temp_dir).unwrap();
 
         let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        if let Ok(home) = std::env::var("HOME") {
+            editor.config_path = Path::new(&home).join(".config/fa/config.toml");
+        }
         let mut out = Vec::new();
         editor.run(&mut &b"\x1b"[..], &mut out).unwrap();
 
@@ -2011,6 +2035,7 @@ custom = "!echo hello"
         assert!(clean_mid.ends_with('│'), "Middle line must be closed with right border '│', got: {clean_mid}");
         assert_eq!(clean_top.chars().count(), clean_mid.chars().count(), "Top and middle must have same width");
         assert_eq!(clean_top.chars().count(), clean_bot.chars().count(), "Top and bottom must have same width");
+        assert!(clean_mid.contains("~/"), "Banner must render path with tilde '~/' prefix, got: {clean_mid}");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
@@ -2041,5 +2066,60 @@ custom = "!echo hello"
         );
 
         let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_menu_packs_behavior_has_separation_after_back() {
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-sepback-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        let mut out = Vec::new();
+        editor.menu_packs_behavior(&mut &b"\x1b"[..], &mut out).unwrap();
+
+        let rendered = String::from_utf8_lossy(&out);
+        let lines: Vec<&str> = rendered.lines().collect();
+        let back_idx = lines.iter().position(|l| l.contains("[Back]")).expect("Must have [Back]");
+        assert!(
+            lines[back_idx + 1].trim().is_empty(),
+            "Line directly following [Back] must be empty (separation), but got: {:?}",
+            lines[back_idx + 1]
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_menu_aliases_has_separation_after_back() {
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-sepalias-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        let mut out = Vec::new();
+        editor.menu_aliases(&mut &b"\x1b"[..], &mut out).unwrap();
+
+        let rendered = String::from_utf8_lossy(&out);
+        let lines: Vec<&str> = rendered.lines().collect();
+        let back_idx = lines.iter().position(|l| l.contains("[Back to main menu]")).expect("Must have [Back to main menu]");
+        assert!(
+            lines[back_idx + 1].trim().is_empty(),
+            "Line directly following [Back to main menu] must be empty (separation), but got: {:?}",
+            lines[back_idx + 1]
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_format_path_with_tilde() {
+        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
+        let full = Path::new(&home).join(".config/fa/config.toml");
+        let formatted = format_path_with_tilde(&full);
+        assert_eq!(formatted, "~/.config/fa/config.toml");
+
+        let other = Path::new("/var/log/fa.log");
+        assert_eq!(format_path_with_tilde(other), "/var/log/fa.log");
     }
 }

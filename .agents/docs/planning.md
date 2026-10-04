@@ -32,7 +32,7 @@
 ## Next 🔲
 
 - Pinning beyond Node: `pin_versions` only handles `package.json`; decide TOML-declared per-ecosystem rules vs keep Node-only
-- **Interactive Visual Configurator (`fa --config` / `fa -c`)**: Interactive visual menu for managing `~/.config/fa/config.toml` with arrow keys (`↑`/`↓`) and `Enter` selection. Focus is on maximum ease of use.
+- **Interactive Visual Configurator (`fa --config` / `fa -co`)**: Interactive visual menu for managing `~/.config/fa/config.toml` with arrow keys (`↑`/`↓`) and `Enter` selection. Focus is on maximum ease of use.
   - **Menu Navigation & Features (All UI in English)**:
     - **Packs Default Behavior**: Select between `"list"`, `"default"`, or `"error"`.
     - **Visual Alias Manager**:
