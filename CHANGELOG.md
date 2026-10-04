@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Interactive configuration editor (`fa --config` / `fa -co`): zero-dependency pure ANSI terminal configuration editor that visualizes and mutates `~/.config/fa/config.toml` in-place with raw terminal management, clean box borders, and preserved scrollback.
+- Inline Tab cycling: cycle `packs.default_behavior` (`list`, `default`, `error`) and `ui.icons` (`unicode`, `nerd-font`) directly on the main menu using `Tab` / `Shift-Tab` without opening submenus, showing pending indicators (`(pending)` in Universal mode or `( pending)` in Nerd Font mode) and confirming with `Enter`.
+- Vim-style navigation (`j` / `k`): full support for moving down with `j` and up with `k` alongside arrow keys across all menus, submenus, and confirmation dialogs.
+- Nerd Font iconography support (`ui.icons`): toggle between `"unicode"` (clean universal symbols) and `"nerd-font"` (Nerd Font glyph repertoire) with live glyph previews in the selection submenu, standardized `[<- Back]` navigation, and clean typography.
+- Quick save shortcut (`s`): save configuration changes to disk anytime without leaving the menu, complete with dynamic home path formatting (`~/...`) and non-intrusive status feedback.
 - Custom argument signatures and documentation (`args`): explicitly declare positional argument names and documentation for command aliases using structured token arrays (`args = ["<input>", "[output]"]`), object arrays (`args = [{ name = "input", description = "..." }]`), or table syntax (`[alias.sec.cmd.args]`). Displays custom signatures in `fa list` and namespace listings, and renders usage signatures and aligned argument documentation in `fa --show <command>`. Rejects ambiguous single strings.
 - `[alias]` table synonym: support singular `[alias.<section>]` and `[alias.<section>.<command>]` interchangeably with plural `[aliases]`, allowing cleaner single-command definitions while merging coexisting tables seamlessly; full editor schema and source tracking support.
 
