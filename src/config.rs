@@ -768,9 +768,24 @@ struct RawConfig {
     #[serde(default)]
     vars: BTreeMap<String, String>,
     #[serde(default)]
-    aliases: BTreeMap<String, BTreeMap<String, toml::Value>>,
+    aliases: BTreeMap<String, toml::Value>,
     #[serde(default)]
-    pub alias: BTreeMap<String, BTreeMap<String, toml::Value>>,
+    pub alias: BTreeMap<String, toml::Value>,
+}
+
+fn parse_command_from_value<E: serde::de::Error>(val: toml::Value) -> Result<Command, E> {
+    let raw_cmd: RawCommand = val.try_into().map_err(E::custom)?;
+    Ok(Command {
+        command: raw_cmd.command.unwrap_or_default(),
+        description: raw_cmd.description,
+        platform: raw_cmd.platform,
+        aliases: raw_cmd.aliases,
+        args: raw_cmd.args,
+        env: raw_cmd.env.map(|e| e.into_map()).unwrap_or_default(),
+        env_force: raw_cmd.env_force.map(|e| e.into_map()).unwrap_or_default(),
+        source_file: None,
+        source_line: None,
+    })
 }
 
 impl<'de> Deserialize<'de> for Config {
@@ -790,36 +805,84 @@ impl<'de> Deserialize<'de> for Config {
 
         let mut section_vars: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
 
-        let mut raw_aliases = raw.aliases;
-        for (sec, entries) in raw.alias {
-            raw_aliases.entry(sec).or_default().extend(entries);
+        let mut raw_alias_tables = raw.aliases;
+        for (k, v) in raw.alias {
+            if let Some(existing) = raw_alias_tables.get_mut(&k)
+                && let (Some(ex_tab), Some(new_tab)) = (existing.as_table_mut(), v.as_table())
+            {
+                for (nk, nv) in new_tab {
+                    ex_tab.insert(nk.clone(), nv.clone());
+                }
+                continue;
+            }
+            raw_alias_tables.insert(k, v);
         }
 
-        for (section, entries) in raw_aliases {
-            for (key, val) in entries {
-                if key == "_env" {
-                    let spec: EnvSpec = val.try_into().map_err(serde::de::Error::custom)?;
-                    config.alias_env.entry(section.clone()).or_default().extend(spec.into_map());
-                } else if key == "_env_force" {
-                    let spec: EnvSpec = val.try_into().map_err(serde::de::Error::custom)?;
-                    config.alias_env_force.entry(section.clone()).or_default().extend(spec.into_map());
-                } else if key == "_vars" {
-                    let vars_map: BTreeMap<String, String> = val.try_into().map_err(serde::de::Error::custom)?;
-                    section_vars.entry(section.clone()).or_default().extend(vars_map);
-                } else {
-                    let raw_cmd: RawCommand = val.try_into().map_err(serde::de::Error::custom)?;
-                    let cmd = Command {
-                        command: raw_cmd.command.unwrap_or_default(),
-                        description: raw_cmd.description,
-                        platform: raw_cmd.platform,
-                        aliases: raw_cmd.aliases,
-                        args: raw_cmd.args,
-                        env: raw_cmd.env.map(|e| e.into_map()).unwrap_or_default(),
-                        env_force: raw_cmd.env_force.map(|e| e.into_map()).unwrap_or_default(),
-                        source_file: None,
-                        source_line: None,
-                    };
-                    config.aliases.entry(section.clone()).or_default().insert(key, cmd);
+        for (key, val) in raw_alias_tables {
+            if key == "_env" {
+                let spec: EnvSpec = val.try_into().map_err(serde::de::Error::custom)?;
+                config
+                    .alias_env
+                    .entry(Config::UNKNOWN_ALIAS_SECTION.to_string())
+                    .or_default()
+                    .extend(spec.into_map());
+            } else if key == "_env_force" {
+                let spec: EnvSpec = val.try_into().map_err(serde::de::Error::custom)?;
+                config
+                    .alias_env_force
+                    .entry(Config::UNKNOWN_ALIAS_SECTION.to_string())
+                    .or_default()
+                    .extend(spec.into_map());
+            } else if key == "_vars" {
+                let vars_map: BTreeMap<String, String> =
+                    val.try_into().map_err(serde::de::Error::custom)?;
+                section_vars
+                    .entry(Config::UNKNOWN_ALIAS_SECTION.to_string())
+                    .or_default()
+                    .extend(vars_map);
+            } else if val.is_table()
+                && val.get("command").and_then(|c| c.as_str()).is_some()
+            {
+                let cmd = parse_command_from_value(val)?;
+                config
+                    .aliases
+                    .entry(Config::UNKNOWN_ALIAS_SECTION.to_string())
+                    .or_default()
+                    .insert(key, cmd);
+            } else if let Some(sub_table) = val.as_table() {
+                let section = key;
+                for (sub_key, sub_val) in sub_table {
+                    if sub_key == "_env" {
+                        let spec: EnvSpec =
+                            sub_val.clone().try_into().map_err(serde::de::Error::custom)?;
+                        config
+                            .alias_env
+                            .entry(section.clone())
+                            .or_default()
+                            .extend(spec.into_map());
+                    } else if sub_key == "_env_force" {
+                        let spec: EnvSpec =
+                            sub_val.clone().try_into().map_err(serde::de::Error::custom)?;
+                        config
+                            .alias_env_force
+                            .entry(section.clone())
+                            .or_default()
+                            .extend(spec.into_map());
+                    } else if sub_key == "_vars" {
+                        let vars_map: BTreeMap<String, String> =
+                            sub_val.clone().try_into().map_err(serde::de::Error::custom)?;
+                        section_vars
+                            .entry(section.clone())
+                            .or_default()
+                            .extend(vars_map);
+                    } else {
+                        let cmd = parse_command_from_value(sub_val.clone())?;
+                        config
+                            .aliases
+                            .entry(section.clone())
+                            .or_default()
+                            .insert(sub_key.clone(), cmd);
+                    }
                 }
             }
         }
@@ -884,6 +947,8 @@ impl Config {
     /// empty/whitespace. Real sections always come from `[aliases.<name>]`
     /// sections at runtime (Recipe Player Principle); nothing is hardcoded.
     pub const FALLBACK_ALIAS_SECTION: &'static str = "general";
+    /// Section name used when command aliases are declared flat under `[alias]` or `[aliases]` without an explicit section.
+    pub const UNKNOWN_ALIAS_SECTION: &'static str = "unknown";
 
     /// Returns the display name for an alias section, falling back to
     /// [`Self::FALLBACK_ALIAS_SECTION`] for empty/whitespace names.
@@ -1695,7 +1760,7 @@ pub fn annotate_sources(config: &mut Config, path: &Path, content: &str) {
                 } else {
                     context = Context::None;
                 }
-            } else if inner == "alias" {
+            } else if inner == "alias" || inner == "aliases" {
                 context = Context::GlobalAlias;
             } else {
                 context = Context::None;
@@ -1714,12 +1779,18 @@ pub fn annotate_sources(config: &mut Config, path: &Path, content: &str) {
                 }
             }
             Context::GlobalAlias => {
-                if let Some(key) = extract_toml_key(trimmed)
-                    && let Some(section) = config.aliases.get_mut("config")
-                    && let Some(cmd) = section.get_mut(&key)
-                {
-                    cmd.source_file = Some(path.to_path_buf());
-                    cmd.source_line = Some(line_num);
+                if let Some(key) = extract_toml_key(trimmed) {
+                    if let Some(section) = config.aliases.get_mut(Config::UNKNOWN_ALIAS_SECTION)
+                        && let Some(cmd) = section.get_mut(&key)
+                    {
+                        cmd.source_file = Some(path.to_path_buf());
+                        cmd.source_line = Some(line_num);
+                    } else if let Some(section) = config.aliases.get_mut("config")
+                        && let Some(cmd) = section.get_mut(&key)
+                    {
+                        cmd.source_file = Some(path.to_path_buf());
+                        cmd.source_line = Some(line_num);
+                    }
                 }
             }
             _ => {}
@@ -2979,6 +3050,26 @@ hello = {
         assert_eq!(cmd.command, "echo 'Hello TOML 1.1!'");
         assert_eq!(cmd.description.as_deref(), Some("Multiline inline table with trailing comma"));
     }
+
+    #[test]
+    fn test_flat_alias_without_section_categorized_as_unknown() {
+        let toml_str = r#"
+[alias]
+example = { command = "echo 'Hello from example'" }
+hi = { command = "echo hi", description = "Say hi" }
+
+[aliases]
+single = { command = "echo single" }
+"#;
+        let config: Config = toml::from_str(toml_str).expect("Should parse flat alias tables without explicit sections");
+        let sec = config.aliases.get("unknown").expect("section 'unknown' must exist");
+        assert_eq!(sec.len(), 3);
+        assert_eq!(sec["example"].command, "echo 'Hello from example'");
+        assert_eq!(sec["hi"].command, "echo hi");
+        assert_eq!(sec["hi"].description.as_deref(), Some("Say hi"));
+        assert_eq!(sec["single"].command, "echo single");
+    }
 }
+
 
 

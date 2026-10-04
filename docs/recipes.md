@@ -255,6 +255,17 @@ description = "Upscale image"
 > [!NOTE]
 > The plural `[aliases]` form is also fully supported and interchangeable with `[alias]`. Both forms coexist seamlessly.
 
+#### Flat Aliases Without Explicit Sections (`[alias]` / `[aliases]`)
+
+When declaring command aliases without grouping them into a custom section (ideal for quick setups or single-alias files), declare them directly under `[alias]` or `[aliases]`. `fa` automatically groups them under the `unknown` section:
+
+```toml
+[alias]
+example = { command = "echo 'Hello from example'", description = "Quick example" }
+hi      = { command = "echo hi" }
+```
+
+
 #### Custom Argument Signatures & Documentation (`args`)
 
 By default, `fa` infers generic `<arg1> <arg2>` placeholders from positional variables (`$1`, `$2`). You can provide human-readable names and descriptions using the structured `args` field.
