@@ -234,6 +234,7 @@ pub fn read_key_from<R: Read>(reader: &mut R) -> io::Result<Key> {
         b'\t' => Ok(Key::Tab), // ASCII 9
         0x7f | 0x08 => Ok(Key::Backspace),
         0x03 => Ok(Key::Esc), // Ctrl+C maps to Esc/Cancel
+        0x13 => Ok(Key::Char('s')), // Ctrl+S maps to 's' (Save)
         0x1b => {
             // Check if another byte follows immediately (e.g. arrow keys)
             if !poll_stdin(60) {
@@ -504,36 +505,34 @@ impl ConfigEditor {
                 write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
             }
             let mut lines = 0;
+            let path_str = self.config_path.display().to_string();
+            let prefix = "  Fast-Alias Configuration  •  ";
+            let min_inner_w = 61;
+            let content_w = prefix.chars().count() + path_str.chars().count() + 2;
+            let inner_w = content_w.max(min_inner_w);
+            let right_pad = " ".repeat(inner_w.saturating_sub(prefix.chars().count() + path_str.chars().count()));
+
             writeln!(
                 output,
-                "{BOLD_CYAN}╭─────────────────────────────────────────────────────────────╮{RESET}"
+                "{BOLD_CYAN}╭{}╮{RESET}",
+                "─".repeat(inner_w)
             )?;
             lines += 1;
             writeln!(
                 output,
-                "{BOLD_CYAN}│{RESET}  {BOLD_WHITE}Fast-Alias Configuration{RESET}  {DIM}•{RESET}  {DIM}{}{RESET}",
-                self.config_path.display()
+                "{BOLD_CYAN}│{RESET}  {BOLD_WHITE}Fast-Alias Configuration{RESET}  {DIM}•{RESET}  {DIM}{path_str}{RESET}{right_pad}{BOLD_CYAN}│{RESET}"
             )?;
             lines += 1;
             writeln!(
                 output,
-                "{BOLD_CYAN}╰─────────────────────────────────────────────────────────────╯{RESET}"
+                "{BOLD_CYAN}╰{}╯{RESET}",
+                "─".repeat(inner_w)
             )?;
             lines += 1;
             writeln!(
                 output,
                 " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Main Menu{RESET}"
             )?;
-            lines += 1;
-
-            // Reserved 2-line slot for status feedback so menu layout height never shifts
-            writeln!(output)?;
-            lines += 1;
-            if let Some(msg) = &self.status_message {
-                writeln!(output, "  {msg}")?;
-            } else {
-                writeln!(output)?;
-            }
             lines += 1;
 
             let categories: [(&str, &[(usize, &str)]); 3] = [
@@ -584,23 +583,34 @@ impl ConfigEditor {
                     lines += 1;
                 }
             }
+
+            // Reserved 2-line slot for status feedback right above the footer shortcuts
+            writeln!(output)?;
+            lines += 1;
+            if let Some(msg) = &self.status_message {
+                writeln!(output, "  {msg}")?;
+            } else {
+                writeln!(output)?;
+            }
+            lines += 1;
+
             if self.pending_behavior.is_some() {
                 writeln!(
                     output,
-                    "\n {DIM}Cycle with {RESET}{BOLD_CYAN}Tab{RESET}{DIM}/{RESET}{BOLD_CYAN}Shift-Tab{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to confirm, {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM} to discard + move, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to discard{RESET}"
+                    " {DIM}Cycle with {RESET}{BOLD_CYAN}Tab{RESET}{DIM}/{RESET}{BOLD_CYAN}Shift-Tab{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to confirm, {RESET}{BOLD_CYAN}s{RESET}{DIM} to save, {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM} to discard + move, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to discard{RESET}"
                 )?;
             } else if selected == 0 {
                 writeln!(
                     output,
-                    "\n {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Tab{RESET}{DIM} to cycle value, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
+                    " {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Tab{RESET}{DIM} to cycle value, {RESET}{BOLD_CYAN}s{RESET}{DIM} to save, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
                 )?;
             } else {
                 writeln!(
                     output,
-                    "\n {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
+                    " {DIM}Navigate with {RESET}{BOLD_CYAN}↑/↓{RESET}{DIM}, {RESET}{BOLD_CYAN}Enter{RESET}{DIM} to select, {RESET}{BOLD_CYAN}s{RESET}{DIM} to save, {RESET}{BOLD_CYAN}Esc{RESET}{DIM} to cancel{RESET}"
                 )?;
             }
-            lines += 2;
+            lines += 1;
 
             last_lines_drawn = lines;
             output.flush()?;
@@ -645,6 +655,20 @@ impl ConfigEditor {
             }
 
             match key {
+                Key::Char('s') | Key::Char('S') => {
+                    if let Some(pending) = self.pending_behavior.take() {
+                        self.packs_behavior = pending;
+                    }
+                    self.save()?;
+                    write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
+                    writeln!(
+                        output,
+                        "{BOLD_GREEN}✔{RESET} Configuration saved to {BOLD_WHITE}{}{RESET}",
+                        self.config_path.display()
+                    )?;
+                    output.flush()?;
+                    return Ok(true);
+                }
                 Key::Up => {
                     if selected == 0 {
                         selected = menu_items.len() - 1;
@@ -1916,6 +1940,101 @@ custom = "!echo hello"
 
         let out_str = String::from_utf8_lossy(&output);
         assert!(out_str.contains("no interactive terminal (TTY) detected"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    fn strip_ansi_codes(s: &str) -> String {
+        let mut result = String::new();
+        let mut in_escape = false;
+        for c in s.chars() {
+            if c == '\x1b' {
+                in_escape = true;
+            } else if in_escape {
+                if c.is_ascii_alphabetic() {
+                    in_escape = false;
+                }
+            } else {
+                result.push(c);
+            }
+        }
+        result
+    }
+
+    #[test]
+    fn test_main_menu_save_shortcut_key_s() {
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-saveshort-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        editor.packs_behavior = "error".to_string();
+        let mut out = Vec::new();
+        // Send 's' key to trigger save immediately
+        let res = editor.run(&mut &b"s"[..], &mut out).unwrap();
+        assert!(res, "Pressing 's' must save and return Ok(true)");
+
+        // Verify the saved file on disk
+        let saved_content = fs::read_to_string(temp_dir.join("config.toml")).unwrap();
+        assert!(saved_content.contains("default_behavior = \"error\""));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_banner_box_borders_match_length_and_close() {
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-bannerbox-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        let mut out = Vec::new();
+        editor.run(&mut &b"\x1b"[..], &mut out).unwrap();
+
+        let rendered = String::from_utf8_lossy(&out);
+        let lines: Vec<&str> = rendered.lines().collect();
+        let top_idx = lines.iter().position(|l| l.contains("╭")).expect("Must have ╭");
+        let mid_idx = lines.iter().position(|l| l.contains("Fast-Alias Configuration")).expect("Must have title line");
+        let bot_idx = lines.iter().position(|l| l.contains("╰")).expect("Must have ╰");
+
+        assert_eq!(mid_idx, top_idx + 1);
+        assert_eq!(bot_idx, top_idx + 2);
+
+        let clean_top = strip_ansi_codes(lines[top_idx]);
+        let clean_mid = strip_ansi_codes(lines[mid_idx]);
+        let clean_bot = strip_ansi_codes(lines[bot_idx]);
+
+        assert!(clean_mid.ends_with('│'), "Middle line must be closed with right border '│', got: {clean_mid}");
+        assert_eq!(clean_top.chars().count(), clean_mid.chars().count(), "Top and middle must have same width");
+        assert_eq!(clean_top.chars().count(), clean_bot.chars().count(), "Top and bottom must have same width");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_status_feedback_is_rendered_below_menu_above_shortcuts() {
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-statpos-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        editor.status_message = Some("MY_TEST_STATUS_FEEDBACK".to_string());
+        let mut out = Vec::new();
+        editor.run(&mut &b"\x1b"[..], &mut out).unwrap();
+
+        let rendered = String::from_utf8_lossy(&out);
+        let cancel_pos = rendered.find("Cancel").expect("Must contain Cancel option");
+        let status_pos = rendered.find("MY_TEST_STATUS_FEEDBACK").expect("Must contain status message");
+        let footer_pos = rendered.find("Navigate with").expect("Must contain navigation hint");
+
+        assert!(
+            status_pos > cancel_pos,
+            "Status message must be positioned BELOW the menu items (after Cancel): status_pos={status_pos}, cancel_pos={cancel_pos}"
+        );
+        assert!(
+            status_pos < footer_pos,
+            "Status message must be positioned ABOVE the shortcuts footer: status_pos={status_pos}, footer_pos={footer_pos}"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
