@@ -10,6 +10,7 @@ mod templating;
 mod update;
 mod template;
 mod schema;
+mod config_editor;
 
 use std::path::Path;
 
@@ -130,6 +131,9 @@ enum Commands {
     NamespaceHelp {
         namespace: String,
     },
+    /// Configure fast-alias settings and aliases interactively.
+    #[command(name = "--config", visible_alias = "-c")]
+    Config,
 }
 
 /// Actions under `fa --recipe`: create, edit, or validate recipe config files.
@@ -203,6 +207,8 @@ const BUILTIN_COMMANDS: &[&str] = &[
     "--version",
     "-v",
     "--namespace-help",
+    "--config",
+    "-c",
 ];
 
 /// Rewrites CLI arguments:
@@ -1148,6 +1154,12 @@ fn run_cli() -> anyhow::Result<()> {
         }
         Commands::NamespaceHelp { namespace } => {
             display_namespace_help(&config, &namespace);
+        }
+        Commands::Config => {
+            let user_dir = Config::get_user_config_dir().ok_or_else(|| {
+                anyhow::anyhow!("Could not determine user configuration directory")
+            })?;
+            config_editor::run_interactive_config(&user_dir)?;
         }
     }
 
@@ -2138,6 +2150,23 @@ down = { command = "docker compose down" }
         assert!(Cli::try_parse_from(["fa", "-a", "cmd"]).is_ok());
         assert!(Cli::try_parse_from(["fa", "--self-update"]).is_ok());
         assert!(Cli::try_parse_from(["fa", "--self-uninstall"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "--config"]).is_ok());
+        assert!(Cli::try_parse_from(["fa", "-c"]).is_ok());
+    }
+
+    #[test]
+    fn test_cli_config_flags() {
+        let cli = Cli::try_parse_from(["fa", "--config"]).expect("fa --config should parse");
+        match cli.command {
+            Some(Commands::Config) => {}
+            _ => panic!("Expected Commands::Config"),
+        }
+
+        let cli = Cli::try_parse_from(["fa", "-c"]).expect("fa -c should parse");
+        match cli.command {
+            Some(Commands::Config) => {}
+            _ => panic!("Expected Commands::Config"),
+        }
     }
 
     #[test]
