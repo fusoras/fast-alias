@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `[alias]` table synonym: support singular `[alias.<section>]` and `[alias.<section>.<command>]` interchangeably with plural `[aliases]`, allowing cleaner single-command definitions while merging coexisting tables seamlessly; full editor schema and source tracking support.
+
 - Alias environment variable injection (`env`, `env_force`, `_env`, `_env_force`): declare custom environment variables scoped to aliases or namespaces directly in TOML. Supports fallback mode (`env`, `_env` applied only if unset in system) and forced mode (`env_force`, `_env_force` overriding terminal environment). Values dynamically expand tildes (`~`), existing variables (`$VAR`, `${VAR}`), and fallback syntax (`${VAR:-default}`).
 - Bash-style export syntax for alias environments: supply environment variables as strings using standard Bash syntax (`env_force = 'export MODEL="qwen.gguf" && export THREADS="8"'`), with automatic parsing of assignments separated by `&&`, `;`, newlines, or spaces.
 - Static template variables (`_vars` and `[vars]`): declare reusable template placeholders in section tables (`_vars`) or at root (`[vars]`) substituted automatically via `{{KEY}}` across `command`, `description`, `env`, and `env_force`, with recursive/transitive resolution.
