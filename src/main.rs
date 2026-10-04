@@ -42,7 +42,7 @@ enum Commands {
     #[command(name = "--new", visible_alias = "-n")]
     New {
         /// Recipe name or alias (e.g. my-recipe)
-        recipe: String,
+        recipe: Option<String>,
         /// Project directory name (or pack/component name for pack recipes)
         name: Option<String>,
         /// Toolchain variant (e.g. pnpm, bun, npm)
@@ -371,6 +371,94 @@ pub(crate) fn recipe_matches_search(
     haystack.contains(&q)
 }
 
+/// Interactively prompts the user to select a recipe from a numbered list.
+pub(crate) fn pick_recipe_from_list<R: std::io::BufRead, W: std::io::Write>(
+    recipes: &[(&str, &crate::config::Recipe)],
+    input: &mut R,
+    output: &mut W,
+) -> anyhow::Result<String> {
+    if recipes.is_empty() {
+        anyhow::bail!("No scaffold recipes available");
+    }
+
+    writeln!(output, "{BOLD_CYAN}Available recipes:{RESET}")?;
+    for (i, (key, recipe)) in recipes.iter().enumerate() {
+        let desc = if recipe.description.is_empty() {
+            ""
+        } else {
+            &recipe.description
+        };
+        if desc.is_empty() {
+            writeln!(output, "  {WHITE}[{}]{RESET} {key}", i + 1)?;
+        } else {
+            writeln!(
+                output,
+                "  {WHITE}[{}]{RESET} {key} {DIM}-{RESET} {desc}",
+                i + 1
+            )?;
+        }
+    }
+    writeln!(output)?;
+
+    loop {
+        write!(
+            output,
+            "{BOLD_CYAN}?{RESET} Select a recipe [1-{}, q to quit]: ",
+            recipes.len()
+        )?;
+        output.flush()?;
+
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            anyhow::bail!("No recipe selected (end of input)");
+        }
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("quit") {
+            anyhow::bail!("Operation cancelled by user");
+        }
+        if let Ok(choice) = trimmed.parse::<usize>()
+            && (1..=recipes.len()).contains(&choice)
+        {
+            return Ok(recipes[choice - 1].0.to_string());
+        }
+        writeln!(
+            output,
+            "{BOLD_YELLOW}Invalid selection '{trimmed}'. Please enter a number between 1 and {}.{RESET}",
+            recipes.len()
+        )?;
+    }
+}
+
+/// Prompts the user to enter a project directory name.
+pub(crate) fn prompt_project_name<R: std::io::BufRead, W: std::io::Write>(
+    input: &mut R,
+    output: &mut W,
+) -> anyhow::Result<String> {
+    loop {
+        write!(
+            output,
+            "{BOLD_CYAN}?{RESET} Project directory name (or 'q' to quit): "
+        )?;
+        output.flush()?;
+
+        let mut line = String::new();
+        if input.read_line(&mut line)? == 0 {
+            anyhow::bail!("No project name entered (end of input)");
+        }
+        let trimmed = line.trim();
+        if trimmed.eq_ignore_ascii_case("q") || trimmed.eq_ignore_ascii_case("quit") {
+            anyhow::bail!("Operation cancelled by user");
+        }
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+        writeln!(
+            output,
+            "{BOLD_YELLOW}Project name cannot be empty.{RESET}"
+        )?;
+    }
+}
+
 /// Asks the user once (per config path) whether they trust the shell commands
 /// defined in their personal config. The answer is persisted in state.toml, so
 /// subsequent runs never prompt again for the same path ("one covers all": the
@@ -528,12 +616,21 @@ fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
             if err.kind() == clap::error::ErrorKind::InvalidSubcommand && args.len() >= 2 {
+                if (args[1] == "--recipe" || args[1] == "-r" || args[1] == "recipe")
+                    && args.len() >= 3
+                    && let Some(err_msg) = recipe_as_action_error(&args[2], &config)
+                {
+                    eprintln!("{err_msg}");
+                    std::process::exit(2);
+                }
                 let unknown = &args[1];
-                let hint = suggest_unrecognized_subcommand(unknown, &config)
-                    .map(|s| format!("\n\n{BOLD_CYAN}Did you mean?{RESET}\n    {WHITE}{s}{RESET}"))
-                    .unwrap_or_default();
-                eprintln!("error: unrecognized subcommand '{unknown}'{hint}\n\nUsage: fa [COMMAND]\n\nFor more information, try '--help'.");
-                std::process::exit(2);
+                if !BUILTIN_COMMANDS.contains(&unknown.as_str()) {
+                    let hint = suggest_unrecognized_subcommand(unknown, &config)
+                        .map(|s| format!("\n\n{BOLD_CYAN}Did you mean?{RESET}\n    {WHITE}{s}{RESET}"))
+                        .unwrap_or_default();
+                    eprintln!("error: unrecognized subcommand '{unknown}'{hint}\n\nUsage: fa [COMMAND]\n\nFor more information, try '--help'.");
+                    std::process::exit(2);
+                }
             }
             err.exit();
         }
@@ -572,9 +669,56 @@ fn main() -> anyhow::Result<()> {
             dry_run,
             no_install,
         } => {
+            let (recipe_str, name_str) = match recipe {
+                Some(r) => (r, name),
+                None => {
+                    use std::io::IsTerminal;
+                    if !std::io::stdin().is_terminal() {
+                        anyhow::bail!(
+                            "Missing required argument <RECIPE>.\nRun `fa -n <recipe> [name]` or run in an interactive terminal to select from a list."
+                        );
+                    }
+                    let mut scaffold_recipes: Vec<(&str, &crate::config::Recipe)> = config
+                        .recipes
+                        .iter()
+                        .filter(|(_, r)| is_scaffold_recipe(r))
+                        .map(|(k, r)| (k.as_str(), r))
+                        .collect();
+                    scaffold_recipes.sort_by_key(|(k, _)| *k);
+
+                    if scaffold_recipes.is_empty() {
+                        anyhow::bail!("No scaffold recipes found in configuration.");
+                    }
+
+                    let stdin = std::io::stdin();
+                    let stdout = std::io::stdout();
+                    let mut stdin_lock = stdin.lock();
+                    let mut stdout_lock = stdout.lock();
+
+                    let chosen_recipe = pick_recipe_from_list(
+                        &scaffold_recipes,
+                        &mut stdin_lock,
+                        &mut stdout_lock,
+                    )?;
+
+                    let recipe_def = config.recipes.get(chosen_recipe.as_str()).ok_or_else(|| {
+                        anyhow::anyhow!("Recipe '{chosen_recipe}' not found in configuration")
+                    })?;
+
+                    let chosen_name = if !recipe_def.is_pack_recipe() && name.is_none() {
+                        let entered = prompt_project_name(&mut stdin_lock, &mut stdout_lock)?;
+                        Some(entered)
+                    } else {
+                        name
+                    };
+
+                    (chosen_recipe, chosen_name)
+                }
+            };
+
             let key = config
-                .resolve_recipe_key(&recipe)
-                .ok_or_else(|| anyhow::anyhow!("{}", unknown_recipe_error(&recipe, &config)))?;
+                .resolve_recipe_key(&recipe_str)
+                .ok_or_else(|| anyhow::anyhow!("{}", unknown_recipe_error(&recipe_str, &config)))?;
             if !dry_run {
                 ensure_trusted()?;
             }
@@ -583,7 +727,7 @@ fn main() -> anyhow::Result<()> {
             })?;
 
             let (project_name, pack_opt, comp_opt) = if recipe_def.is_pack_recipe() {
-                match name {
+                match name_str {
                     None => {
                         let pack_env = std::env::var("FA_PACK").ok();
                         let comp_env = std::env::var("FA_COMPONENT").ok();
@@ -638,7 +782,7 @@ fn main() -> anyhow::Result<()> {
                     }
                 }
             } else {
-                let Some(proj) = name else {
+                let Some(proj) = name_str else {
                     anyhow::bail!("Missing required argument <NAME>. Run `fa new {key} <project-name>`");
                 };
                 (proj, std::env::var("FA_PACK").ok(), std::env::var("FA_COMPONENT").ok())
@@ -1078,6 +1222,13 @@ pub(crate) fn suggest_unrecognized_subcommand(unknown: &str, config: &Config) ->
     crate::recipe::suggest_closest(unknown, &candidates)
 }
 
+pub(crate) fn recipe_as_action_error(recipe_arg: &str, config: &Config) -> Option<String> {
+    let key = config.resolve_recipe_key(recipe_arg)?;
+    Some(format!(
+        "error: '{recipe_arg}' is a recipe, not an action for 'fa --recipe'.\n\n{BOLD_CYAN}Did you mean?{RESET}\n    {WHITE}fa -n {key}{RESET}   (scaffold a new project with this recipe)\n    {WHITE}fa -re {key}{RESET}  (edit the recipe file in $EDITOR)\n    {WHITE}fa -sh {key}{RESET}  (show recipe details)\n\nFor recipe actions, run 'fa --recipe --help'."
+    ))
+}
+
 pub fn format_source_location(file: Option<&Path>, line: Option<usize>) -> Option<String> {
     let path = file?;
     let path_str = path.to_string_lossy();
@@ -1364,7 +1515,7 @@ mod tests {
         let cli = Cli::try_parse_from(["fa", "-n", "recipe", "myapp"]).unwrap();
         match cli.command {
             Some(Commands::New { recipe, name, .. }) => {
-                assert_eq!(recipe, "recipe");
+                assert_eq!(recipe, Some("recipe".to_string()));
                 assert_eq!(name, Some("myapp".to_string()));
             }
             _ => panic!("Expected Commands::New"),
@@ -1801,7 +1952,7 @@ down = { command = "docker compose down" }
         let cli = Cli::try_parse_from(["fa", "--new", "wc-lib"]).expect("fa --new wc-lib should parse without name");
         match cli.command {
             Some(Commands::New { recipe, name, .. }) => {
-                assert_eq!(recipe, "wc-lib");
+                assert_eq!(recipe, Some("wc-lib".to_string()));
                 assert_eq!(name, None);
             }
             _ => panic!("Expected Commands::New"),
@@ -1810,8 +1961,29 @@ down = { command = "docker compose down" }
         let cli = Cli::try_parse_from(["fa", "-n", "wc-lib", "wc-toggle-theme"]).expect("fa -n wc-lib wc-toggle-theme should parse");
         match cli.command {
             Some(Commands::New { recipe, name, .. }) => {
-                assert_eq!(recipe, "wc-lib");
+                assert_eq!(recipe, Some("wc-lib".to_string()));
                 assert_eq!(name, Some("wc-toggle-theme".to_string()));
+            }
+            _ => panic!("Expected Commands::New"),
+        }
+    }
+
+    #[test]
+    fn cli_new_bare_should_parse_optional_recipe() {
+        let cli = Cli::try_parse_from(["fa", "--new"]).expect("fa --new should parse bare");
+        match cli.command {
+            Some(Commands::New { recipe, name, .. }) => {
+                assert_eq!(recipe, None);
+                assert_eq!(name, None);
+            }
+            _ => panic!("Expected Commands::New"),
+        }
+
+        let cli = Cli::try_parse_from(["fa", "-n"]).expect("fa -n should parse bare");
+        match cli.command {
+            Some(Commands::New { recipe, name, .. }) => {
+                assert_eq!(recipe, None);
+                assert_eq!(name, None);
             }
             _ => panic!("Expected Commands::New"),
         }
@@ -2137,5 +2309,70 @@ description = "Next.js TS"
             recipe_matches_search("web", &recipe, "sqlite"),
             "expected recipe search to match keyword in recipe.description"
         );
+    }
+
+    #[test]
+    fn test_pick_recipe_from_list_selection() {
+        let mut r1 = crate::config::Recipe::default();
+        r1.description = "First recipe description".to_string();
+        let mut r2 = crate::config::Recipe::default();
+        r2.description = "Second recipe description".to_string();
+
+        let recipes = vec![("recipe-one", &r1), ("recipe-two", &r2)];
+
+        let mut input = std::io::Cursor::new(b"2\n");
+        let mut output = Vec::new();
+        let chosen = pick_recipe_from_list(&recipes, &mut input, &mut output).unwrap();
+        assert_eq!(chosen, "recipe-two");
+    }
+
+    #[test]
+    fn test_pick_recipe_from_list_cancel() {
+        let r1 = crate::config::Recipe::default();
+        let recipes = vec![("recipe-one", &r1)];
+
+        let mut input = std::io::Cursor::new(b"q\n");
+        let mut output = Vec::new();
+        let res = pick_recipe_from_list(&recipes, &mut input, &mut output);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_pick_recipe_from_list_empty() {
+        let recipes: Vec<(&str, &crate::config::Recipe)> = Vec::new();
+        let mut input = std::io::Cursor::new(b"1\n");
+        let mut output = Vec::new();
+        let res = pick_recipe_from_list(&recipes, &mut input, &mut output);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_prompt_project_name() {
+        let mut input = std::io::Cursor::new(b"my-new-app\n");
+        let mut output = Vec::new();
+        let name = prompt_project_name(&mut input, &mut output).unwrap();
+        assert_eq!(name, "my-new-app");
+
+        let mut input_cancel = std::io::Cursor::new(b"q\n");
+        let mut output_cancel = Vec::new();
+        assert!(prompt_project_name(&mut input_cancel, &mut output_cancel).is_err());
+    }
+
+    #[test]
+    fn test_recipe_as_action_error() {
+        let mut config = Config::default();
+        let mut recipe = crate::config::Recipe::default();
+        recipe.name = "Web Components UI".to_string();
+        config.recipes.insert("wc-ui".to_string(), recipe);
+
+        let err = recipe_as_action_error("wc-ui", &config);
+        assert!(err.is_some(), "expected error for recipe name used as action");
+        let msg = err.unwrap();
+        assert!(msg.contains("'wc-ui' is a recipe, not an action"));
+        assert!(msg.contains("fa -n wc-ui"));
+        assert!(msg.contains("fa -re wc-ui"));
+        assert!(msg.contains("fa -sh wc-ui"));
+
+        assert_eq!(recipe_as_action_error("nonexistent", &config), None);
     }
 }
