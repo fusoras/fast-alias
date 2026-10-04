@@ -65,7 +65,7 @@ pub fn format_recipe_packs_and_components(recipe: &Recipe, recipe_name: &str) ->
         out.push_str(&format!("{}Default pack:{} {}\n\n", DIM, RESET, dp));
     }
 
-    out.push_str(&format!("Run {}fa new {} <pack>{} or {}fa new {} <component>{} to install.\n", BOLD_CYAN, recipe_name, RESET, BOLD_CYAN, recipe_name, RESET));
+    out.push_str(&format!("Run {}fa --new {} <pack>{} or {}fa --new {} <component>{} to install.\n", BOLD_CYAN, recipe_name, RESET, BOLD_CYAN, recipe_name, RESET));
     out
 }
 
@@ -197,7 +197,7 @@ pub struct NewOptions {
     pub pack: Option<String>,
 }
 
-/// Result of a `fa new` run: whether the project should be registered in
+/// Result of a `fa --new` run: whether the project should be registered in
 /// state.toml (and with which `installed` flag) plus the actual outcome.
 #[derive(Debug, Clone)]
 pub struct NewOutcome {
@@ -303,7 +303,7 @@ pub fn preflight(command: &str) -> anyhow::Result<()> {
     anyhow::bail!("Missing system application(s): {}", missing.join(", "))
 }
 
-/// Runs the full `fa new` flow: create → files → steps.
+/// Runs the full `fa --new` flow: create → files → steps.
 pub fn run_new(config: &Config, opts: &NewOptions) -> NewResult {
     let recipe = match config.recipes.get(&opts.recipe_key) {
         Some(recipe) => recipe,
@@ -975,7 +975,7 @@ fn platform_matches(label: &str) -> anyhow::Result<bool> {
     })
 }
 
-/// Formats a single-line list entry for `fa list` / `fa search`.
+/// Formats a single-line list entry for `fa --list` / `fa --search`.
 /// Name (bold) followed by a dimmed description to keep the line readable.
 pub fn format_list_line(recipe_key: &str, recipe: &Recipe) -> String {
     let mut name = recipe_key.to_string();
@@ -1085,14 +1085,14 @@ pub fn format_command_line(command_key: &str, command: &crate::config::Command) 
     format!("{BOLD_BLUE}{name}{RESET}{sig_str} · {DIM_GRAY}{description}{RESET}")
 }
 
-/// Formats an alias section header for `fa list` (`<section>:`).
+/// Formats an alias section header for `fa --list` (`<section>:`).
 /// The name comes from the TOML `[aliases.<section>]` section at runtime;
 /// an empty section name falls back to [`Config::FALLBACK_ALIAS_SECTION`].
 pub fn format_section_header(section: &str) -> String {
     format!("  {}:", Config::display_section(section))
 }
 
-/// Returns `fa list` alias lines grouped by section: one `<section>:` header
+/// Returns `fa --list` alias lines grouped by section: one `<section>:` header
 /// per non-empty `[aliases.<section>]` section, followed by its single-line
 /// command entries, with a blank line between groups for readability.
 /// Iteration follows `BTreeMap` order, so output is deterministic. Recipes are
@@ -2628,7 +2628,7 @@ free = { command = "free -h", description = "Free memory" }
         assert!(out.contains("Available packs for 'wc-lib'"));
         assert!(out.contains("Default pack:"));
         assert!(out.contains("toggle-theme"));
-        assert!(out.contains("fa new wc-lib <pack>"));
+        assert!(out.contains("fa --new wc-lib <pack>"));
     }
 
     #[test]

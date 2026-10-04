@@ -132,7 +132,7 @@ enum Commands {
     },
 }
 
-/// Actions under `fa recipe`: create, edit, or validate recipe config files.
+/// Actions under `fa --recipe`: create, edit, or validate recipe config files.
 #[derive(Subcommand)]
 enum RecipeAction {
     /// Create a new recipe file under recipes.d/ and open it in $EDITOR.
@@ -162,7 +162,7 @@ enum RecipeAction {
     },
 }
 
-/// Actions under `fa template`: add files or folders into recipe templates.
+/// Actions under `fa --template`: add files or folders into recipe templates.
 #[derive(Subcommand)]
 enum TemplateAction {
     /// Add files or folders into a recipe's template directory.
@@ -682,7 +682,7 @@ fn run_cli() -> anyhow::Result<()> {
                 format!("v{latest}")
             };
             println!("{current_tag} -> {BOLD_YELLOW}Update: {latest_tag}{RESET}");
-            println!("    Run 'fa self-update' to update.");
+            println!("    Run 'fa --self-update' to update.");
         } else {
             println!("{current_tag}");
         }
@@ -778,13 +778,13 @@ fn run_cli() -> anyhow::Result<()> {
                                         (".".to_string(), Some(dp.clone()), None)
                                     } else {
                                         anyhow::bail!(
-                                            "Recipe '{key}' has no default_pack configured.\nRun `fa new {key} <pack>` or specify default_pack in the recipe."
+                                            "Recipe '{key}' has no default_pack configured.\nRun `fa --new {key} <pack>` or specify default_pack in the recipe."
                                         );
                                     }
                                 }
                                 "error" => {
                                     anyhow::bail!(
-                                        "No pack or component specified for recipe '{key}'.\nRun `fa new {key} <pack>` or `fa new {key} <component>`."
+                                        "No pack or component specified for recipe '{key}'.\nRun `fa --new {key} <pack>` or `fa --new {key} <component>`."
                                     );
                                 }
                                 _ => {
@@ -820,7 +820,7 @@ fn run_cli() -> anyhow::Result<()> {
                 }
             } else {
                 let Some(proj) = name_str else {
-                    anyhow::bail!("Missing required argument <NAME>. Run `fa new {key} <project-name>`");
+                    anyhow::bail!("Missing required argument <NAME>. Run `fa --new {key} <project-name>`");
                 };
                 (proj, std::env::var("FA_PACK").ok(), std::env::var("FA_COMPONENT").ok())
             };
@@ -1018,7 +1018,7 @@ fn run_cli() -> anyhow::Result<()> {
                 let hint = crate::recipe::suggest_closest(&recipe, &candidates)
                     .map(|s| format!("\n\nDid you mean?\n    {s}"))
                     .unwrap_or_default();
-                anyhow::bail!("Unknown recipe or command '{recipe}'. Run `fa list` to see available options.{hint}");
+                anyhow::bail!("Unknown recipe or command '{recipe}'. Run `fa --list` to see available options.{hint}");
             }
         }
         Commands::Alias { mut name, mut args } => {
@@ -1250,7 +1250,7 @@ pub(crate) fn unknown_alias_error(name: &str, config: &Config) -> String {
         let hint = crate::recipe::suggest_closest(name, &all_aliases)
             .map(|s| format!("\n\nDid you mean?\n    {s}"))
             .unwrap_or_default();
-        format!("Unknown command '{name}'. Run `fa list` to see available aliases.{hint}")
+        format!("Unknown command '{name}'. Run `fa --list` to see available aliases.{hint}")
     }
 }
 
@@ -1259,7 +1259,7 @@ pub(crate) fn unknown_recipe_error(recipe: &str, config: &Config) -> String {
     let hint = crate::recipe::suggest_closest(recipe, &candidates)
         .map(|s| format!("\n\nDid you mean?\n    {s}"))
         .unwrap_or_default();
-    format!("Unknown recipe '{recipe}'. Run `fa list` to see available recipes.{hint}")
+    format!("Unknown recipe '{recipe}'. Run `fa --list` to see available recipes.{hint}")
 }
 
 pub(crate) fn suggest_unrecognized_subcommand(unknown: &str, config: &Config) -> Option<String> {
@@ -1562,7 +1562,7 @@ fn format_help_with_inline_aliases(input: &str) -> String {
 }
 
 /// Renders help text for a clap `DisplayHelp` error, preserving subcommand context
-/// (e.g. `fa help recipe`, `fa recipe --help`) and formatting visible aliases inline.
+/// (e.g. `fa --help recipe`, `fa --recipe --help`) and formatting visible aliases inline.
 fn render_cli_help(err: &clap::Error) -> String {
     let help_str = err.render().to_string();
     format_help_with_inline_aliases(&help_str)
@@ -2214,6 +2214,7 @@ down = { command = "docker compose down" }
         assert!(err.contains("Unknown command 'stts'"));
         assert!(err.contains("Did you mean?"), "Error must contain 'Did you mean?': got {err}");
         assert!(err.contains("status"), "Error must suggest 'status': got {err}");
+        assert!(err.contains("fa --list"), "Error must recommend 'fa --list': got {err}");
     }
 
     #[test]
@@ -2253,6 +2254,7 @@ description = "Next.js TS"
         assert!(err.contains("Unknown recipe 'nxt-ts'"));
         assert!(err.contains("Did you mean?"), "Error must contain 'Did you mean?': got {err}");
         assert!(err.contains("next-ts"), "Error must suggest 'next-ts': got {err}");
+        assert!(err.contains("fa --list"), "Error must recommend 'fa --list': got {err}");
     }
 
     #[test]

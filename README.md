@@ -75,12 +75,12 @@ fa -a hello                   # runs: echo 'Hello from fast-alias!'
 
 ## Declaring a command alias
 
-Beyond scaffolding, `fa` is a section-grouped alternative to Bash aliases. Commands live in **`[aliases]` sections** (e.g. `git`, `system`, or namespaced `[aliases.":skills"]`), completely independent from scaffold recipes. Run them from anywhere with `fa alias <alias>` or direct syntax `fa <namespace> <command>`.
+Beyond scaffolding, `fa` is a section-grouped alternative to Bash aliases. Commands live in **`[aliases]` sections** (e.g. `git`, `system`, or namespaced `[aliases.":skills"]`), completely independent from scaffold recipes. Run them from anywhere with `fa --alias <alias>` (or `fa -a <alias>`) or direct syntax `fa <namespace> <command>`.
 
 Each alias supports:
 
 - **`command`** (required): shell command to run.
-- **`description`** (optional): shown in `fa list`.
+- **`description`** (optional): shown in `fa --list`.
 - **`aliases`** (optional): short names to invoke it with.
 - **`args`** (optional): explicit argument signature (e.g. `args = ["<input>", "[output]"]`) or detailed argument objects with descriptions.
 - **`env` / `env_force`** (optional): fallback or forced environment variables.

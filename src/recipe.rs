@@ -20,7 +20,7 @@ pub fn validate_name(name: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Builds the TOML scaffold written by `fa recipe new <name> [type]`:
+/// Builds the TOML scaffold written by `fa --recipe new <name> [type]`:
 /// - `None` (or "minimal" / "clean"): Clean, minimal scaffold with only essential fields.
 /// - `Some("standard" | "full")`: Guided scaffold with commented-out examples and options.
 /// - `Some("pack" | "packs")`: Component/pack library preset scaffold.
@@ -41,8 +41,8 @@ example = {{ command = "echo 'Hello from {name}'", description = "Example alias"
         Some("pack" | "packs") => format!(
             r##"#:schema {schema_url}
 # fa pack library recipe: {name}
-# Created by `fa recipe new {name} pack`.
-# Run: fa new {name} [component|pack]
+# Created by `fa --recipe new {name} pack`.
+# Run: fa --new {name} [component|pack]
 
 [recipes."{name}"]
 name = "{name}"
@@ -67,7 +67,7 @@ description = "Install component files into src/components/"
         Some("standard" | "full") => format!(
             r##"#:schema {schema_url}
 # fa recipe: {name}
-# Created by `fa recipe new`. Edit it, then run: fa new {name} <project-dir>
+# Created by `fa --recipe new`. Edit it, then run: fa --new {name} <project-dir>
 
 [recipes."{name}"]
 name = "{name}"
@@ -78,7 +78,7 @@ description = "TODO: describe the {name} recipe"
 # final_message = "Run 'cd <project-name>' to get started"
 # pin_versions = false
 
-# Example command alias (run with: fa alias hello):
+# Example command alias (run with: fa --alias hello or fa hello):
 # [aliases."{name}"]
 # hello = {{ command = "echo hi", description = "Example alias" }}
 
@@ -107,7 +107,7 @@ description = "Setup step"
     }
 }
 
-/// Comment-only scratch scaffold for `fa recipe new` (no name). fa never
+/// Comment-only scratch scaffold for `fa --recipe new` (no name). fa never
 /// renames this file — the user promotes it manually to `<recipe-name>.toml`.
 pub fn scratch_toml() -> String {
     format!(
@@ -220,7 +220,7 @@ pub fn recipe_new(
     Ok(target)
 }
 
-/// Resolves `fa recipe edit <name>` to an existing config file path:
+/// Resolves `fa --recipe edit <name>` to an existing config file path:
 /// 1. `recipes.d/<name>.toml` when that file exists;
 /// 2. otherwise a recipe-key lookup across all config files (last match
 ///    wins, mirroring `Config::load` merge order);
@@ -307,7 +307,7 @@ pub fn recipe_rm(config_dir: &Path, name: &str) -> anyhow::Result<PathBuf> {
     }
 }
 
-/// Recipe key + defining file pairs for `fa recipe edit` without a name.
+/// Recipe key + defining file pairs for `fa --recipe edit` without a name.
 /// Sorted by key; later files override earlier ones (mirrors `Config::load`).
 /// Unparseable files are skipped so listing always succeeds.
 pub fn recipe_list(config_dir: &Path) -> Vec<(String, PathBuf)> {

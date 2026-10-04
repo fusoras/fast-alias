@@ -26,9 +26,9 @@ ac = "!git add -A && git commit -m"
 
 Invoking `fa rn my-app` expands to `fa --recipe new my-app`. Invoking `fa ac "feat: init"` executes the shell command with appended arguments.
 
-## Running `fa new` Without Arguments (Global Pack Configuration)
+## Running `fa --new` Without Arguments (Global Pack Configuration)
 
-You can configure what happens when you run `fa new <recipe>` without specifying a pack or component in `~/.config/fa/config.toml`:
+You can configure what happens when you run `fa --new <recipe>` without specifying a pack or component in `~/.config/fa/config.toml`:
 
 ```toml
 # ~/.config/fa/config.toml
@@ -38,9 +38,9 @@ default_behavior = "list"
 ```
 
 1. **`default_behavior = "list"` (Default mode)**:
-   Running `fa new wc-lib` displays a formatted list of all available packs in `packs_dir` and components in `templates_dir`:
+   Running `fa --new wc-lib` displays a formatted list of all available packs in `packs_dir` and components in `templates_dir`:
    ```bash
-   fa new wc-lib
+   fa --new wc-lib
    ```
    *Note: If a recipe specifies `default_pack` while `default_behavior` is set to `list` or `error`, `fa` reports a validation error prompting you to set `default_behavior = "default"` in `~/.config/fa/config.toml`.*
 

@@ -17,7 +17,7 @@ name = "Example"
 description = "Example recipe — replace it with your own"
 language = "shell"
 
-# General-purpose aliases, grouped by section. Run them with `fa alias <name>`.
+# General-purpose aliases, grouped by section. Run them with `fa --alias <name>` or `fa <name>`.
 [aliases.demo]
 hello = { command = "echo 'Hello from fa!'", description = "Example alias" }
 "##;
@@ -249,7 +249,7 @@ fn default_true() -> bool {
     true
 }
 
-/// Executable command declared in the alias catalog, invoked via `fa alias <name>`.
+/// Executable command declared in the alias catalog, invoked via `fa --alias <name>` or `fa <name>`.
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct Command {
     pub command: String,
@@ -321,7 +321,7 @@ pub struct Recipe {
     pub variables: BTreeMap<String, Variable>,
     #[serde(default)]
     pub steps: Vec<Step>,
-    /// Optional message printed after a successful `fa new`, reminding the
+    /// Optional message printed after a successful `fa --new`, reminding the
     /// user of manual follow-ups (e.g. "edit 'src/config.ts'").
     #[serde(default)]
     pub final_message: Option<String>,
@@ -333,7 +333,7 @@ pub struct Recipe {
     /// Overrides the default templates/ directory for this recipe's create steps.
     #[serde(default)]
     pub templates_dir: Option<String>,
-    /// Default pack name used when `fa new <recipe>` is called without
+    /// Default pack name used when `fa --new <recipe>` is called without
     /// specifying a component or pack.
     #[serde(default, alias = "default")]
     pub default_pack: Option<String>,
@@ -352,7 +352,7 @@ fn default_packs_behavior() -> String {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PacksSettings {
-    /// Behavior when running `fa new <recipe>` without specifying pack or component.
+    /// Behavior when running `fa --new <recipe>` without specifying pack or component.
     /// Values: "list" (default) | "default" (installs recipe default_pack)
     #[serde(default = "default_packs_behavior")]
     pub default_behavior: String,

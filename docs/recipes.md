@@ -36,7 +36,7 @@ description = "Initialize git repository"
 
 Run it immediately with:
 ```bash
-fa new my-stack my-project
+fa --new my-stack my-project
 ```
 
 > [!TIP]
@@ -173,7 +173,7 @@ Each key is the destination path (templatable with `{{var}}`). Value is one of:
 
 ## Variables
 
-Each entry prompts once during `fa new` (`prompt` label, `default` on empty input). All validation keys are optional — a plain `prompt` keeps the legacy free-string behavior with zero changes:
+Each entry prompts once during `fa --new` (`prompt` label, `default` on empty input). All validation keys are optional — a plain `prompt` keeps the legacy free-string behavior with zero changes:
 
 ```toml
 [recipes.demo.variables]
@@ -186,7 +186,7 @@ slug = { prompt = "Slug", type = "string", pattern = "^[a-z0-9-]+$", required = 
 - **`pattern`**: regex the value must match (use `^…$` to anchor; string only).
 - **`required`**: `true` rejects empty input.
 - Unknown keys, unknown types, empty `choices`, `pattern` on non-string types and invalid regexes fail at config load naming recipe + variable.
-- Interactive `fa new` re-prompts (max 3 retries); non-interactive mode (`FA_VAR_<NAME>` env override or default) fails fast instead of hanging.
+- Interactive `fa --new` re-prompts (max 3 retries); non-interactive mode (`FA_VAR_<NAME>` env override or default) fails fast instead of hanging.
 
 ## Step Execution (`steps`)
 
@@ -214,11 +214,11 @@ pin_versions = true    # strip ^ and ~ → exact versions
 
 ## Alias Governance
 
-Recipes may declare short aliases via the `aliases` array. Users can invoke `fa new <alias>` interchangeably with the canonical recipe name. Aliases must be explicitly defined in the recipe — never auto-generated.
+Recipes may declare short aliases via the `aliases` array. Users can invoke `fa --new <alias>` interchangeably with the canonical recipe name. Aliases must be explicitly defined in the recipe — never auto-generated.
 
 ## General-Purpose Aliases (`[aliases]`)
 
-Beyond scaffolding, `fa` acts as a section-grouped alternative to Bash aliases. Commands live in top-level `[aliases]` sections — one per section — and run with `fa alias <name>`:
+Beyond scaffolding, `fa` acts as a section-grouped alternative to Bash aliases. Commands live in top-level `[aliases]` sections — one per section — and run with `fa --alias <name>` (or `fa <name>`):
 
 ```toml
 [aliases.git]                                     # section
@@ -231,15 +231,15 @@ free = { command = "free -h", description = "Free memory" }
 du   = { command = "du -sh */", description = "Size per folder" }
 ```
 
-- **Section**: the section name (`git`, `sistema`). `fa list` and `fa search` group aliases by section.
+- **Section**: the section name (`git`, `sistema`). `fa --list` and `fa --search` group aliases by section.
 - **Command**: shell command executed via `sh -c`. Supports positional parameters (`$1`, `$2`, `${1}`, `{{1}}`, `{{2}}`, `$@`, `$*`) and template variables (`{{var}}`). All substituted values are shell-quoted (CWE-78 safe).
 - **Arguments**:
   - Positional variables (`$1`, `{{1}}`, etc.) are replaced with corresponding CLI argument index.
-  - If no positional placeholders are present, arguments are automatically appended shell-quoted at the end as passthrough (e.g. `fa alias rm a.txt b.txt` → `git rm 'a.txt' 'b.txt'`).
+  - If no positional placeholders are present, arguments are automatically appended shell-quoted at the end as passthrough (e.g. `fa --alias rm a.txt b.txt` → `git rm 'a.txt' 'b.txt'`).
   - Explicit argument signatures and documentation can be declared using `args` (see below).
-- **Aliases**: the `aliases` array declares alternative names (`fa alias co` or `fa co` also works).
+- **Aliases**: the `aliases` array declares alternative names (`fa --alias co` or `fa co` also works).
 - **Platform** (optional): restrict to `debian`/`termux`.
-- **Dry-run**: `fa alias <name> [args] --dry-run` prints the resolved command without executing it.
+- **Dry-run**: `fa --alias <name> [args] --dry-run` prints the resolved command without executing it.
 - **Modularity**: sections can live in separate files, e.g. `recipes.d/git.toml` containing only `[aliases.git]`.
 
 #### Alias Table Naming (`[alias]`)

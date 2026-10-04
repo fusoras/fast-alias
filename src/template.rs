@@ -168,7 +168,7 @@ pub fn add_to_template(
     Ok(summary)
 }
 
-/// CLI entrypoint for `fa template add <recipe> <paths...> [-f|--force]`.
+/// CLI entrypoint for `fa --template add <recipe> <paths...> [-f|--force]`.
 pub fn run_template_add(
     recipe_name: &str,
     paths: &[PathBuf],

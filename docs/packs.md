@@ -13,7 +13,7 @@ The fastest and most minimalist way to use packs without creating extra director
 Scaffold a new recipe file with:
 
 ```bash
-fa recipe new wc-lib
+fa --recipe new wc-lib
 ```
 
 This creates `~/.config/fa/recipes.d/wc-lib.toml` and opens it in your default `$EDITOR`.
@@ -40,9 +40,9 @@ Your component folders live inside `~/.config/fa/templates/wc-lib/<component-nam
 Install them into your project:
 
 ```bash
-fa new wc-lib          # Lists available packs and components (or runs default if configured)
-fa new wc-lib default  # Installs the 'default' pack bundle
-fa new wc-lib btn-ally # Installs only the 'btn-ally' component
+fa --new wc-lib          # Lists available packs and components (or runs default if configured)
+fa --new wc-lib default  # Installs the 'default' pack bundle
+fa --new wc-lib btn-ally # Installs only the 'btn-ally' component
 ```
 
 > [!TIP]
@@ -90,7 +90,7 @@ description = "Install component files into src/components/"
 Validate the recipe syntax anytime with:
 
 ```bash
-fa recipe validate wc-lib
+fa --recipe validate wc-lib
 ```
 
 ---
@@ -217,27 +217,27 @@ create = { from = "{{templates_dir}}/{{component}}", to = "src/components/{{comp
 
 To include a new or existing component in any pack, simply add its folder name to the `components = [...]` array in the corresponding pack definition.
 
-### 2.3 Running `fa new` Without Arguments (Global Configuration)
+### 2.3 Running `fa --new` Without Arguments (Global Configuration)
 
-The `default_behavior` setting in `~/.config/fa/config.toml` controls what `fa new <recipe>` does without a pack or component: `list` (default), `default`, or `error`.
+The `default_behavior` setting in `~/.config/fa/config.toml` controls what `fa --new <recipe>` does without a pack or component: `list` (default), `default`, or `error`.
 
-For full configuration details, see [Global Pack Configuration](config.md#running-fa-new-without-arguments-global-pack-configuration).
+For full configuration details, see [Global Pack Configuration](config.md#running-fa--new-without-arguments-global-pack-configuration).
 
 ### 2.4 Installing Components into Your Project
 
-Navigate to your target project folder and run `fa new`:
+Navigate to your target project folder and run `fa --new`:
 
 #### Install a Specific Pack
 Pass the pack name as the second argument:
 ```bash
-fa new wc-lib wc-ui
+fa --new wc-lib wc-ui
 ```
 *Copies all components declared in `wc-ui.toml` directly into your project.*
 
 #### Install a Single Component
 Pass the component folder name directly:
 ```bash
-fa new wc-lib toggle-theme
+fa --new wc-lib toggle-theme
 ```
 *Copies only `toggle-theme/` into `src/components/toggle-theme/`.*
 
@@ -253,7 +253,7 @@ The recommended structure keeps your pack lists in `packs/` and your component s
 ~/.config/fa/
 │
 ├── recipes.d/
-│   └── wc-lib.toml                  # 1. Recipe configuration (`fa recipe new wc-lib`)
+│   └── wc-lib.toml                  # 1. Recipe configuration (`fa --recipe new wc-lib`)
 │
 ├── packs/
 │   └── wc-lib/                      # 2. Pack lists (grouping folders together)
