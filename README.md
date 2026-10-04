@@ -82,14 +82,22 @@ Each alias supports:
 - **`command`** (required): shell command to run.
 - **`description`** (optional): shown in `fa list`.
 - **`aliases`** (optional): short names to invoke it with.
+- **`args`** (optional): explicit argument signature (e.g. `args = ["<input>", "[output]"]`) or detailed argument objects with descriptions.
 - **`env` / `env_force`** (optional): fallback or forced environment variables.
 - **`platform`** (optional): restrict to `debian` or `termux`.
 
 ### Example
 
-Aliases can live in `~/.config/fa/recipes.toml` or split across `recipes.d/*.toml`:
+Aliases can live in `~/.config/fa/recipes.toml` or split across `recipes.d/*.toml` (both singular `[alias]` and plural `[aliases]` are supported):
 
 ```toml
+# Standalone alias with custom argument signature
+[alias.wrapper.upscayl]
+command = "upscayl -i $1 -o ${2:-./out}"
+description = "AI image upscaler"
+args = ["<input_image>", "[output_dir]"]
+
+# Grouped alias sections
 [aliases.git]
 status = { command = "git status", description = "Show repo status" }
 

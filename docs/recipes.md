@@ -236,10 +236,59 @@ du   = { command = "du -sh */", description = "Size per folder" }
 - **Arguments**:
   - Positional variables (`$1`, `{{1}}`, etc.) are replaced with corresponding CLI argument index.
   - If no positional placeholders are present, arguments are automatically appended shell-quoted at the end as passthrough (e.g. `fa alias rm a.txt b.txt` → `git rm 'a.txt' 'b.txt'`).
+  - Explicit argument signatures and documentation can be declared using `args` (see below).
 - **Aliases**: the `aliases` array declares alternative names (`fa alias co` or `fa co` also works).
 - **Platform** (optional): restrict to `debian`/`termux`.
 - **Dry-run**: `fa alias <name> [args] --dry-run` prints the resolved command without executing it.
 - **Modularity**: sections can live in separate files, e.g. `recipes.d/git.toml` containing only `[aliases.git]`.
+
+#### Alias Table Naming (`[alias]`)
+
+Declare command aliases directly under `[alias.<section>.<command>]` or `[alias.<section>]`:
+
+```toml
+[alias.wrapper.upscayl]
+command = "upscayl -i $1 -o $2"
+description = "Upscale image"
+```
+
+> [!NOTE]
+> The plural `[aliases]` form is also fully supported and interchangeable with `[alias]`. Both forms coexist seamlessly.
+
+#### Custom Argument Signatures & Documentation (`args`)
+
+By default, `fa` infers generic `<arg1> <arg2>` placeholders from positional variables (`$1`, `$2`). You can provide human-readable names and descriptions using the structured `args` field.
+
+*(Note: Plain strings like `args = "<input> [output]"` are intentionally rejected to prevent parsing ambiguities).*
+
+1. **Token List (Recommended for quick signatures):**
+   ```toml
+   [alias.media.resize]
+   command = "magick $1 -resize $2 $3"
+   description = "Resize image"
+   args = ["<input>", "<dimensions>", "[output]"]
+   ```
+   *Tokens wrapped in `[...]` are treated as optional; tokens wrapped in `<...>` or bare words are treated as required.*
+
+2. **Object List (Full parameter documentation):**
+   ```toml
+   [alias.media.resize]
+   command = "magick $1 -resize $2 $3"
+   description = "Resize image"
+   args = [
+     { name = "input", description = "Source image path" },
+     { name = "dimensions", description = "Target size (e.g. 800x600)" },
+     { name = "output", description = "Destination directory", required = false }
+   ]
+   ```
+
+3. **Table / Map Syntax:**
+   ```toml
+   [alias.media.resize.args]
+   input = { description = "Source image path" }
+   dimensions = { description = "Target size (e.g. 800x600)" }
+   output = { description = "Destination directory" }
+   ```
 
 ### Namespaced Aliases (`[aliases.":<namespace>"]`)
 

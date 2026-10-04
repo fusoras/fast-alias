@@ -58,8 +58,31 @@ fa --list -s                         # or: fa -l -s
 fa --search typescript               # or: fa -se typescript
 ```
 
+**Argument signatures in listings:**
+Commands declaring `args` (or containing positional `$1`, `$2` variables) automatically display their argument signature alongside their name:
+```text
+resize <input> <dimensions> [output] · Resize image
+```
+
 ### 3. `fa --show <target>` (or: `fa -sh <target>`)
 Displays detailed recipe configuration (variants, tooling, scaffolded files, and execution steps) or command alias definitions, including exact source file and line traceability (`Defined in: <file> (line <n>)`). Supports recipes, flat aliases, and multi-word namespaced commands (`skills ls`).
+
+When inspecting a command alias, `fa --show` displays its execution command, environment variables, exact file location, usage signature, and aligned parameter documentation if `args` are declared:
+
+```text
+Command: resize
+Section: media
+Description: Resize image
+
+Usage: fa resize <input> <dimensions> [output]
+
+Arguments:
+  <input>       Source image path
+  <dimensions>  Target size (e.g. 800x600)
+  [output]      Destination directory
+
+Command: magick $1 -resize $2 $3
+```
 
 ```bash
 fa --show next-ts                    # Inspect recipe details and origin file
@@ -68,7 +91,7 @@ fa -sh skills ls                     # Inspect namespaced command origin without
 ```
 
 ### 4. `fa --alias <name> [args...]`
-Executes a command alias configured under `[aliases]` in `recipes.toml`. Aliases can also be invoked directly (`fa <name>`).
+Executes a command alias configured under `[alias]` or `[aliases]` in `recipes.toml`. Aliases can also be invoked directly (`fa <name>`).
 
 ```bash
 fa --alias gco main                  # Explicit canonical command
