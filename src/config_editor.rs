@@ -660,14 +660,10 @@ impl ConfigEditor {
                         self.packs_behavior = pending;
                     }
                     self.save()?;
-                    write!(output, "\r\x1b[{}A\x1b[J", last_lines_drawn)?;
-                    writeln!(
-                        output,
-                        "{BOLD_GREEN}✔{RESET} Configuration saved to {BOLD_WHITE}{}{RESET}",
-                        self.config_path.display()
-                    )?;
-                    output.flush()?;
-                    return Ok(true);
+                    self.status_message = Some(format!(
+                        "{BOLD_GREEN}✔ Configuration saved{RESET}"
+                    ));
+                    continue;
                 }
                 Key::Up => {
                     if selected == 0 {
@@ -1962,7 +1958,7 @@ custom = "!echo hello"
     }
 
     #[test]
-    fn test_main_menu_save_shortcut_key_s() {
+    fn test_main_menu_save_shortcut_key_s_stays_in_menu() {
         let temp_dir = std::env::temp_dir().join(format!("fa-test-cfg-saveshort-{}", std::process::id()));
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).unwrap();
@@ -1970,13 +1966,21 @@ custom = "!echo hello"
         let mut editor = ConfigEditor::new(&temp_dir).unwrap();
         editor.packs_behavior = "error".to_string();
         let mut out = Vec::new();
-        // Send 's' key to trigger save immediately
-        let res = editor.run(&mut &b"s"[..], &mut out).unwrap();
-        assert!(res, "Pressing 's' must save and return Ok(true)");
+        // Send 's' then '\x1b' (Esc) to exit afterwards
+        let res = editor.run(&mut &b"s\x1b"[..], &mut out).unwrap();
+        // 's' must NOT exit the menu; only the subsequent Esc exits
+        assert!(!res, "Pressing 's' must stay in the menu, not exit immediately");
 
         // Verify the saved file on disk
         let saved_content = fs::read_to_string(temp_dir.join("config.toml")).unwrap();
         assert!(saved_content.contains("default_behavior = \"error\""));
+
+        // Verify that the in-menu feedback message is rendered in the output
+        let rendered = String::from_utf8_lossy(&out);
+        assert!(
+            rendered.contains("✔ Configuration saved"),
+            "Pressing 's' must show saved feedback in the menu, rendered:\n{rendered}"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
     }
