@@ -28,6 +28,8 @@ pub const NATIVE_COMMANDS: &[(&str, &str)] = &[
 pub enum Key {
     Up,
     Down,
+    Left,
+    Right,
     Enter,
     Esc,
     Backspace,
@@ -145,7 +147,7 @@ impl Drop for RawModeGuard {
 }
 
 /// Polls stdin to see if a byte is available within `timeout_ms`.
-#[cfg(unix)]
+#[cfg(all(unix, not(test)))]
 #[allow(unsafe_code)]
 fn poll_stdin(timeout_ms: i32) -> bool {
     use std::os::fd::AsRawFd;
@@ -159,9 +161,9 @@ fn poll_stdin(timeout_ms: i32) -> bool {
     ret > 0 && (pfd.revents & 1) != 0
 }
 
-#[cfg(not(unix))]
+#[cfg(any(not(unix), test))]
 fn poll_stdin(_timeout_ms: i32) -> bool {
-    false
+    true
 }
 
 /// Reads a single key event from a generic reader.
@@ -177,7 +179,7 @@ pub fn read_key_from<R: Read>(reader: &mut R) -> io::Result<Key> {
         0x03 => Ok(Key::Esc), // Ctrl+C maps to Esc/Cancel
         0x1b => {
             // Check if another byte follows immediately (e.g. arrow keys)
-            if !poll_stdin(25) {
+            if !poll_stdin(60) {
                 return Ok(Key::Esc);
             }
             let mut next = [0u8; 1];
@@ -192,6 +194,8 @@ pub fn read_key_from<R: Read>(reader: &mut R) -> io::Result<Key> {
                 match code[0] {
                     b'A' => Ok(Key::Up),
                     b'B' => Ok(Key::Down),
+                    b'C' => Ok(Key::Right),
+                    b'D' => Ok(Key::Left),
                     b'3' => {
                         // Delete key ~ sequence
                         let mut tilde = [0u8; 1];
@@ -324,6 +328,7 @@ pub struct ConfigEditor {
     initial_content: String,
     packs_behavior: String,
     aliases: BTreeMap<String, String>,
+    status_message: Option<String>,
 }
 
 impl ConfigEditor {
@@ -344,6 +349,7 @@ impl ConfigEditor {
             initial_content,
             packs_behavior,
             aliases,
+            status_message: None,
         })
     }
 
@@ -364,24 +370,38 @@ impl ConfigEditor {
             write!(output, "\x1b[H\x1b[2J")?; // Clear screen and home cursor
             writeln!(
                 output,
-                "{BOLD_CYAN}Fast-Alias Configuration{RESET} {DIM}({}){RESET}",
+                "{BOLD_CYAN}╭─────────────────────────────────────────────────────────────╮{RESET}"
+            )?;
+            writeln!(
+                output,
+                "{BOLD_CYAN}│{RESET}  {BOLD_WHITE}Fast-Alias Configuration{RESET}  {DIM}•{RESET}  {DIM}{}{RESET}",
                 self.config_path.display()
             )?;
             writeln!(
                 output,
-                "{DIM}Use ↑/↓ to navigate, Enter to select, Esc to cancel{RESET}\n"
+                "{BOLD_CYAN}╰─────────────────────────────────────────────────────────────╯{RESET}"
             )?;
+            writeln!(
+                output,
+                " {BOLD_CYAN}fa config{RESET} {DIM}›{RESET} {BOLD_WHITE}Main Menu{RESET}"
+            )?;
+
+            if let Some(msg) = &self.status_message {
+                writeln!(output, "\n  {msg}\n")?;
+            } else {
+                writeln!(output)?;
+            }
 
             for (i, item) in menu_items.iter().enumerate() {
                 let is_sel = i == selected;
                 let marker = if is_sel {
-                    format!("{BOLD_CYAN}>{RESET}")
+                    format!("{BOLD_GREEN}▸{RESET}")
                 } else {
                     " ".to_string()
                 };
 
                 let detail = match i {
-                    0 => format!(" {DIM}[ {} ]{RESET}", self.packs_behavior),
+                    0 => format!(" {BOLD_CYAN}[ {} ]{RESET}", self.packs_behavior),
                     1 => format!(" {DIM}({} defined){RESET}", self.aliases.len()),
                     _ => String::new(),
                 };
@@ -392,6 +412,10 @@ impl ConfigEditor {
                     writeln!(output, "  {marker} {item}{detail}")?;
                 }
             }
+            writeln!(
+                output,
+                "\n {DIM}Navigate with ↑/↓, Enter to select, Esc to cancel{RESET}"
+            )?;
             output.flush()?;
 
             let key = read_key_from(input)?;
@@ -436,7 +460,7 @@ impl ConfigEditor {
                     }
                     5 => {
                         write!(output, "\x1b[H\x1b[2J")?;
-                        writeln!(output, "Configuration changes discarded.")?;
+                        writeln!(output, "{DIM}Configuration changes discarded.{RESET}")?;
                         output.flush()?;
                         return Ok(false);
                     }
@@ -444,7 +468,7 @@ impl ConfigEditor {
                 },
                 Key::Esc => {
                     write!(output, "\x1b[H\x1b[2J")?;
-                    writeln!(output, "Configuration cancelled.")?;
+                    writeln!(output, "{DIM}Configuration cancelled.{RESET}")?;
                     output.flush()?;
                     return Ok(false);
                 }
@@ -528,7 +552,11 @@ impl ConfigEditor {
                 }
                 Key::Enter => {
                     if selected < 3 {
-                        self.packs_behavior = options[selected].0.to_string();
+                        let chosen = options[selected].0;
+                        self.packs_behavior = chosen.to_string();
+                        self.status_message = Some(format!(
+                            "{BOLD_GREEN}✔ Packs default behavior updated to '{chosen}'{RESET}"
+                        ));
                     }
                     return Ok(());
                 }
@@ -737,6 +765,9 @@ impl ConfigEditor {
                 Key::Enter => {
                     if delete_sel == 0 {
                         self.aliases.remove(alias_name);
+                        self.status_message = Some(format!(
+                            "{BOLD_YELLOW}✔ Deleted alias '{alias_name}'{RESET}"
+                        ));
                     }
                     return Ok(());
                 }
@@ -863,6 +894,9 @@ impl ConfigEditor {
             }
         };
 
+        self.status_message = Some(format!(
+            "{BOLD_GREEN}✔ Added alias '{name}' -> '{final_cmd}'{RESET}"
+        ));
         self.aliases.insert(name, final_cmd);
         Ok(())
     }
@@ -937,6 +971,9 @@ impl ConfigEditor {
                             .unwrap_or_default();
                         self.packs_behavior = parsed.packs.default_behavior;
                         self.aliases = parsed.alias;
+                        self.status_message = Some(format!(
+                            "{BOLD_YELLOW}✔ Reset configuration to defaults (unsaved){RESET}"
+                        ));
                     }
                     return Ok(());
                 }
@@ -1195,6 +1232,12 @@ custom = "!echo hello"
 
         let mut char_bytes = &b"x"[..];
         assert_eq!(read_key_from(&mut char_bytes).unwrap(), Key::Char('x'));
+
+        let mut up_bytes = &b"\x1b[A"[..];
+        assert_eq!(read_key_from(&mut up_bytes).unwrap(), Key::Up);
+
+        let mut down_bytes = &b"\x1b[B"[..];
+        assert_eq!(read_key_from(&mut down_bytes).unwrap(), Key::Down);
     }
 
     #[test]
