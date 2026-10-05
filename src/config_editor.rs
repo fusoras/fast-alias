@@ -30,9 +30,12 @@ pub enum Key {
     Down,
     Left,
     Right,
+    Home,
+    End,
     Enter,
     Esc,
     Backspace,
+    Delete,
     Tab,
     BackTab,
     Char(char),
@@ -232,6 +235,8 @@ pub fn read_key_from<R: Read>(reader: &mut R) -> io::Result<Key> {
     match buf[0] {
         b'\r' | b'\n' => Ok(Key::Enter),
         b'\t' => Ok(Key::Tab), // ASCII 9
+        0x01 => Ok(Key::Home), // Ctrl+A
+        0x05 => Ok(Key::End),  // Ctrl+E
         0x7f | 0x08 => Ok(Key::Backspace),
         0x03 => Ok(Key::Esc), // Ctrl+C maps to Esc/Cancel
         0x13 => Ok(Key::Char('s')), // Ctrl+S maps to 's' (Save)
@@ -254,12 +259,24 @@ pub fn read_key_from<R: Read>(reader: &mut R) -> io::Result<Key> {
                     b'B' => Ok(Key::Down),
                     b'C' => Ok(Key::Right),
                     b'D' => Ok(Key::Left),
+                    b'H' => Ok(Key::Home),
+                    b'F' => Ok(Key::End),
                     b'Z' => Ok(Key::BackTab), // Shift-Tab escape sequence "\x1b[Z"
+                    b'1' | b'7' => {
+                        let mut tilde = [0u8; 1];
+                        let _ = reader.read(&mut tilde);
+                        Ok(Key::Home)
+                    }
+                    b'4' | b'8' => {
+                        let mut tilde = [0u8; 1];
+                        let _ = reader.read(&mut tilde);
+                        Ok(Key::End)
+                    }
                     b'3' => {
                         // Delete key ~ sequence
                         let mut tilde = [0u8; 1];
                         let _ = reader.read(&mut tilde);
-                        Ok(Key::Backspace)
+                        Ok(Key::Delete)
                     }
                     _ => Ok(Key::Other),
                 }
@@ -272,13 +289,29 @@ pub fn read_key_from<R: Read>(reader: &mut R) -> io::Result<Key> {
     }
 }
 
+fn render_line<W: Write>(
+    prompt: &str,
+    chars: &[char],
+    cursor_pos: usize,
+    output: &mut W,
+) -> io::Result<()> {
+    let s: String = chars.iter().collect();
+    write!(output, "\r\x1b[2K{prompt}{s}")?;
+    let trailing = chars.len().saturating_sub(cursor_pos);
+    if trailing > 0 {
+        write!(output, "\x1b[{trailing}D")?;
+    }
+    output.flush()
+}
+
 /// Reads a line in raw mode with real-time backspace and cursor rendering.
 pub fn prompt_line_raw<R: Read, W: Write>(
     prompt: &str,
     input: &mut R,
     output: &mut W,
 ) -> io::Result<Option<String>> {
-    let mut buffer = String::new();
+    let mut chars: Vec<char> = Vec::new();
+    let mut cursor_pos: usize = 0;
 
     write!(output, "\x1b[?25h\r\x1b[2K{prompt}")?;
     output.flush()?;
@@ -296,7 +329,8 @@ pub fn prompt_line_raw<R: Read, W: Write>(
             Key::Enter => {
                 let _ = write!(output, "\x1b[?25l");
                 let _ = output.flush();
-                let trimmed = buffer.trim().to_string();
+                let full_string: String = chars.into_iter().collect();
+                let trimmed = full_string.trim().to_string();
                 return Ok(Some(trimmed));
             }
             Key::Esc => {
@@ -304,17 +338,47 @@ pub fn prompt_line_raw<R: Read, W: Write>(
                 let _ = output.flush();
                 return Ok(None);
             }
+            Key::Left => {
+                if cursor_pos > 0 {
+                    cursor_pos -= 1;
+                    render_line(prompt, &chars, cursor_pos, output)?;
+                }
+            }
+            Key::Right => {
+                if cursor_pos < chars.len() {
+                    cursor_pos += 1;
+                    render_line(prompt, &chars, cursor_pos, output)?;
+                }
+            }
+            Key::Home => {
+                if cursor_pos != 0 {
+                    cursor_pos = 0;
+                    render_line(prompt, &chars, cursor_pos, output)?;
+                }
+            }
+            Key::End => {
+                if cursor_pos != chars.len() {
+                    cursor_pos = chars.len();
+                    render_line(prompt, &chars, cursor_pos, output)?;
+                }
+            }
             Key::Backspace => {
-                if !buffer.is_empty() {
-                    buffer.pop();
-                    write!(output, "\r\x1b[2K{prompt}{buffer}")?;
-                    output.flush()?;
+                if cursor_pos > 0 {
+                    cursor_pos -= 1;
+                    chars.remove(cursor_pos);
+                    render_line(prompt, &chars, cursor_pos, output)?;
+                }
+            }
+            Key::Delete => {
+                if cursor_pos < chars.len() {
+                    chars.remove(cursor_pos);
+                    render_line(prompt, &chars, cursor_pos, output)?;
                 }
             }
             Key::Char(c) if !c.is_control() => {
-                buffer.push(c);
-                write!(output, "{c}")?;
-                output.flush()?;
+                chars.insert(cursor_pos, c);
+                cursor_pos += 1;
+                render_line(prompt, &chars, cursor_pos, output)?;
             }
             _ => {}
         }
@@ -2166,6 +2230,45 @@ custom = "!echo hello"
             rendered.contains("\x1b[?25l"),
             "prompt_line_raw must emit ANSI hide cursor (\\x1b[?25l) on finish"
         );
+    }
+
+    #[test]
+    fn test_line_editor_arrow_navigation_and_insertion() {
+        // Type "helo", Left, Left, type 'l', Enter -> "hello"
+        let input_bytes = b"helo\x1b[D\x1b[Dl\r";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let line = prompt_line_raw("Prompt: ", &mut reader, &mut output)
+            .unwrap()
+            .expect("Line must return Some");
+        assert_eq!(line, "hello");
+    }
+
+    #[test]
+    fn test_line_editor_home_end_and_ctrl_keys() {
+        // Type "world", Ctrl+A (Home), type "hello ", Ctrl+E (End), type "!", Enter -> "hello world!"
+        let input_bytes = b"world\x01hello \x05!\r";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let line = prompt_line_raw("Prompt: ", &mut reader, &mut output)
+            .unwrap()
+            .expect("Line must return Some");
+        assert_eq!(line, "hello world!");
+    }
+
+    #[test]
+    fn test_line_editor_delete_and_in_place_backspace() {
+        // Type "hexylo", Left x 3, Backspace (removes 'x'), Delete (removes 'y'), Enter -> "helo"
+        let input_bytes = b"hexylo\x1b[D\x1b[D\x1b[D\x7f\x1b[3~\r";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let line = prompt_line_raw("Prompt: ", &mut reader, &mut output)
+            .unwrap()
+            .expect("Line must return Some");
+        assert_eq!(line, "helo");
     }
 
     #[test]
