@@ -18,10 +18,10 @@ re = "--recipe edit"
 rm = "--recipe rm"
 
 # External shell commands (prefixed with '!'):
-b  = "!git branch"
-s  = "!git switch"
-st = "!git status"
-ac = "!git add -A && git commit -m"
+rec = "!EDITOR=code fa --recipe edit"
+b   = "!git branch"
+s   = "!git switch"
+ac  = "!git add -A && git commit -m"
 ```
 
 Invoking `fa rn my-app` expands to `fa --recipe new my-app`. Invoking `fa ac "feat: init"` executes the shell command with appended arguments.
