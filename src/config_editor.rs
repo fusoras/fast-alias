@@ -280,17 +280,28 @@ pub fn prompt_line_raw<R: Read, W: Write>(
 ) -> io::Result<Option<String>> {
     let mut buffer = String::new();
 
-    write!(output, "\r\x1b[2K{prompt}")?;
+    write!(output, "\x1b[?25h\r\x1b[2K{prompt}")?;
     output.flush()?;
 
     loop {
-        let key = read_key_from(input)?;
+        let key = match read_key_from(input) {
+            Ok(k) => k,
+            Err(e) => {
+                let _ = write!(output, "\x1b[?25l");
+                let _ = output.flush();
+                return Err(e);
+            }
+        };
         match key {
             Key::Enter => {
+                let _ = write!(output, "\x1b[?25l");
+                let _ = output.flush();
                 let trimmed = buffer.trim().to_string();
                 return Ok(Some(trimmed));
             }
             Key::Esc => {
+                let _ = write!(output, "\x1b[?25l");
+                let _ = output.flush();
                 return Ok(None);
             }
             Key::Backspace => {
@@ -1646,7 +1657,7 @@ impl ConfigEditor {
         lines += 1;
         writeln!(
             output,
-            " {DIM}Type the alias shortcut (e.g. 'c', 'st', 'b') and press Enter (Esc to cancel):{RESET}\n"
+            " {DIM}Type the alias shortcut (e.g. 'c', 'rec', 'b') and press Enter (Esc to cancel):{RESET}\n"
         )?;
         lines += 2;
         let mut last_lines_drawn = lines;
@@ -1767,7 +1778,7 @@ impl ConfigEditor {
                         )?;
                         writeln!(
                             output,
-                            " {DIM}Prefix external shell commands with '!' (e.g. '!git status'):{RESET}\n"
+                            " {DIM}Prefix external shell commands with '!' (e.g. '!EDITOR=code fa -r edit'):{RESET}\n"
                         )?;
                         let custom = prompt_line_raw(" Command: ", input, output)?;
                         write!(output, "\r\x1b[3A\x1b[J")?;
@@ -2134,6 +2145,27 @@ custom = "!echo hello"
 
         let line = prompt_line_raw("Prompt: ", &mut reader, &mut output).unwrap();
         assert_eq!(line, None);
+    }
+
+    #[test]
+    fn test_line_editor_emits_cursor_show_and_hide() {
+        let input_bytes = b"alias\r";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let line = prompt_line_raw("Prompt: ", &mut reader, &mut output)
+            .unwrap()
+            .expect("Line must return Some");
+        assert_eq!(line, "alias");
+        let rendered = String::from_utf8_lossy(&output);
+        assert!(
+            rendered.contains("\x1b[?25h"),
+            "prompt_line_raw must emit ANSI show cursor (\\x1b[?25h)"
+        );
+        assert!(
+            rendered.contains("\x1b[?25l"),
+            "prompt_line_raw must emit ANSI hide cursor (\\x1b[?25l) on finish"
+        );
     }
 
     #[test]

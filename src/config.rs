@@ -50,8 +50,8 @@ sh = "--show"
 se = "--search"
 
 # External shell command shortcuts start with '!':
+# rec = "!EDITOR=code fa --recipe edit"
 # ac = "!git add -A && git commit -m"
-# st = "!git status"
 # b = "!git branch"
 # s = "!git switch"
 "##;
