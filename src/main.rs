@@ -607,6 +607,12 @@ fn is_recipe_or_help_cmd(args: &[String]) -> bool {
 
 fn main() {
     if let Err(err) = run_cli() {
+        if let Some(io_err) = err.root_cause().downcast_ref::<std::io::Error>()
+            && io_err.kind() == std::io::ErrorKind::Interrupted
+        {
+            let _ = std::io::Write::write_all(&mut std::io::stdout(), b"\n");
+            std::process::exit(130);
+        }
         print_fatal_error(&err);
         std::process::exit(1);
     }

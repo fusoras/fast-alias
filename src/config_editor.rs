@@ -238,7 +238,7 @@ pub fn read_key_from<R: Read>(reader: &mut R) -> io::Result<Key> {
         0x01 => Ok(Key::Home), // Ctrl+A
         0x05 => Ok(Key::End),  // Ctrl+E
         0x7f | 0x08 => Ok(Key::Backspace),
-        0x03 => Ok(Key::Esc), // Ctrl+C maps to Esc/Cancel
+        0x03 => Err(io::Error::new(io::ErrorKind::Interrupted, "Interrupted by Ctrl+C")),
         0x13 => Ok(Key::Char('s')), // Ctrl+S maps to 's' (Save)
         0x1b => {
             // Check if another byte follows immediately (e.g. arrow keys)
@@ -2043,9 +2043,11 @@ pub fn run_interactive_config_inner<R: Read, W: Write>(
         return Ok(());
     }
 
-    let _guard = RawModeGuard::enter()?;
+    let guard = RawModeGuard::enter()?;
     let mut editor = ConfigEditor::new(user_dir)?;
-    editor.run(input, output)?;
+    let run_res = editor.run(input, output);
+    drop(guard);
+    run_res?;
     Ok(())
 }
 
@@ -2318,7 +2320,10 @@ custom = "!echo hello"
         assert_eq!(read_key_from(&mut backspace_bytes).unwrap(), Key::Backspace);
 
         let mut ctrl_c_bytes = &b"\x03"[..];
-        assert_eq!(read_key_from(&mut ctrl_c_bytes).unwrap(), Key::Esc);
+        assert_eq!(
+            read_key_from(&mut ctrl_c_bytes).unwrap_err().kind(),
+            io::ErrorKind::Interrupted
+        );
 
         let mut char_bytes = &b"x"[..];
         assert_eq!(read_key_from(&mut char_bytes).unwrap(), Key::Char('x'));
@@ -2328,6 +2333,34 @@ custom = "!echo hello"
 
         let mut down_bytes = &b"\x1b[B"[..];
         assert_eq!(read_key_from(&mut down_bytes).unwrap(), Key::Down);
+    }
+
+    #[test]
+    fn test_prompt_line_raw_ctrl_c_returns_interrupted() {
+        let input_bytes = b"alias\x03";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let err = prompt_line_raw("Prompt: ", &mut reader, &mut output).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Interrupted);
+    }
+
+    #[test]
+    fn test_editor_run_ctrl_c_returns_interrupted() {
+        let temp_dir = std::env::temp_dir().join(format!("fa-test-ctrlc-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut editor = ConfigEditor::new(&temp_dir).unwrap();
+        let input_bytes = b"\x03";
+        let mut reader = &input_bytes[..];
+        let mut output = Vec::new();
+
+        let err = editor.run(&mut reader, &mut output).unwrap_err();
+        let io_err = err.root_cause().downcast_ref::<io::Error>().expect("Must be io::Error");
+        assert_eq!(io_err.kind(), io::ErrorKind::Interrupted);
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
