@@ -61,7 +61,7 @@ struct Termios {
 unsafe extern "C" {
     fn tcgetattr(fd: i32, termios_p: *mut Termios) -> i32;
     fn tcsetattr(fd: i32, optional_actions: i32, termios_p: *const Termios) -> i32;
-    fn read(fd: i32, buf: *mut u8, count: usize) -> isize;
+    fn read(fd: i32, buf: *mut std::ffi::c_void, count: usize) -> isize;
 }
 
 #[cfg(unix)]
@@ -94,7 +94,7 @@ impl Read for RawTerminalStdin {
                 return Ok(0);
             }
             #[allow(unsafe_code)]
-            let res = unsafe { read(0, buf.as_mut_ptr(), buf.len()) };
+            let res = unsafe { read(0, buf.as_mut_ptr() as *mut std::ffi::c_void, buf.len()) };
             if res < 0 {
                 return Err(io::Error::last_os_error());
             }
