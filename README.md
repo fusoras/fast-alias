@@ -31,7 +31,7 @@ If you have a Rust toolchain installed (Rust 2024 edition), you can compile and 
 Clone the repository and install the binary to `~/.cargo/bin`:
 
 ```bash
-git clone https://github.com/fusoras/fast-alias.git
+git clone --depth=1 https://github.com/fusoras/fast-alias.git
 cd fast-alias
 cargo install --path .
 ```
