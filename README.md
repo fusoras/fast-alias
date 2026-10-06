@@ -20,7 +20,7 @@ curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.
 ```
 
 > [!NOTE]
-> This command automatically detects your platform (Debian or Termux) and architecture (`x86_64` or `aarch64`), downloads the pre-compiled binary asset, and installs it to `~/.local/bin/fa` (or `$PREFIX/bin` on Termux).
+> Automatically downloads the matching pre-compiled binary and installs it to `~/.local/bin/fa` (or `$PREFIX/bin` on Termux).
 
 ### Build from Source (Rust & Cargo)
 
