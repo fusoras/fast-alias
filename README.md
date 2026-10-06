@@ -11,6 +11,8 @@
 > [!WARNING] Development version
 > This installs the **development build** from the `develop` branch (pre-release, not a stable release).
 
+### Quick Install (Pre-compiled Binary)
+
 To install `fa` directly on your machine (Debian or Termux) without requiring Rust or Cargo:
 
 ```bash
@@ -19,6 +21,40 @@ curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.
 
 > [!NOTE]
 > This command automatically detects your platform (Debian or Termux) and architecture (`x86_64` or `aarch64`), downloads the pre-compiled binary asset, and installs it to `~/.local/bin/fa` (or `$PREFIX/bin` on Termux).
+
+### Build from Source (Rust & Cargo)
+
+If you have a Rust toolchain installed (Rust 2024 edition), you can compile and install `fa` directly using Cargo:
+
+#### Option A: Install via Cargo
+
+Clone the repository and install the binary to `~/.cargo/bin`:
+
+```bash
+git clone https://github.com/fusoras/fast-alias.git
+cd fast-alias
+cargo install --path .
+```
+
+Or install directly from GitHub:
+
+```bash
+cargo install --git https://github.com/fusoras/fast-alias.git --branch develop
+```
+
+#### Option B: Manual Release Compilation
+
+Compile an optimized release binary:
+
+```bash
+cargo build --release
+```
+
+The compiled executable is generated at `./target/release/fa`. Move it to any folder in your `$PATH`:
+
+```bash
+install -Dm755 target/release/fa ~/.local/bin/fa
+```
 
 ---
 
