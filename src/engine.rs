@@ -976,14 +976,14 @@ fn platform_matches(label: &str) -> anyhow::Result<bool> {
 }
 
 /// Formats a single-line list entry for `fa --list` / `fa --search`.
-/// Name (bold) followed by a dimmed description to keep the line readable.
+/// Name (teal accent) followed by a dimmed description to keep the line readable.
 pub fn format_list_line(recipe_key: &str, recipe: &Recipe) -> String {
     let mut name = recipe_key.to_string();
     if !recipe.aliases.is_empty() {
         name.push_str(", ");
         name.push_str(&recipe.aliases.join(", "));
     }
-    format!("{BOLD_BLUE}{name}{RESET} · {DIM_GRAY}{}{RESET}", recipe.description)
+    format!("{RECIPE_NAME}{name}{RESET} · {DIM_GRAY}{}{RESET}", recipe.description)
 }
 
 /// Extracts positional argument signature (e.g. `<arg1> <arg2>`, `<arg1> [arg2]`, `[args...]`)
@@ -1082,7 +1082,7 @@ pub fn format_command_line(command_key: &str, command: &crate::config::Command) 
         String::new()
     };
     let description = command.description.as_deref().unwrap_or("");
-    format!("{BOLD_BLUE}{name}{RESET}{sig_str} · {DIM_GRAY}{description}{RESET}")
+    format!("{RECIPE_NAME}{name}{RESET}{sig_str} · {DIM_GRAY}{description}{RESET}")
 }
 
 /// Formats an alias section header for `fa --list` (`<section>:`).
@@ -2046,12 +2046,19 @@ free = { command = "free -h", description = "Free memory" }
         .expect("Should parse config with alias sections");
 
         let lines = format_alias_groups(&config);
+        // Alias name tokens must render in teal (RECIPE_NAME), not BOLD_BLUE.
+        for entry in lines.iter().filter(|l| l.starts_with("    ")) {
+            assert!(
+                entry.starts_with(&format!("    {RECIPE_NAME}")),
+                "alias entry name must be teal RECIPE_NAME, got: {entry:?}"
+            );
+        }
         let plain: Vec<String> = lines
             .iter()
             .map(|l| {
                 // Strip ANSI color codes for stable assertions.
                 let mut s = l.clone();
-                for code in [BOLD_BLUE, RESET, DIM_GRAY, BOLD_CYAN] {
+                for code in [RECIPE_NAME, BOLD_BLUE, RESET, DIM_GRAY, BOLD_CYAN] {
                     s = s.replace(code, "");
                 }
                 s

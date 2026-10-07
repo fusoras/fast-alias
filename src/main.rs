@@ -915,7 +915,7 @@ fn run_cli() -> anyhow::Result<()> {
                     recipe_lines.push(format_list_line(key, recipe));
                 }
                 if !recipe_lines.is_empty() {
-                    println!("{BOLD_CYAN}Recipes:{RESET}");
+                    println!("{SECTION_HEADER}Recipes:{RESET}");
                     println!("  {DIM}Usage: fa --new <recipe> <name>  (or: fa -n){RESET}");
                     println!();
                     for line in &recipe_lines {
@@ -935,11 +935,11 @@ fn run_cli() -> anyhow::Result<()> {
                         if show_recipes {
                             println!();
                         }
-                        println!("{BOLD_CYAN}Packs:{RESET}");
+                        println!("{SECTION_HEADER}Packs:{RESET}");
                         found_any = true;
                     }
                     let packs_dir = recipe.packs_dir.as_deref().unwrap_or("packs");
-                    println!("  {WHITE}{key}{RESET} {DIM}({packs_dir}):{RESET}");
+                    println!("  {RECIPE_NAME}{key}{RESET} {DIM}({packs_dir}):{RESET}");
                     for pack in recipe_packs {
                         if let Some(desc) = &pack.description {
                             println!("    • {BOLD_CYAN}{}{RESET} · {desc}", pack.name);
@@ -951,7 +951,7 @@ fn run_cli() -> anyhow::Result<()> {
                     }
                 }
                 if !found_any && !show_recipes && !show_aliases {
-                    println!("{BOLD_CYAN}Packs:{RESET}");
+                    println!("{SECTION_HEADER}Packs:{RESET}");
                     println!("  {DIM}No packs found in configuration.{RESET}");
                 }
             }
@@ -962,7 +962,7 @@ fn run_cli() -> anyhow::Result<()> {
                     if show_recipes || show_packs {
                         println!();
                     }
-                    println!("{BOLD_CYAN}Aliases:{RESET}");
+                    println!("{SECTION_HEADER}Aliases:{RESET}");
                     println!("  {DIM}Usage: fa <name>  (or: fa -a <name>){RESET}");
                     println!();
                     for line in commands {
