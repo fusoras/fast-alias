@@ -246,27 +246,235 @@ const SHELL_BUILTINS: &[&str] = &[
 
 /// Extracts the standalone application names a shell command invokes: the
 /// first token of each segment separated by shell operators (`&&`, `||`, `;`,
-/// `|`, newline), de-duplicated in order of appearance. Shell builtins and
-/// leading environment assignments (e.g. `FOO=bar`) are skipped.
+/// `|`, newline), de-duplicated in order of appearance. Shell builtins, leading
+/// environment assignments (e.g. `FOO=bar`) and flag tokens (e.g. `-W`,
+/// `--cfg-scale`) are skipped — flags can never be executables.
+///
+/// Before splitting, `\`+newline continuations are joined into logical lines,
+/// and delimiters inside single/double quotes, `$( )` substitutions and
+/// backticks do not split segments.
 pub fn extract_commands(command: &str) -> Vec<String> {
+    let logical = join_line_continuations(command);
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
-    for segment in command.split(['&', '|', ';', '\n']) {
+    for segment in split_shell_segments(&logical) {
         let Some(first) = segment.split_whitespace().next() else {
             continue;
         };
-        let token = first.trim_start_matches(['\'', '"', '(', '{']).to_string();
-        if token.is_empty()
-            || token.contains('=')
-            || SHELL_BUILTINS.contains(&token.as_str())
-        {
+        let token = first.trim_start_matches(['\'', '"', '(', '{']);
+        if token.is_empty() || token.starts_with('-') {
+            // Flags (single or double dash) can never be executables.
             continue;
         }
-        if seen.insert(token.clone()) {
-            out.push(token);
+        if token.contains('=') || SHELL_BUILTINS.contains(&token) {
+            continue;
+        }
+        if seen.insert(token.to_string()) {
+            out.push(token.to_string());
         }
     }
     out
+}
+
+/// Returns the first flag-shaped token starting a segment, if any: such a
+/// token is a broken command fragment, usually caused by a missing `\` line
+/// continuation at the end of the previous line.
+fn first_flag_fragment(command: &str) -> Option<String> {
+    let logical = join_line_continuations(command);
+    split_shell_segments(&logical).into_iter().find_map(|segment| {
+        let first = segment.split_whitespace().next()?;
+        let token = first.trim_start_matches(['\'', '"', '(', '{']);
+        token.starts_with('-').then(|| token.to_string())
+    })
+}
+
+/// Joins shell line continuations: a backslash directly followed by a newline
+/// (optionally with a `\r` before it) is replaced by a space so one logical
+/// line spanning several physical lines is analyzed as a single line. An
+/// escaped backslash (`\\`) followed by a newline is left untouched because
+/// there the newline is a real separator.
+fn join_line_continuations(command: &str) -> String {
+    let chars: Vec<char> = command.chars().collect();
+    let mut out = String::with_capacity(command.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                '\n' => {
+                    out.push(' ');
+                    i += 2;
+                    continue;
+                }
+                '\r' if i + 2 < chars.len() && chars[i + 2] == '\n' => {
+                    out.push(' ');
+                    i += 3;
+                    continue;
+                }
+                n => {
+                    out.push('\\');
+                    out.push(n);
+                    i += 2;
+                    continue;
+                }
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
+/// Quoting/substitution context of the minimal shell scanner used to split
+/// logical lines into segments.
+#[derive(Clone, Copy)]
+enum ScanCtx {
+    Normal,
+    Single,
+    Double,
+    Backtick,
+    Subst,
+}
+
+/// Splits a logical shell line into segments at operators (`;`, `&`, `|`,
+/// newline), ignoring delimiters that appear inside single quotes, double
+/// quotes, `$( )` substitutions, or backticks.
+fn split_shell_segments(command: &str) -> Vec<String> {
+    let chars: Vec<char> = command.chars().collect();
+    let mut stack: Vec<ScanCtx> = vec![ScanCtx::Normal];
+    let mut segments = Vec::new();
+    let mut cur = String::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        let next = chars.get(i + 1).copied();
+        let ctx = *stack.last().expect("scan context stack is never empty");
+        match ctx {
+            ScanCtx::Single => {
+                cur.push(c);
+                if c == '\'' {
+                    stack.pop();
+                }
+                i += 1;
+            }
+            ScanCtx::Backtick => match (c, next) {
+                ('\\', Some(n)) => {
+                    cur.push(c);
+                    cur.push(n);
+                    i += 2;
+                }
+                ('`', _) => {
+                    cur.push(c);
+                    stack.pop();
+                    i += 1;
+                }
+                _ => {
+                    cur.push(c);
+                    i += 1;
+                }
+            },
+            ScanCtx::Double => match (c, next) {
+                ('\\', Some(n)) => {
+                    cur.push(c);
+                    cur.push(n);
+                    i += 2;
+                }
+                ('$', Some('(')) => {
+                    cur.push('$');
+                    cur.push('(');
+                    stack.push(ScanCtx::Subst);
+                    i += 2;
+                }
+                ('`', _) => {
+                    cur.push(c);
+                    stack.push(ScanCtx::Backtick);
+                    i += 1;
+                }
+                ('"', _) => {
+                    cur.push(c);
+                    stack.pop();
+                    i += 1;
+                }
+                _ => {
+                    cur.push(c);
+                    i += 1;
+                }
+            },
+            ScanCtx::Subst => match (c, next) {
+                ('\\', Some(n)) => {
+                    cur.push(c);
+                    cur.push(n);
+                    i += 2;
+                }
+                ('\'', _) => {
+                    cur.push(c);
+                    stack.push(ScanCtx::Single);
+                    i += 1;
+                }
+                ('"', _) => {
+                    cur.push(c);
+                    stack.push(ScanCtx::Double);
+                    i += 1;
+                }
+                ('`', _) => {
+                    cur.push(c);
+                    stack.push(ScanCtx::Backtick);
+                    i += 1;
+                }
+                ('(', _) => {
+                    cur.push(c);
+                    stack.push(ScanCtx::Subst);
+                    i += 1;
+                }
+                (')', _) => {
+                    cur.push(c);
+                    stack.pop();
+                    i += 1;
+                }
+                _ => {
+                    cur.push(c);
+                    i += 1;
+                }
+            },
+            ScanCtx::Normal => match (c, next) {
+                ('\'', _) => {
+                    cur.push(c);
+                    stack.push(ScanCtx::Single);
+                    i += 1;
+                }
+                ('"', _) => {
+                    cur.push(c);
+                    stack.push(ScanCtx::Double);
+                    i += 1;
+                }
+                ('`', _) => {
+                    cur.push(c);
+                    stack.push(ScanCtx::Backtick);
+                    i += 1;
+                }
+                ('$', Some('(')) => {
+                    cur.push('$');
+                    cur.push('(');
+                    stack.push(ScanCtx::Subst);
+                    i += 2;
+                }
+                ('\\', Some(n)) => {
+                    cur.push(c);
+                    cur.push(n);
+                    i += 2;
+                }
+                (';' | '&' | '|' | '\n', _) => {
+                    segments.push(std::mem::take(&mut cur));
+                    i += 1;
+                }
+                _ => {
+                    cur.push(c);
+                    i += 1;
+                }
+            },
+        }
+    }
+    segments.push(cur);
+    segments
 }
 
 /// Returns the subset of `commands` that are not present on the system PATH.
@@ -290,8 +498,17 @@ fn install_hint(cmd: &str) -> String {
 /// Ahead-of-execution check: verifies every application a shell command
 /// references exists on PATH. When something is missing, prints a friendly
 /// diagnostic and returns an error so the command never runs and no ugly
-/// "command not found" wall of text reaches the user.
+/// "command not found" wall of text reaches the user. A flag-shaped fragment
+/// at the start of a segment only prints a one-time hint (missing `\`
+/// continuation) and does not fail the preflight.
 pub fn preflight(command: &str) -> anyhow::Result<()> {
+    if let Some(flag) = first_flag_fragment(command) {
+        // Advisory only — never a hard failure. Reported at most once per
+        // preflight (the first fragment wins) so it does not spam.
+        eprintln!(
+            "{BOLD_YELLOW}! Looks like a command fragment starts with a flag ({flag}) — you may be missing a `\\` line continuation at the end of the previous line.{RESET}"
+        );
+    }
     let missing = missing_commands(&extract_commands(command));
     if missing.is_empty() {
         return Ok(());
@@ -1531,6 +1748,90 @@ mod tests {
         let cmds = extract_commands("FOO=bar echo 'hi' ; cd src && git status");
         assert_eq!(cmds, vec!["git".to_string()]);
         println!("   ✓ Builtins (echo, cd) and env assignments excluded.\n");
+    }
+
+    #[test]
+    fn extract_commands_should_skip_flag_tokens() {
+        println!("\n🔍 [TEST] Extract — flag tokens are never treated as applications");
+        // A bare flag fragment must yield no applications at all.
+        let bare = extract_commands("-W 1024 -H 1024");
+        assert!(bare.is_empty(), "Flag tokens must not be extracted: {bare:?}");
+
+        // Flags passed as arguments after a real command are ignored too.
+        let args = extract_commands("cmd \"-W 1024 -H 1024\" && run --cfg-scale 2");
+        assert_eq!(args, vec!["cmd".to_string(), "run".to_string()]);
+        assert!(
+            args.iter().all(|c| !c.starts_with('-')),
+            "No extracted candidate may start with a dash: {args:?}"
+        );
+
+        // Without a continuation, the second line starts with a flag → fragment.
+        let broken = extract_commands("diff a b\n-W 1024 -H 1024");
+        assert_eq!(broken, vec!["diff".to_string()]);
+        println!("   ✓ Flag tokens excluded from application candidates.\n");
+    }
+
+    #[test]
+    fn extract_commands_should_join_backslash_line_continuations() {
+        println!("\n🔍 [TEST] Extract — backslash-newline continuations form one logical line");
+        let joined = extract_commands("cargo build \\\n--release && git status");
+        assert_eq!(
+            joined,
+            vec!["cargo".to_string(), "git".to_string()],
+            "Continuation line must not produce a separate candidate: {joined:?}"
+        );
+        let word = extract_commands("pnpm install \\\ndeps");
+        assert_eq!(word, vec!["pnpm".to_string()], "Got: {word:?}");
+        let crlf = extract_commands("cargo \\\r\nbuild");
+        assert_eq!(crlf, vec!["cargo".to_string()], "CRLF continuation must join too: {crlf:?}");
+        println!("   ✓ `\\`+newline lines joined before extracting the first token.\n");
+    }
+
+    #[test]
+    fn extract_commands_should_not_split_inside_quotes_or_substitutions() {
+        println!("\n🔍 [TEST] Extract — delimiters inside quotes/$()/backticks do not split");
+        let dq = extract_commands("echo \"a;b\" && printf '%s|n' | wc -l");
+        assert_eq!(
+            dq,
+            vec!["printf".to_string(), "wc".to_string()],
+            "Delimiters inside quotes must not split segments: {dq:?}"
+        );
+        let sub = extract_commands("git log $(echo ';x')");
+        assert_eq!(sub, vec!["git".to_string()], "Got: {sub:?}");
+        let tick = extract_commands("ls `date; uname`");
+        assert_eq!(tick, vec!["ls".to_string()], "Got: {tick:?}");
+        println!("   ✓ Quotes, $( ) substitutions and backticks keep segments intact.\n");
+    }
+
+    #[test]
+    fn extract_commands_should_preserve_existing_operator_and_builtin_behavior() {
+        println!("\n🔍 [TEST] Extract — existing behavior preserved (operators, builtins, assignments)");
+        let cmds = extract_commands("cmd1 && cmd2 ; echo hi | grep x");
+        assert_eq!(
+            cmds,
+            vec!["cmd1".to_string(), "cmd2".to_string(), "grep".to_string()],
+            "Got: {cmds:?}"
+        );
+        // A leading env assignment (`VAR=1 ...`) keeps its segment skipped and
+        // the assignment itself is never extracted as an application.
+        let var = extract_commands("VAR=1 cmd");
+        assert!(var.is_empty(), "Assignment-leading segment stays skipped: {var:?}");
+        let paren = extract_commands("git init --quiet && (git commit -q || git checkout -b main)");
+        assert_eq!(paren, vec!["git".to_string()], "Got: {paren:?}");
+        println!("   ✓ Operators, builtins, assignments and parens behave as before.\n");
+    }
+
+    #[test]
+    fn preflight_should_not_fail_on_flag_fragment() {
+        println!("\n🔍 [TEST] Preflight — flag fragment warns but does not abort");
+        let result = preflight("-W 1024 -H 1024");
+        assert!(
+            result.is_ok(),
+            "Flag fragments must warn, not fail preflight: {result:?}"
+        );
+        let ok = preflight("echo hi");
+        assert!(ok.is_ok(), "Normal commands still pass preflight: {ok:?}");
+        println!("   ✓ Flag fragment is a warning, not a hard failure.\n");
     }
 
     #[test]
