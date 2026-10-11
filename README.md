@@ -1,8 +1,6 @@
-# fast-alias (`fa`)
+# fast-alias
 
-> Recipe-based project scaffolder that bootstraps projects, installs dependencies, and applies tooling (linter, formatter, typechecker) and configuration files on **Debian** and **Termux**.
-
-`fa` is a small CLI tool written in Rust that scaffolds a project with a single short command, replicating your own stack workflows across all your devices.
+`fa` is a CLI tool written in Rust that scaffolds a project with a single short command, replicating your own stack workflows across all your devices.
 
 ---
 
@@ -26,8 +24,6 @@ curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.
 
 If you have a Rust toolchain installed (Rust 2024 edition), you can compile and install `fa` directly using Cargo:
 
-#### Option A: Install via Cargo
-
 Clone the repository and install the binary to `~/.cargo/bin`:
 
 ```bash
@@ -42,40 +38,59 @@ Or install directly from GitHub:
 cargo install --git https://github.com/fusoras/fast-alias.git --branch develop
 ```
 
-#### Option B: Manual Release Compilation
-
-Compile an optimized release binary:
-
-```bash
-cargo build --release
-```
-
-The compiled executable is generated at `./target/release/fa`. Move it to any folder in your `$PATH`:
-
-```bash
-install -Dm755 target/release/fa ~/.local/bin/fa
-```
-
 ---
+
+# Quick Start
+
+Get up and running with `fa` in seconds:
+
+### 1. Create a new alias config
+Generates a new configuration file under `~/.config/fa/recipes.d/` using the `alias` template (specified after the name) and opens it in your default `$EDITOR`:
+
+```bash
+fa --recipe new my-app alias         # or: fa -r new my-app alias ('alias' is the template)
+```
+
+Inside `~/.config/fa/recipes.d/my-app.toml`:
+
+```toml
+[aliases."my-app"]
+hello = { command = "echo 'Hello from fast-alias!'", description = "Say hello" }
+```
+
+### 2. Run your command
+Execute the newly defined alias directly by name:
+
+```bash
+fa hello                             # direct shorthand (or: fa -a hello)
+```
+
+### 3. Inspect and explore
+Verify where the command is defined, or list all available tools in your catalog:
+
+```bash
+fa --show hello                      # inspect definition, origin file, and args (or: fa -sh hello)
+fa --list                            # list all recipes and aliases (or: fa -l)
+```
 
 ### Quick CLI Overview
 
 > [!TIP]
 > Append `--help` or `-h` to any command (e.g. `fa --new -h`) to inspect its usage and flags.
 
-| Command (Long) | Short | Description | Notes & Flags |
-|---|---|---|---|
-| `fa --new <recipe> <name>` | `fa -n` | Scaffolds a new project from recipe into directory `<name>` | `-v` / `--variant`, `-d` / `--dry-run`, `--no-install` |
-| `fa --list [category]` | `fa -l` | Displays available recipes, aliases, or packs | Filter: `recipes` (`-r`), `aliases` (`-a`), `packs` (`-p`); `-s` / `--show-hidden` |
-| `fa --search <query>` | `fa -se` | Searches recipes by name, alias, language, or variant | Single-line match overview |
-| `fa --show <target>` | `fa -sh` | Displays full recipe description, tooling, files, and steps | Accepts recipe name or alias |
-| `fa --alias <name> [args...]` | `fa -a` | Runs a general-purpose command alias from `[aliases]` | Direct `fa <name>` also supported |
-| `fa --recipe <action>` | `fa -r` | Manages recipe configuration files (`new`, `edit`, `validate`) | Subcommands: `new`, `edit`, `validate` |
-| `fa --template add <recipe> <path>...` | `fa -t` | Copies files or folders into a recipe's template directory | `-f` / `--force` to overwrite without confirmation |
-| `fa --self-update` | — | Checks GitHub Releases and updates `fa` binary in-place | `-d` / `--dry-run` to preview update check |
-| `fa --self-uninstall` | — | Safely removes `fa` binary executable, state, and config directories | `-y` / `--yes`, `-n` / `--no`, `-d` / `--dry-run` |
-| `fa --version` | `fa -v` | Displays version and checks for updates in background | Cached update notifications |
-| `fa --help` | `fa -h` | Displays CLI help | — |
+| Command (Long)                         | Short    | Description                                                          | Notes & Flags                                                                      |
+| -------------------------------------- | -------- | -------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `fa --new <recipe> <name>`             | `fa -n`  | Scaffolds a new project from recipe into directory `<name>`          | `-v` / `--variant`, `-d` / `--dry-run`, `--no-install`                             |
+| `fa --list [category]`                 | `fa -l`  | Displays available recipes, aliases, or packs                        | Filter: `recipes` (`-r`), `aliases` (`-a`), `packs` (`-p`); `-s` / `--show-hidden` |
+| `fa --search <query>`                  | `fa -se` | Searches recipes by name, alias, language, or variant                | Single-line match overview                                                         |
+| `fa --show <target>`                   | `fa -sh` | Displays full recipe description, tooling, files, and steps          | Accepts recipe name or alias                                                       |
+| `fa --alias <name> [args...]`          | `fa -a`  | Runs a general-purpose command alias from `[aliases]`                | Direct `fa <name>` also supported                                                  |
+| `fa --recipe <action>`                 | `fa -r`  | Manages recipe configuration files (`new`, `edit`, `validate`)       | Subcommands: `new`, `edit`, `validate`                                             |
+| `fa --template add <recipe> <path>...` | `fa -t`  | Copies files or folders into a recipe's template directory           | `-f` / `--force` to overwrite without confirmation                                 |
+| `fa --self-update`                     | —        | Checks GitHub Releases and updates `fa` binary in-place              | `-d` / `--dry-run` to preview update check                                         |
+| `fa --self-uninstall`                  | —        | Safely removes `fa` binary executable, state, and config directories | `-y` / `--yes`, `-n` / `--no`, `-d` / `--dry-run`                                  |
+| `fa --version`                         | `fa -v`  | Displays version and checks for updates in background                | Cached update notifications                                                        |
+| `fa --help`                            | `fa -h`  | Displays CLI help                                                    | —                                                                                  |
 
 ---
 
@@ -101,6 +116,7 @@ fa -a hello                   # runs: echo 'Hello from fast-alias!'
 ```
 
 > [!NOTE] Where configuration files live
+>
 > - **Modular files**: `fa --recipe new <name>` creates `~/.config/fa/recipes.d/<name>.toml` and opens it in your `$EDITOR`.
 > - **Primary catalog**: `~/.config/fa/recipes.toml` (auto-provisioned on first run with sample recipes and aliases).
 > - **Templates directory**: Template files referenced as `{ from = "templates/<path>" }` resolve from `~/.config/fa/templates/<path>`.
@@ -156,10 +172,12 @@ fa free             # direct shorthand invocation
 Aliases accept parameters and arguments dynamically:
 
 1. **Positional Arguments (`$1`, `$2`, etc. or `{{1}}`, `{{2}}`):**
+
    ```toml
    [aliases.wrapper]
    avif = { command = "avifenc -s 0 -q ${3:-50} $1 -o $2", description = "Convert image to .avif with default quality" }
    ```
+
    ```bash
    fa avif image.jpg image.avif       # Runs: avifenc -s 0 -q '50' 'image.jpg' -o 'image.avif'
    fa avif image.jpg image.avif 80    # Runs: avifenc -s 0 -q '80' 'image.jpg' -o 'image.avif'
@@ -226,6 +244,7 @@ pin_versions = true    # Strip ^ and ~ from package.json (default: false)
 ```
 
 ## Docs
+
 - [Recipes](docs/recipes.md) - Recipe schema, package management, and template conventions.
 - [Commands](docs/commands.md) - CLI reference and subcommands; see [Configuration](docs/config.md) for git-style aliases.
 - [Packs](docs/packs.md) - Modular components and pack bundle installation.
