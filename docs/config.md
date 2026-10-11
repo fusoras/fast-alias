@@ -50,7 +50,29 @@ default_behavior = "list"
 3. **`default_behavior = "error"`**:
    Immediately halts with an error requiring an explicit pack or component argument.
 
+## Auto-Increment File Fallback Overflow (`[autoincrement]`)
+
+Configure the default global overflow behavior when positional auto-increment placeholders (e.g. `${2:-output-{+##}.png}`) exhaust their numerical or character slots:
+
+```toml
+# ~/.config/fa/config.toml
+[autoincrement]
+# Overflow behavior when limit is reached:
+# "overwrite" (default) -> caps at last file and overwrites it with warning
+# "grow" -> expands number of digits or characters (e.g. 99 -> 100)
+# "rotate" -> wraps back to beginning (e.g. 99 -> 01)
+# "error" -> halts with an error
+overflow = "overwrite"
+```
+
+### Precedence Hierarchy
+1. **Inline Token Strategy**: `${2:-output-{+##:grow}.png}` (highest precedence).
+2. **Alias-Level Setting**: `overflow = "rotate"` declared inside the command table in TOML.
+3. **Global Setting**: `[autoincrement] overflow = "..."` in `~/.config/fa/config.toml`.
+4. **Builtin Default**: `"overwrite"`.
+
 ## Related Documentation
 
 - For the full CLI reference and command flags, see [commands.md](commands.md).
 - For packs and components, see [packs.md](packs.md).
+- For variable interpolation and template variables, see [variables.md](variables.md).

@@ -1063,7 +1063,15 @@ fn run_cli() -> anyhow::Result<()> {
             }
 
             ensure_trusted()?;
-            let effective_command = crate::templating::substitute_command_args(&cmd.command, &args);
+            let default_overflow = cmd
+                .overflow
+                .as_deref()
+                .unwrap_or(&config.settings.autoincrement.overflow);
+            let effective_command = crate::templating::substitute_command_args_with_overflow(
+                &cmd.command,
+                &args,
+                Some(default_overflow),
+            );
             preflight(&effective_command)?;
             run_shell_with_env(&effective_command, &all_envs)?;
         }
@@ -2473,6 +2481,7 @@ description = "Next.js TS"
             command: "bunx tabernaculo list".to_string(),
             description: Some("List skills".to_string()),
             platform: None,
+            overflow: None,
             aliases: vec![],
             args: vec![],
             env: env_map,

@@ -35,6 +35,14 @@ default_behavior = "list"
 # Icon style for CLI and TUI: "unicode" (default) | "nerd-font"
 icons = "unicode"
 
+[autoincrement]
+# Overflow behavior when auto-increment file pattern limit is reached:
+# "overwrite" (default) -> caps at last file and overwrites it with warning
+# "grow" -> expands number of digits or characters (e.g. 99 -> 100)
+# "rotate" -> wraps back to beginning (e.g. 99 -> 01)
+# "error" -> halts with an error
+overflow = "overwrite"
+
 [alias]
 # Command aliases (Git style)
 # Native fa command shortcuts:
@@ -259,6 +267,7 @@ pub struct Command {
     pub command: String,
     pub description: Option<String>,
     pub platform: Option<String>,
+    pub overflow: Option<String>,
     #[serde(default)]
     pub aliases: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_args")]
@@ -402,12 +411,32 @@ impl UiSettings {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct AutoincrementSettings {
+    #[serde(default = "default_overflow_strategy")]
+    pub overflow: String,
+}
+
+fn default_overflow_strategy() -> String {
+    "overwrite".to_string()
+}
+
+impl Default for AutoincrementSettings {
+    fn default() -> Self {
+        Self {
+            overflow: "overwrite".to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
 pub struct GlobalConfig {
     #[serde(default)]
     pub packs: PacksSettings,
     #[serde(default)]
     pub ui: UiSettings,
+    #[serde(default)]
+    pub autoincrement: AutoincrementSettings,
     #[serde(default, alias = "aliases")]
     pub alias: BTreeMap<String, String>,
 }
@@ -749,6 +778,7 @@ struct RawCommand {
     command: Option<String>,
     description: Option<String>,
     platform: Option<String>,
+    overflow: Option<String>,
     #[serde(default)]
     aliases: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_args")]
@@ -779,6 +809,7 @@ fn parse_command_from_value<E: serde::de::Error>(val: toml::Value) -> Result<Com
         command: raw_cmd.command.unwrap_or_default(),
         description: raw_cmd.description,
         platform: raw_cmd.platform,
+        overflow: raw_cmd.overflow,
         aliases: raw_cmd.aliases,
         args: raw_cmd.args,
         env: raw_cmd.env.map(|e| e.into_map()).unwrap_or_default(),

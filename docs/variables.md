@@ -124,7 +124,27 @@ create-img-standard = {
 
 ---
 
+## 6. Auto-Incrementing File Fallbacks (`{+...}`)
+
+In addition to static string template variables (`{{KEY}}`), positional argument fallbacks support **dynamic auto-incrementing file placeholders** evaluated at runtime:
+
+```toml
+[aliases.ai]
+# Renders to output-01.png, output-02.png...
+anime = { command = "sd-cli -p $1 -o ${2:-output-{+##}.png}", description = "Generate anime" }
+
+# Mixed-case versions: concept-Aa.png, concept-Ab.png... concept-Zz.png
+concept = { command = "render-cli $1 -o ${2:-concept-{+Aa}.png}", description = "Render concept" }
+```
+
+- Supported patterns: `{+#}` / `{+##}` (numeric), `{+A}` / `{+AA}` (uppercase), `{+a}` / `{+aa}` (lowercase), `{+Aa}` (mixed-case odometer).
+- Evaluated **strictly** inside parameter default fallbacks (`${N:-...}`, `{{N:-...}}`).
+- For complete documentation on overflow strategies (`overwrite`, `grow`, `rotate`, `error`), see [docs/commands.md](commands.md#auto-incrementing-file-fallbacks-).
+
+---
+
 ## Related Documentation
 - For runtime environment variables (`env`, `env_force`, `_env`, `_env_force`) and Bash export syntax, see [docs/environment.md](environment.md).
 - For complete alias catalogs and recipes, see [docs/recipes.md](recipes.md).
 - For general CLI commands and flags, see [docs/commands.md](commands.md).
+- For global overflow configuration, see [docs/config.md](config.md#auto-increment-file-fallback-overflow-autoincrement).

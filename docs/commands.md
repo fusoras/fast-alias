@@ -115,6 +115,46 @@ avif = { command = "avifenc -s 0 -q ${2:-50} $1 -o ${1%.*}.avif", description = 
 gco = { command = "git checkout", description = "Switch branch" } # Passthrough: fa gco main -> git checkout 'main'
 ```
 
+#### Auto-Incrementing File Fallbacks (`{+...}`)
+When declaring default values in positional parameters (`${N:-...}` or `{{N:-...}}`), you can embed auto-incrementing file tokens starting with `+`. When the user omits the argument, `fa` searches for existing files on disk and automatically selects the next available filename without requiring manual numbering:
+
+- **Numeric:** `{+#}` (1-9), `{+##}` (01-99), `{+###}` (001-999).
+- **Uppercase Alphabet:** `{+A}` (A-Z), `{+AA}` (AA-ZZ).
+- **Lowercase Alphabet:** `{+a}` (a-z), `{+aa}` (aa-zz).
+- **Mixed Positional Patterns:** `{+Aa}` (Aa to Zz, 676 combinations), `{+A#}` (A1 to Z9), `{+#a}` (1a to 9z).
+- **Scope restriction:** Evaluated **strictly** inside parameter default values (`${N:-...}`, `{{N:-...}}`). Never triggers outside defaults or when the user provides an explicit CLI argument.
+
+```toml
+[aliases.ai]
+# Renders to output-01.png, then output-02.png, output-03.png...
+anime = { command = "sd-cli -p $1 -o ${2:-output-{+##}.png}", description = "Generate anime" }
+
+# Versions with mixed-case (concept-Aa.png, concept-Ab.png... concept-Zz.png)
+concept = { command = "render-cli $1 -o ${2:-concept-{+Aa}.png}", description = "Render concept" }
+```
+
+When a preceding file already exists, `fa` outputs a non-intrusive notification to `stderr`:
+```text
+[fa] 'output-01.png' already exists → using 'output-02.png'
+```
+
+##### Overflow Strategies
+When all available slots in the pattern are exhausted (e.g. reaching 100 with `{+##}` or reaching after `Z` with `{+A}`), `fa` resolves overflow based on the chosen strategy:
+
+| Strategy | Token Syntax | Behavior at Limit |
+|---|---|---|
+| **`overwrite`** *(Default)* | `{+##}` or `{+##:overwrite}` | Caps at the maximum value and overwrites the last file (prints warning to `stderr`). |
+| **`grow`** | `{+##:grow}` | Expands digits or characters (e.g. `99` $\rightarrow$ `100`, `101`). |
+| **`rotate`** | `{+##:rotate}` | Cycles back to the initial candidate (e.g. `99` $\rightarrow$ `01`). |
+| **`error`** | `{+##:error}` | Emits an error to `stderr` and halts. |
+
+> [!WARNING] Data Overwrite Risk
+> By default (`overflow = "overwrite"`), when the pattern's capacity is exhausted (e.g. 99 for `{+##}`), `fa` caps the counter and **overwrites the last file**.
+> 
+> To prevent data loss in large batches, either:
+> 1. Use larger padding (e.g. `{+###}` for 999 files).
+> 2. Set the overflow strategy to `grow` (inline `{+##:grow}` or globally via `config.toml`).
+
 #### Namespaced Command Groups (`[aliases.":<namespace>"]`)
 Sections starting with `:` act as isolated command namespaces. Their subcommands are called with multi-word syntax (`fa <namespace> <command>`) and do not pollute the global root namespace:
 
