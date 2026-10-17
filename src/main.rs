@@ -1391,19 +1391,19 @@ pub fn format_command_details(cmd: &Command, section: &str, key: &str) -> String
         key.to_string()
     };
     let mut out = String::new();
-    out.push_str(&format!("{BOLD_CYAN}Command:{RESET} {display_name}\n"));
+    out.push_str(&format!("{BOLD_CYAN}Command:{RESET} {DIM_GRAY}{display_name}{RESET}\n"));
     if let Some(loc) = format_source_location(cmd.source_file.as_deref(), cmd.source_line) {
-        out.push_str(&format!("Defined in: {loc}\n"));
+        out.push_str(&format!("Defined in: {DIM_GRAY}{loc}{RESET}\n"));
     }
-    out.push_str(&format!("Section: {section}\n"));
+    out.push_str(&format!("Section: {DIM_GRAY}{section}{RESET}\n"));
     if let Some(desc) = &cmd.description {
-        out.push_str(&format!("Description: {desc}\n"));
+        out.push_str(&format!("Description: {DIM_GRAY}{desc}{RESET}\n"));
     }
     if !cmd.aliases.is_empty() {
-        out.push_str(&format!("Aliases: {}\n", cmd.aliases.join(", ")));
+        out.push_str(&format!("Aliases: {DIM_GRAY}{}{RESET}\n", cmd.aliases.join(", ")));
     }
     if let Some(sig) = cmd.argument_signature() {
-        out.push_str(&format!("Usage: fa {display_name} {sig}\n"));
+        out.push_str(&format!("Usage: {DIM_GRAY}fa {display_name} {sig}{RESET}\n"));
     }
     if !cmd.args.is_empty() && cmd.args.iter().any(|a| a.description.is_some()) {
         out.push_str("Arguments:\n");
@@ -1460,23 +1460,29 @@ fn format_recipe_details(recipe: &crate::config::Recipe, key: &str) -> String {
     let mut out = String::new();
     // Styled header, mirroring the cyan `Command:` label used by `--show` for
     // commands/aliases.
-    out.push_str(&format!("{BOLD_CYAN}Recipe:{RESET} {key}\n"));
+    out.push_str(&format!("{BOLD_CYAN}Recipe:{RESET} {DIM_GRAY}{key}{RESET}\n"));
     if let Some(loc) = format_source_location(recipe.source_file.as_deref(), recipe.source_line) {
-        out.push_str(&format!("Defined in: {loc}\n"));
+        out.push_str(&format!("Defined in: {DIM_GRAY}{loc}{RESET}\n"));
     }
-    out.push_str(&format!("Description: {}\n", recipe.description));
+    out.push_str(&format!("Description: {DIM_GRAY}{}{RESET}\n", recipe.description));
     if let Some(lang) = &recipe.language {
-        out.push_str(&format!("Language: {lang}\n"));
+        out.push_str(&format!("Language: {DIM_GRAY}{lang}{RESET}\n"));
     }
     if !recipe.aliases.is_empty() {
-        out.push_str(&format!("Aliases: {}\n", recipe.aliases.join(", ")));
+        out.push_str(&format!(
+            "Aliases: {DIM_GRAY}{}{RESET}\n",
+            recipe.aliases.join(", ")
+        ));
     }
     if !recipe.variants.is_empty() {
-        out.push_str(&format!("Variants: {}\n", recipe.variants.join(", ")));
+        out.push_str(&format!(
+            "Variants: {DIM_GRAY}{}{RESET}\n",
+            recipe.variants.join(", ")
+        ));
     }
     if let Some(create) = &recipe.create
         && let Some(cmd) = &create.command {
-            out.push_str(&format!("\nCreate: {cmd}\n"));
+            out.push_str(&format!("\nCreate: {DIM_GRAY}{cmd}{RESET}\n"));
         }
     if let Some(tooling) = &recipe.tooling {
         out.push_str("\nTooling:\n");
@@ -1528,7 +1534,7 @@ fn format_recipe_details(recipe: &crate::config::Recipe, key: &str) -> String {
         .final_message
         .as_deref()
         .unwrap_or("Run 'cd <project-name>' to go to project");
-    out.push_str(&format!("\nFinal Message: {final_msg}\n"));
+    out.push_str(&format!("\nFinal Message: {DIM_GRAY}{final_msg}{RESET}\n"));
     out
 }
 
@@ -2120,16 +2126,28 @@ down = { command = "docker compose down" }
         // When final_message is None, defaults to cd project-name hint
         let default_output = format_recipe_details(&recipe, "test-stack");
         assert!(
-            default_output.contains("Final Message: Run 'cd <project-name>' to go to project"),
-            "Output must contain default navigation hint when unset, got:\n{default_output}"
+            default_output.contains(&[
+                "Final Message: ",
+                DIM_GRAY,
+                "Run 'cd <project-name>' to go to project",
+                RESET
+            ]
+            .concat()),
+            "Output must contain default navigation hint (dim gray) when unset, got:\n{default_output}"
         );
 
         // When final_message is Some(...), displays the custom message
         recipe.final_message = Some("Run `cd {{name}} && cargo test` to start".to_string());
         let custom_output = format_recipe_details(&recipe, "test-stack");
         assert!(
-            custom_output.contains("Final Message: Run `cd {{name}} && cargo test` to start"),
-            "Output must contain the custom final message, got:\n{custom_output}"
+            custom_output.contains(&[
+                "Final Message: ",
+                DIM_GRAY,
+                "Run `cd {{name}} && cargo test` to start",
+                RESET
+            ]
+            .concat()),
+            "Output must contain the custom final message (dim gray), got:\n{custom_output}"
         );
         println!("   ✓ Both default and custom final_message displayed in show_recipe.\n");
     }
@@ -2490,9 +2508,23 @@ description = "Next.js TS"
             source_line: Some(12),
         };
         let output = format_command_details(&cmd, ":skills", "ls");
-        assert!(output.contains("Command:") && output.contains("skills ls"), "Output must contain full command name");
-        assert!(output.contains("Defined in:"), "Output must contain 'Defined in:'");
-        assert!(output.contains("skills.toml (line 12)"), "Output must contain file and line");
+        assert!(
+            output.contains(&format!("{BOLD_CYAN}Command:{RESET} {DIM_GRAY}skills ls{RESET}")),
+            "Command header value must be dim gray, got:\n{output:?}"
+        );
+        assert!(
+            output.contains(&format!("Defined in: {DIM_GRAY}"))
+                && output.contains(&format!("skills.toml (line 12){RESET}")),
+            "Defined in value must be wrapped in dim gray, got:\n{output:?}"
+        );
+        assert!(
+            output.contains(&format!("Section: {DIM_GRAY}:skills{RESET}")),
+            "Section value must be dim gray, got:\n{output:?}"
+        );
+        assert!(
+            output.contains(&format!("Description: {DIM_GRAY}List skills{RESET}")),
+            "Description value must be dim gray, got:\n{output:?}"
+        );
         assert!(output.contains("Environment:"), "Output must contain Environment section");
         assert!(output.contains("CONTEXT = 2048"), "Output must display env");
         assert!(output.contains("Environment (forced):"), "Output must contain forced section");
@@ -2522,7 +2554,14 @@ description = "Next.js TS"
             ..Default::default()
         };
         let out = format_command_details(&cmd, "img", "convert");
-        assert!(out.contains("Usage: fa convert <input> [output]"), "Must show Usage line: got {out}");
+        assert!(
+            out.contains(&format!("Usage: {DIM_GRAY}fa convert <input> [output]{RESET}")),
+            "Usage line value must be dim gray: got {out}"
+        );
+        assert!(
+            out.contains(&format!("Aliases: {DIM_GRAY}cnv{RESET}")),
+            "Aliases value must be dim gray: got {out}"
+        );
         assert!(out.contains("Arguments:"), "Must show Arguments block: got {out}");
         assert!(out.contains("<input>") && out.contains("Source path"), "Must document input arg: got {out}");
         assert!(out.contains("[output]") && out.contains("Destination directory"), "Must document output arg: got {out}");
@@ -2539,11 +2578,18 @@ description = "Next.js TS"
         };
         let output = format_recipe_details(&recipe, "next-ts");
         assert!(
-            output.contains(&format!("{BOLD_CYAN}Recipe:{RESET} next-ts")),
-            "Recipe header must use the styled cyan label like `--show` for commands, got:\n{output:?}"
+            output.contains(&format!("{BOLD_CYAN}Recipe:{RESET} {DIM_GRAY}next-ts{RESET}")),
+            "Recipe header value must be dim gray, got:\n{output:?}"
         );
-        assert!(output.contains("Defined in:"), "Output must contain 'Defined in:'");
-        assert!(output.contains("recipes.toml (line 5)"));
+        assert!(
+            output.contains(&format!("Description: {DIM_GRAY}Next.js TypeScript stack{RESET}")),
+            "Recipe description value must be dim gray, got:\n{output:?}"
+        );
+        assert!(
+            output.contains(&format!("Defined in: {DIM_GRAY}"))
+                && output.contains(&format!("recipes.toml (line 5){RESET}")),
+            "Recipe source location value must be dim gray, got:\n{output:?}"
+        );
     }
 
     #[test]
