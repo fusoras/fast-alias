@@ -187,12 +187,12 @@ pub fn recipe_new(
             validate_name(name)?;
             for path in config_files(config_dir) {
                 if let Ok(cfg) = parse_config_file(&path) && cfg.recipes.contains_key(name) {
-                    anyhow::bail!("recipe '{name}' ya existe (definida en {})", path.display());
+                    anyhow::bail!("recipe '{name}' already exists (defined in {})", path.display());
                 }
             }
             let file = recipes_d.join(format!("{name}.toml"));
             if file.exists() {
-                anyhow::bail!("recipe '{name}' ya existe");
+                anyhow::bail!("recipe '{name}' already exists");
             }
             fs::create_dir_all(&recipes_d)
                 .map_err(|e| anyhow::anyhow!("Failed to create {}: {e}", recipes_d.display()))?;
@@ -209,7 +209,7 @@ pub fn recipe_new(
                 .unwrap_or(0);
             let file = recipes_d.join(format!("untitled-{secs}-{}.toml", std::process::id()));
             if file.exists() {
-                anyhow::bail!("recipe '{}' ya existe", file.display());
+                anyhow::bail!("recipe '{}' already exists", file.display());
             }
             fs::write(&file, scratch_toml())
                 .map_err(|e| anyhow::anyhow!("Failed to write {}: {e}", file.display()))?;
@@ -259,7 +259,7 @@ pub fn recipe_edit_path(config_dir: &Path, name: &str) -> anyhow::Result<PathBuf
             }
         }
     }
-    found.ok_or_else(|| anyhow::anyhow!("recipe '{name}' no existe"))
+    found.ok_or_else(|| anyhow::anyhow!("recipe '{name}' does not exist"))
 }
 
 /// Deletes a recipe's dedicated TOML file under `recipes.d/<name>.toml`.
@@ -303,7 +303,7 @@ pub fn recipe_rm(config_dir: &Path, name: &str) -> anyhow::Result<PathBuf> {
                 .map_err(|e| anyhow::anyhow!("Failed to remove {}: {e}", path.display()))?;
             Ok(path)
         }
-        None => anyhow::bail!("recipe '{name}' no existe"),
+        None => anyhow::bail!("recipe '{name}' does not exist"),
     }
 }
 
@@ -828,7 +828,7 @@ mod tests {
             .expect_err("recipe name present in recipes.toml must be rejected");
         let msg = err.to_string();
         assert!(
-            msg.contains("recipe 'my-stack' ya existe"),
+            msg.contains("recipe 'my-stack' already exists"),
             "error must say recipe already exists, got: '{msg}'"
         );
         assert!(
@@ -846,7 +846,7 @@ mod tests {
             .expect_err("recipe name present in recipes.d/* must be rejected");
         let msg = err.to_string();
         assert!(
-            msg.contains("recipe 'other-stack' ya existe"),
+            msg.contains("recipe 'other-stack' already exists"),
             "error must say recipe already exists, got: '{msg}'"
         );
         assert!(
@@ -923,7 +923,7 @@ mod tests {
             .expect_err("missing recipe must be rejected");
         let msg = err.to_string();
         assert!(
-            msg.contains("recipe 'ghost' no existe"),
+            msg.contains("recipe 'ghost' does not exist"),
             "error must say recipe does not exist, got: '{msg}'"
         );
         assert!(
@@ -1199,14 +1199,14 @@ sd-cli -m model
             .expect_err("missing recipe must make validation fail (CLI exit != 0)");
         let msg = err.to_string();
         assert!(
-            msg.contains("recipe 'ghost' no existe"),
-            "error must contain \"recipe 'ghost' no existe\" (non-zero exit via Err), got: '{msg}'"
+            msg.contains("recipe 'ghost' does not exist"),
+            "error must contain \"recipe 'ghost' does not exist\" (non-zero exit via Err), got: '{msg}'"
         );
         assert!(
-            msg.contains("no existe"),
-            "error message must contain 'no existe', got: '{msg}'"
+            msg.contains("does not exist"),
+            "error message must contain 'does not exist', got: '{msg}'"
         );
-        println!("   ✓ Missing name errors with 'no existe' so the CLI exits non-zero.\n");
+        println!("   ✓ Missing name errors with 'does not exist' so the CLI exits non-zero.\n");
     }
 
     #[test]
@@ -1402,7 +1402,7 @@ description = "Echo"
     fn test_recipe_rm_errors_on_nonexistent_recipe() {
         let dir = temp_dir("rm-missing");
         let err = recipe_rm(&dir, "ghost").unwrap_err();
-        assert!(err.to_string().contains("no existe"), "Must error with 'no existe'");
+        assert!(err.to_string().contains("does not exist"), "Must error with 'does not exist'");
     }
 
     #[test]

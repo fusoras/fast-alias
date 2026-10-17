@@ -2842,9 +2842,9 @@ coder = { command = "llama-cli", env = { FALLBACK_VAR = "cmd_fallback", CMD_ONLY
 GLOBAL_BIN = "sd-cli"
 
 [aliases.":ai"]
-_vars = { SD = "{{GLOBAL_BIN}} --steps 25 -m $AI_IMAGE_MODEL", SD_DESCRIPTION = "Generar imagen con SD" }
+_vars = { SD = "{{GLOBAL_BIN}} --steps 25 -m $AI_IMAGE_MODEL", SD_DESCRIPTION = "Generate image with SD" }
 
-create-img-anima = { description = "{{SD_DESCRIPTION}} estilo anime: <prompt> <output>", command = "{{SD}}", env_force = 'export AI_IMAGE_MODEL="$AI_MODELS_DIR/vision/anima.safetensors"' }
+create-img-anima = { description = "{{SD_DESCRIPTION}} anime style: <prompt> <output>", command = "{{SD}}", env_force = 'export AI_IMAGE_MODEL="$AI_MODELS_DIR/vision/anima.safetensors"' }
 "#;
         let config: Config = toml::from_str(toml_str).expect("Should parse TOML with _vars and bash-style env_force");
 
@@ -2856,7 +2856,7 @@ create-img-anima = { description = "{{SD_DESCRIPTION}} estilo anime: <prompt> <o
         );
         assert_eq!(
             cmd.description.as_deref(),
-            Some("Generar imagen con SD estilo anime: <prompt> <output>"),
+            Some("Generate image with SD anime style: <prompt> <output>"),
             "{{SD_DESCRIPTION}} must be replaced in description"
         );
         assert_eq!(
