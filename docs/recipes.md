@@ -232,10 +232,11 @@ du   = { command = "du -sh */", description = "Size per folder" }
 ```
 
 - **Section**: the section name (`git`, `sistema`). `fa --list` and `fa --search` group aliases by section.
-- **Command**: shell command executed via `sh -c`. Supports positional parameters (`$1`, `$2`, `${1}`, `{{1}}`, `{{2}}`, `$@`, `$*`) and template variables (`{{var}}`). All substituted values are shell-quoted (CWE-78 safe).
+- **Command**: shell command executed via `sh -c`. Supports positional parameters (`$1`, `$2`, `${1}`, `{{1}}`, `{{2}}`, `$@`, `$*`) and template variables (`{{var}}`). Values are substituted **verbatim**: `fa` never adds or removes quoting, so the recipe owns it.
 - **Arguments**:
   - Positional variables (`$1`, `{{1}}`, etc.) are replaced with corresponding CLI argument index.
-  - If no positional placeholders are present, arguments are automatically appended shell-quoted at the end as passthrough (e.g. `fa --alias rm a.txt b.txt` → `git rm 'a.txt' 'b.txt'`).
+  - If no positional placeholders are present, arguments are appended verbatim at the end as passthrough (e.g. `fa --alias rm a.txt b.txt` → `git rm a.txt b.txt`).
+  - Quote the placeholder in the recipe when the value may contain spaces or shell metacharacters (e.g. `"$1"` → `"my file.txt"`). Quoting on the command line is consumed by your shell and never reaches `fa`.
   - Explicit argument signatures and documentation can be declared using `args` (see below).
 - **Aliases**: the `aliases` array declares alternative names (`fa --alias co` or `fa co` also works).
 - **Platform** (optional): restrict to `debian`/`termux`.

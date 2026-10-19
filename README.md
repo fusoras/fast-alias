@@ -179,14 +179,16 @@ Aliases accept parameters and arguments dynamically:
    ```
 
    ```bash
-   fa avif image.jpg image.avif       # Runs: avifenc -s 0 -q '50' 'image.jpg' -o 'image.avif'
-   fa avif image.jpg image.avif 80    # Runs: avifenc -s 0 -q '80' 'image.jpg' -o 'image.avif'
+   fa avif image.jpg image.avif       # Runs: avifenc -s 0 -q 50 image.jpg -o image.avif
+   fa avif image.jpg image.avif 80    # Runs: avifenc -s 0 -q 80 image.jpg -o image.avif
    ```
+
+   Values are inserted **verbatim**: `fa` never adds or removes quoting. Quote the placeholder in the recipe if a value may contain spaces (e.g. `"$1"`).
 
 2. **Default Values (`${N:-value}` or `{{N:-value}}`):**
    Defines default values (numbers or text) used when the user does not provide that specific argument.
 
-3. **Automatic passthrough:** If the command contains no positional variables, arguments are safely appended at the end.
+3. **Automatic passthrough:** If the command contains no positional variables, arguments are appended verbatim at the end.
 
 ### Rules to remember
 

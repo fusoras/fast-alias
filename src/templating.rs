@@ -16,14 +16,6 @@ pub fn substitute(input: &str, vars: &HashMap<String, String>) -> String {
     result
 }
 
-/// Quotes a value so it is treated as a single literal shell word when
-/// interpolated into a command executed via `sh -c`. Neutralizes injection
-/// attempts via `;`, `&&`, `$(...)`, backticks, etc.
-pub fn shell_quote(value: &str) -> String {
-    let escaped = value.replace('\'', "'\\''");
-    format!("'{escaped}'")
-}
-
 fn find_matching_brace(s: &str) -> Option<usize> {
     let mut depth = 1usize;
     for (idx, ch) in s.char_indices() {
@@ -214,115 +206,124 @@ pub fn substitute_command_args_with_overflow(
     args: &[String],
     default_overflow: Option<&str>,
 ) -> String {
-    let mut result = command.to_string();
+    let mut out = String::with_capacity(command.len());
+    let mut rest = command;
+    let mut saw_placeholder = false;
 
-    let has_bash_positional = (1..=20).any(|i| {
-        result.contains(&format!("${i}")) || result.contains(&format!("${{{i}"))
-    });
-    let has_template_positional = (1..=20).any(|i| {
-        result.contains(&format!("{{{{{i}"))
-    });
-    let has_all_args = result.contains("$@") || result.contains("$*");
-
-    if !has_bash_positional && !has_template_positional && !has_all_args {
-        if args.is_empty() {
-            return result;
-        }
-        let quoted_args = args
-            .iter()
-            .map(|a| shell_quote(a))
-            .collect::<Vec<_>>()
-            .join(" ");
-        return format!("{result} {quoted_args}");
-    }
-
-    // Replace all-args placeholders: $@, $*
-    if result.contains("$@") || result.contains("$*") {
-        let all_quoted = args
-            .iter()
-            .map(|a| shell_quote(a))
-            .collect::<Vec<_>>()
-            .join(" ");
-        result = result.replace("\"$@\"", &all_quoted);
-        result = result.replace("\"$*\"", &all_quoted);
-        result = result.replace("$@", &all_quoted);
-        result = result.replace("$*", &all_quoted);
-    }
-
-    // Replace positional placeholders with defaults or given arguments (up to 20 parameters)
-    for pos in 1..=20 {
-        let given_val = if pos <= args.len() {
-            Some(&args[pos - 1])
-        } else {
-            None
-        };
-
-        // 1. Process ${pos:-default}, ${pos:default} and quoted versions
-        for separator in [":-", ":"] {
-            let prefix_braced = format!("${{{pos}{separator}");
-            while let Some(start) = result.find(&prefix_braced) {
-                if let Some(end) = find_matching_brace(&result[start + prefix_braced.len()..]) {
-                    let default_val = &result[start + prefix_braced.len()..start + prefix_braced.len() + end];
-                    let effective_val = match given_val {
-                        Some(val) => val.as_str().to_string(),
-                        None => resolve_auto_increment(default_val, default_overflow),
-                    };
-                    let quoted = shell_quote(&effective_val);
-                    let full_pattern = format!("${{{pos}{separator}{default_val}}}");
-                    let quoted_pattern = format!("\"${{{pos}{separator}{default_val}}}\"");
-
-                    if result.contains(&quoted_pattern) {
-                        result = result.replace(&quoted_pattern, &quoted);
-                    } else {
-                        result = result.replace(&full_pattern, &quoted);
-                    }
-                } else {
-                    break;
-                }
+    while let Some(ch) = rest.chars().next() {
+        if ch == '$' {
+            // All-args placeholders: $@, $*. Values are inserted verbatim.
+            if let Some(stripped) = rest.strip_prefix("$@").or_else(|| rest.strip_prefix("$*")) {
+                out.push_str(&args.join(" "));
+                saw_placeholder = true;
+                rest = stripped;
+                continue;
             }
-        }
 
-        // 2. Process {{pos:-default}} and {{pos:default}}
-        for separator in [":-", ":"] {
-            let prefix_template = format!("{{{{{pos}{separator}");
-            while let Some(start) = result.find(&prefix_template) {
-                if let Some(end) = find_matching_double_brace(&result[start + prefix_template.len()..]) {
-                    let default_val = &result[start + prefix_template.len()..start + prefix_template.len() + end];
-                    let effective_val = match given_val {
-                        Some(val) => val.as_str().to_string(),
-                        None => resolve_auto_increment(default_val, default_overflow),
-                    };
-                    let quoted = shell_quote(&effective_val);
-                    let full_pattern = format!("{{{{{pos}{separator}{default_val}}}}}");
-                    result = result.replace(&full_pattern, &quoted);
-                } else {
-                    break;
+            // Braced form: ${pos}, ${pos:-default}, ${pos:default}
+            if let Some(after) = rest.strip_prefix("${")
+                && let Some(end) = find_matching_brace(after)
+                && let Some((pos, default)) = parse_positional_spec(&after[..end])
+            {
+                saw_placeholder = true;
+                match render_positional(pos, default, args, default_overflow) {
+                    Some(value) => out.push_str(&value),
+                    None => out.push_str(&rest[..2 + end + 1]),
                 }
+                rest = &after[end + 1..];
+                continue;
             }
+
+            // Bare form: $pos. Read the whole digit run so `$10` is one token.
+            let digits = rest[1..]
+                .bytes()
+                .take_while(|byte| byte.is_ascii_digit())
+                .count();
+            if digits > 0
+                && let Ok(pos) = rest[1..1 + digits].parse::<usize>()
+                && (1..=20).contains(&pos)
+            {
+                saw_placeholder = true;
+                match args.get(pos - 1) {
+                    Some(value) => out.push_str(value),
+                    None => out.push_str(&rest[..1 + digits]),
+                }
+                rest = &rest[1 + digits..];
+                continue;
+            }
+        } else if ch == '{'
+            && let Some(after) = rest.strip_prefix("{{")
+            && let Some(end) = find_matching_double_brace(after)
+            && let Some((pos, default)) = parse_positional_spec(&after[..end])
+        {
+            // Template form: {{pos}}, {{pos:-default}}, {{pos:default}}
+            saw_placeholder = true;
+            match render_positional(pos, default, args, default_overflow) {
+                Some(value) => out.push_str(&value),
+                None => out.push_str(&rest[..2 + end + 2]),
+            }
+            rest = &after[end + 2..];
+            continue;
         }
 
-        // 3. Process standard positional placeholders ($pos, ${pos}, {{pos}}) if argument exists
-        if let Some(val) = given_val {
-            let quoted = shell_quote(val);
-
-            // Quoted patterns: "$1", "${1}"
-            result = result.replace(&format!("\"${pos}\""), &quoted);
-            result = result.replace(&format!("\"${{{pos}}}\""), &quoted);
-
-            // Unquoted patterns: $1, ${1}
-            result = result.replace(&format!("${pos}"), &quoted);
-            result = result.replace(&format!("${{{pos}}}"), &quoted);
-
-            // Template pattern: {{1}}
-            result = result.replace(&format!("{{{{{pos}}}}}"), &quoted);
-        }
+        out.push(ch);
+        rest = &rest[ch.len_utf8()..];
     }
 
-    result
+    // No placeholder was used: pass every argument through verbatim.
+    if !saw_placeholder && !args.is_empty() {
+        out.push(' ');
+        out.push_str(&args.join(" "));
+    }
+
+    out
 }
 
-/// Substitutes `{{key}}` placeholders in a shell command, shell-quoting every
-/// substituted value to prevent command injection (CWE-78).
+/// Parses the content of `${...}` or `{{...}}` positional placeholders.
+///
+/// Accepts `pos`, `pos:default` and `pos:-default`. Returns `None` when the
+/// content is not a positional placeholder in the `1..=20` range.
+fn parse_positional_spec(spec: &str) -> Option<(usize, Option<&str>)> {
+    let digits = spec
+        .bytes()
+        .take_while(|byte| byte.is_ascii_digit())
+        .count();
+    if digits == 0 {
+        return None;
+    }
+    let pos: usize = spec[..digits].parse().ok()?;
+    if !(1..=20).contains(&pos) {
+        return None;
+    }
+
+    let remainder = &spec[digits..];
+    if remainder.is_empty() {
+        return Some((pos, None));
+    }
+    let default = remainder
+        .strip_prefix(":-")
+        .or_else(|| remainder.strip_prefix(':'))?;
+    Some((pos, Some(default)))
+}
+
+/// Resolves a positional placeholder to its value without adding shell quoting.
+fn render_positional(
+    pos: usize,
+    default: Option<&str>,
+    args: &[String],
+    default_overflow: Option<&str>,
+) -> Option<String> {
+    if let Some(value) = args.get(pos - 1) {
+        return Some(value.clone());
+    }
+    default.map(|value| resolve_auto_increment(value, default_overflow))
+}
+
+/// Substitutes `{{key}}` placeholders in a shell command.
+///
+/// Values are inserted verbatim: the recipe author owns any quoting. This keeps
+/// the original command intact (e.g. `"{{name}}"` becomes `"my app"`, not
+/// `"'my app'"`).
 pub fn substitute_shell(input: &str, vars: &HashMap<String, String>) -> String {
     if !input.contains("{{") {
         return input.to_string();
@@ -330,7 +331,7 @@ pub fn substitute_shell(input: &str, vars: &HashMap<String, String>) -> String {
     let mut result = input.to_string();
     for (key, value) in vars {
         let placeholder = format!("{{{{{key}}}}}");
-        result = result.replace(&placeholder, &shell_quote(value));
+        result = result.replace(&placeholder, value);
     }
     result
 }
@@ -390,23 +391,27 @@ mod tests {
     }
 
     #[test]
-    fn shell_quote_should_wrap_in_single_quotes() {
-        assert_eq!(shell_quote("myapp"), "'myapp'");
-        assert_eq!(shell_quote("my app"), "'my app'");
-        assert_eq!(shell_quote("it's"), "'it'\\''s'");
-    }
-
-    #[test]
-    fn substitute_shell_should_neutralize_injection() {
+    fn substitute_shell_should_substitute_verbatim() {
         let mut vars = HashMap::new();
         vars.insert("name".to_string(), "myapp; rm -rf ~".to_string());
 
         let out = substitute_shell("pnpm create my-recipe@latest {{name}} --template minimal", &vars);
-        assert_eq!(out, "pnpm create my-recipe@latest 'myapp; rm -rf ~' --template minimal");
-        assert!(!out.contains("; rm -rf") || out.contains("'myapp; rm -rf ~'"));
+        assert_eq!(out, "pnpm create my-recipe@latest myapp; rm -rf ~ --template minimal");
 
         let out2 = substitute_shell("echo {{name}}", &vars);
-        assert_eq!(out2, "echo 'myapp; rm -rf ~'");
+        assert_eq!(out2, "echo myapp; rm -rf ~");
+    }
+
+    #[test]
+    fn substitute_shell_should_preserve_recipe_quotes() {
+        let mut vars = HashMap::new();
+        vars.insert("name".to_string(), "my app".to_string());
+
+        assert_eq!(
+            substitute_shell("git init \"{{name}}\"", &vars),
+            "git init \"my app\""
+        );
+        assert_eq!(substitute_shell("echo '{{name}}'", &vars), "echo 'my app'");
     }
 
     #[test]
@@ -414,7 +419,7 @@ mod tests {
         let cmd = "avifenc -s 0 -q 50 $1 -o $2";
         let args = vec!["in.jpg".to_string(), "out.avif".to_string()];
         let out = substitute_command_args(cmd, &args);
-        assert_eq!(out, "avifenc -s 0 -q 50 'in.jpg' -o 'out.avif'");
+        assert_eq!(out, "avifenc -s 0 -q 50 in.jpg -o out.avif");
     }
 
     #[test]
@@ -422,7 +427,7 @@ mod tests {
         let cmd = "avifenc -s 0 -q 50 {{1}} -o {{2}}";
         let args = vec!["in.jpg".to_string(), "out.avif".to_string()];
         let out = substitute_command_args(cmd, &args);
-        assert_eq!(out, "avifenc -s 0 -q 50 'in.jpg' -o 'out.avif'");
+        assert_eq!(out, "avifenc -s 0 -q 50 in.jpg -o out.avif");
     }
 
     #[test]
@@ -430,7 +435,7 @@ mod tests {
         let cmd = "avifenc -s 0 -q 50";
         let args = vec!["in.jpg".to_string(), "out.avif".to_string()];
         let out = substitute_command_args(cmd, &args);
-        assert_eq!(out, "avifenc -s 0 -q 50 'in.jpg' 'out.avif'");
+        assert_eq!(out, "avifenc -s 0 -q 50 in.jpg out.avif");
     }
 
     #[test]
@@ -439,12 +444,12 @@ mod tests {
         let cmd = "avifenc -s 0 -q ${3:-40} $1 -o ${2:-default.avif}";
         let args = vec!["ticket.jpg".to_string()];
         let out = substitute_command_args(cmd, &args);
-        assert_eq!(out, "avifenc -s 0 -q '40' 'ticket.jpg' -o 'default.avif'");
+        assert_eq!(out, "avifenc -s 0 -q 40 ticket.jpg -o default.avif");
 
         // When argument is provided, override default
         let args_full = vec!["ticket.jpg".to_string(), "custom.avif".to_string(), "60".to_string()];
         let out_full = substitute_command_args(cmd, &args_full);
-        assert_eq!(out_full, "avifenc -s 0 -q '60' 'ticket.jpg' -o 'custom.avif'");
+        assert_eq!(out_full, "avifenc -s 0 -q 60 ticket.jpg -o custom.avif");
     }
 
     #[test]
@@ -454,7 +459,7 @@ mod tests {
         let out = substitute_command_args(cmd, &args);
         assert_eq!(
             out,
-            "avifenc -s 0 -q 50 'ticket-miduconf-2024.jpeg' 'output.avif' '80'"
+            "avifenc -s 0 -q 50 ticket-miduconf-2024.jpeg output.avif 80"
         );
     }
 
@@ -470,7 +475,7 @@ mod tests {
         // 1. First run: no files exist -> should resolve to 01
         let out1 = substitute_command_args(&cmd, &["scene".to_string()]);
         let expected1 = tmp_dir.join("render-01.png").to_string_lossy().to_string();
-        assert_eq!(out1, format!("render-cli 'scene' -o '{expected1}'"));
+        assert_eq!(out1, format!("render-cli scene -o {expected1}"));
 
         // Create render-01.png
         std::fs::write(&expected1, "dummy").unwrap();
@@ -478,25 +483,25 @@ mod tests {
         // 2. Second run: render-01.png exists -> should resolve to 02
         let out2 = substitute_command_args(&cmd, &["scene".to_string()]);
         let expected2 = tmp_dir.join("render-02.png").to_string_lossy().to_string();
-        assert_eq!(out2, format!("render-cli 'scene' -o '{expected2}'"));
+        assert_eq!(out2, format!("render-cli scene -o {expected2}"));
 
         // 3. User passes explicit arg -> auto-increment is bypassed
         let explicit = tmp_dir.join("custom.png").to_string_lossy().to_string();
         let out_user = substitute_command_args(&cmd, &["scene".to_string(), explicit.clone()]);
-        assert_eq!(out_user, format!("render-cli 'scene' -o '{explicit}'"));
+        assert_eq!(out_user, format!("render-cli scene -o {explicit}"));
 
         // 4. Alpha uppercase and mixed case
         let alpha_pattern = tmp_dir.join("shot-{+A}.png").to_string_lossy().to_string();
         let cmd_alpha = format!("shot-cli ${{1:-{alpha_pattern}}}");
         let out_alpha = substitute_command_args(&cmd_alpha, &[]);
         let expected_alpha = tmp_dir.join("shot-A.png").to_string_lossy().to_string();
-        assert_eq!(out_alpha, format!("shot-cli '{expected_alpha}'"));
+        assert_eq!(out_alpha, format!("shot-cli {expected_alpha}"));
 
         let mixed_pattern = tmp_dir.join("var-{+Aa}.png").to_string_lossy().to_string();
         let cmd_mixed = format!("var-cli ${{1:-{mixed_pattern}}}");
         let out_mixed = substitute_command_args(&cmd_mixed, &[]);
         let expected_mixed = tmp_dir.join("var-Aa.png").to_string_lossy().to_string();
-        assert_eq!(out_mixed, format!("var-cli '{expected_mixed}'"));
+        assert_eq!(out_mixed, format!("var-cli {expected_mixed}"));
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
     }
@@ -517,22 +522,51 @@ mod tests {
         // 1. Default (overwrite): returns slot-9.log
         let out_over = substitute_command_args(&cmd_default, &[]);
         let expected_over = tmp_dir.join("slot-9.log").to_string_lossy().to_string();
-        assert_eq!(out_over, format!("app '{expected_over}'"));
+        assert_eq!(out_over, format!("app {expected_over}"));
 
         // 2. Rotate: returns slot-1.log
         let p_rotate = tmp_dir.join("slot-{+#:rotate}.log").to_string_lossy().to_string();
         let cmd_rotate = format!("app ${{1:-{p_rotate}}}");
         let out_rotate = substitute_command_args(&cmd_rotate, &[]);
         let expected_rotate = tmp_dir.join("slot-1.log").to_string_lossy().to_string();
-        assert_eq!(out_rotate, format!("app '{expected_rotate}'"));
+        assert_eq!(out_rotate, format!("app {expected_rotate}"));
 
         // 3. Grow: slot-10.log doesn't exist -> should resolve to slot-10.log
         let p_grow = tmp_dir.join("slot-{+#:grow}.log").to_string_lossy().to_string();
         let cmd_grow = format!("app ${{1:-{p_grow}}}");
         let out_grow = substitute_command_args(&cmd_grow, &[]);
         let expected_grow = tmp_dir.join("slot-10.log").to_string_lossy().to_string();
-        assert_eq!(out_grow, format!("app '{expected_grow}'"));
+        assert_eq!(out_grow, format!("app {expected_grow}"));
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    fn substitute_command_args_should_preserve_recipe_quotes() {
+        let args = vec!["backup-2026-10-17T17:48:56".to_string()];
+
+        assert_eq!(
+            substitute_command_args("borg mount \"/repo/::$1\" \"/tmp/mnt\"", &args),
+            "borg mount \"/repo/::backup-2026-10-17T17:48:56\" \"/tmp/mnt\""
+        );
+        assert_eq!(
+            substitute_command_args("borg mount '/repo/::$1' /tmp/mnt", &args),
+            "borg mount '/repo/::backup-2026-10-17T17:48:56' /tmp/mnt"
+        );
+        assert_eq!(
+            substitute_command_args("borg mount /repo/::$1 /tmp/mnt", &args),
+            "borg mount /repo/::backup-2026-10-17T17:48:56 /tmp/mnt"
+        );
+    }
+
+    #[test]
+    fn substitute_command_args_should_not_split_two_digit_positionals() {
+        let args: Vec<String> = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+
+        let out = substitute_command_args("echo $1 $10 $2", &args);
+        assert_eq!(out, "echo a j b", "`$10` must be read as one token");
     }
 }

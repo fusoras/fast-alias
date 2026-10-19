@@ -102,9 +102,10 @@ fa gco main                          # Direct invocation shorthand
 #### Argument Substitution & Passthrough
 Command aliases support dynamic arguments defined in `recipes.toml`:
 
-- **Positional variables:** `$1`, `$2` or `{{1}}`, `{{2}}` are replaced by arguments and shell-quoted.
+- **Positional variables:** `$1`, `$2` or `{{1}}`, `{{2}}` are replaced by arguments **verbatim** (`fa` never adds or removes quoting).
 - **Default fallbacks:** `${1:-fallback}` or `{{1:-fallback}}` apply when the argument is omitted.
-- **Passthrough:** If no positional placeholders are defined, trailing arguments are automatically shell-quoted and appended.
+- **Passthrough:** If no positional placeholders are defined, trailing arguments are appended verbatim.
+- **Quoting is yours:** `fa` does not escape values. If an argument may contain spaces or shell metacharacters, quote the placeholder in the recipe (e.g. `"$1"`), not on the command line.
 
 ```toml
 # Example definitions in recipes.toml
@@ -112,7 +113,7 @@ Command aliases support dynamic arguments defined in `recipes.toml`:
 avif = { command = "avifenc -s 0 -q ${2:-50} $1 -o ${1%.*}.avif", description = "Convert image" }
 
 [aliases.git]
-gco = { command = "git checkout", description = "Switch branch" } # Passthrough: fa gco main -> git checkout 'main'
+gco = { command = "git checkout", description = "Switch branch" } # Passthrough: fa gco main -> git checkout main
 ```
 
 #### Auto-Incrementing File Fallbacks (`{+...}`)
