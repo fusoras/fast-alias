@@ -240,7 +240,6 @@ du   = { command = "du -sh */", description = "Size per folder" }
   - Explicit argument signatures and documentation can be declared using `args` (see below).
 - **Aliases**: the `aliases` array declares alternative names (`fa --alias co` or `fa co` also works).
 - **Platform** (optional): restrict to `debian`/`termux`.
-- **Dry-run**: `fa --alias <name> [args] --dry-run` prints the resolved command without executing it.
 - **Modularity**: sections can live in separate files, e.g. `recipes.d/git.toml` containing only `[aliases.git]`.
 
 #### Alias Table Naming (`[alias]`)
