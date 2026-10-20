@@ -1049,6 +1049,7 @@ fn run_cli() -> anyhow::Result<()> {
             let mut show_aliases = aliases;
             let mut show_packs = packs;
             let list_keyword_view = config.settings.ui.list_keyword_view();
+            let nerd_fonts = config.settings.ui.is_nerd_fonts();
 
             if let Some(f) = &filter_lower {
                 match f.as_str() {
@@ -1083,6 +1084,7 @@ fn run_cli() -> anyhow::Result<()> {
                         line.push_str(&format_keyword_suffix(
                             &recipe.keywords,
                             KEYWORD_DISPLAY_LIMIT,
+                            nerd_fonts,
                         ));
                     }
                     recipe_lines.push(line);
@@ -1150,6 +1152,7 @@ fn run_cli() -> anyhow::Result<()> {
         }
         Commands::Search { query } => {
             let search_keyword_view = config.settings.ui.search_keyword_view();
+            let nerd_fonts = config.settings.ui.is_nerd_fonts();
             let mut recipes: Vec<(i32, String, String)> = Vec::new();
             for (key, recipe) in &config.recipes {
                 if !is_scaffold_recipe(recipe) {
@@ -1161,10 +1164,12 @@ fn run_cli() -> anyhow::Result<()> {
                         KeywordView::All => line.push_str(&format_keyword_suffix(
                             &recipe.keywords,
                             KEYWORD_DISPLAY_LIMIT,
+                            nerd_fonts,
                         )),
                         KeywordView::Matched => line.push_str(&format_keyword_suffix(
                             &search_match.keywords,
                             KEYWORD_DISPLAY_LIMIT,
+                            nerd_fonts,
                         )),
                         KeywordView::Off => {}
                     }
@@ -1187,10 +1192,12 @@ fn run_cli() -> anyhow::Result<()> {
                             KeywordView::All => line.push_str(&format_keyword_suffix(
                                 &command.keywords,
                                 KEYWORD_DISPLAY_LIMIT,
+                                nerd_fonts,
                             )),
                             KeywordView::Matched => line.push_str(&format_keyword_suffix(
                                 &search_match.keywords,
                                 KEYWORD_DISPLAY_LIMIT,
+                                nerd_fonts,
                             )),
                             KeywordView::Off => {}
                         }

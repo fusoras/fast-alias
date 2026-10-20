@@ -1196,12 +1196,25 @@ fn platform_matches(label: &str) -> anyhow::Result<bool> {
 /// increase it to show more hints, or set it to `0` in a call to show all.
 pub const KEYWORD_DISPLAY_LIMIT: usize = 3;
 
-/// Renders the trailing keyword hint for a listing line, e.g.
-/// `  \u{1b}[90m‹rust, cli, +2›\u{1b}[0m`. Empty input returns an empty string,
-/// so lines without keywords stay byte-identical. Control characters are
-/// stripped because TOML is free text and must not inject ANSI sequences.
-/// `limit == 0` shows every keyword.
-pub fn format_keyword_suffix(keywords: &[String], limit: usize) -> String {
+/// Nerd Font glyph shown before keyword lists (nf-fa-tags, U+F02B).
+/// Change this constant to use a different keyword icon
+/// (alternatives: U+F02C tag, U+F084 key, U+F02E bookmark).
+pub const KEYWORD_ICON_NERD: &str = "\u{f02b}";
+/// Unicode marker used when Nerd Font icons are disabled.
+pub const KEYWORD_ICON_UNICODE: &str = "‹";
+pub const KEYWORD_SUFFIX_UNICODE: &str = "›";
+
+/// Renders the trailing keyword hint for a listing line. Empty input returns an
+/// empty string, so lines without keywords stay byte-identical. Control
+/// characters are stripped because TOML is free text and must not inject ANSI
+/// sequences. `limit == 0` shows every keyword.
+///
+/// - Unicode (`nerd_fonts == false`): `  \u{1b}[90m‹rust, cli, +2›\u{1b}[0m`.
+/// - Nerd Font (`nerd_fonts == true`): `  \u{1b}[90m<tags> rust, cli, +2\u{1b}[0m`.
+///
+/// The Nerd Font glyph comes from [`KEYWORD_ICON_NERD`], the single place to
+/// change it.
+pub fn format_keyword_suffix(keywords: &[String], limit: usize, nerd_fonts: bool) -> String {
     if keywords.is_empty() {
         return String::new();
     }
@@ -1220,7 +1233,11 @@ pub fn format_keyword_suffix(keywords: &[String], limit: usize) -> String {
     if shown < keywords.len() {
         text.push_str(&format!(", +{}", keywords.len() - shown));
     }
-    format!("  {DIM_GRAY}‹{text}›{RESET}")
+    if nerd_fonts {
+        format!("  {DIM_GRAY}{KEYWORD_ICON_NERD} {text}{RESET}")
+    } else {
+        format!("  {DIM_GRAY}{KEYWORD_ICON_UNICODE}{text}{KEYWORD_SUFFIX_UNICODE}{RESET}")
+    }
 }
 
 /// Formats a single-line list entry for `fa --list` / `fa --search`.
@@ -1369,7 +1386,11 @@ fn format_alias_groups_inner(config: &Config, keyword_limit: Option<usize>) -> V
         for (command_key, command) in commands {
             let mut line = format!("    {}", format_command_line(command_key, command));
             if let Some(limit) = keyword_limit {
-                line.push_str(&format_keyword_suffix(&command.keywords, limit));
+                line.push_str(&format_keyword_suffix(
+                    &command.keywords,
+                    limit,
+                    config.settings.ui.is_nerd_fonts(),
+                ));
             }
             lines.push(line);
         }
@@ -3041,21 +3062,39 @@ free = { command = "free -h", description = "Free memory" }
 
     #[test]
     fn format_keyword_suffix_should_be_empty_without_keywords() {
-        assert_eq!(format_keyword_suffix(&[], KEYWORD_DISPLAY_LIMIT), "");
+        assert_eq!(format_keyword_suffix(&[], KEYWORD_DISPLAY_LIMIT, false), "");
+        assert_eq!(format_keyword_suffix(&[], KEYWORD_DISPLAY_LIMIT, true), "");
     }
 
     #[test]
-    fn format_keyword_suffix_should_render_dim_gray_angle_brackets() {
-        assert_eq!(
-            format_keyword_suffix(&["rust".to_string()], KEYWORD_DISPLAY_LIMIT),
-            format!("  {DIM_GRAY}‹rust›{RESET}")
-        );
+    fn format_keyword_suffix_unicode_mode_should_render_angle_brackets_byte_identical() {
         assert_eq!(
             format_keyword_suffix(
-                &["rust".to_string(), "cli".to_string()],
-                KEYWORD_DISPLAY_LIMIT
+                &["a".to_string(), "b".to_string()],
+                KEYWORD_DISPLAY_LIMIT,
+                false
             ),
-            format!("  {DIM_GRAY}‹rust, cli›{RESET}")
+            "  \x1b[90m‹a, b›\x1b[0m"
+        );
+        assert_eq!(
+            format_keyword_suffix(&["rust".to_string()], KEYWORD_DISPLAY_LIMIT, false),
+            format!("  {DIM_GRAY}‹rust›{RESET}")
+        );
+    }
+
+    #[test]
+    fn format_keyword_suffix_nerd_mode_should_render_tag_icon() {
+        assert_eq!(
+            format_keyword_suffix(
+                &["a".to_string(), "b".to_string()],
+                KEYWORD_DISPLAY_LIMIT,
+                true
+            ),
+            "  \x1b[90m\u{f02b} a, b\x1b[0m"
+        );
+        assert_eq!(
+            KEYWORD_ICON_NERD, "\u{f02b}",
+            "the documented Nerd Font tags glyph must stay U+F02B"
         );
     }
 
@@ -3066,8 +3105,12 @@ free = { command = "free -h", description = "Free memory" }
             .map(|value| value.to_string())
             .collect();
         assert_eq!(
-            format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT),
+            format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT, false),
             format!("  {DIM_GRAY}‹a, b, c, +2›{RESET}")
+        );
+        assert_eq!(
+            format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT, true),
+            "  \x1b[90m\u{f02b} a, b, c, +2\x1b[0m"
         );
     }
 
@@ -3078,23 +3121,39 @@ free = { command = "free -h", description = "Free memory" }
             .map(|value| value.to_string())
             .collect();
         assert_eq!(
-            format_keyword_suffix(&keywords, 0),
+            format_keyword_suffix(&keywords, 0, false),
             format!("  {DIM_GRAY}‹a, b, c, d, e›{RESET}")
+        );
+        assert_eq!(
+            format_keyword_suffix(&keywords, 0, true),
+            "  \x1b[90m\u{f02b} a, b, c, d, e\x1b[0m"
         );
     }
 
     #[test]
     fn format_keyword_suffix_should_strip_control_characters() {
         let keywords = vec!["safe\u{1b}[31mred".to_string()];
-        let rendered = format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT);
-        let text = rendered.replace(DIM_GRAY, "").replace(RESET, "");
+
+        let unicode = format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT, false);
+        let unicode_text = unicode.replace(DIM_GRAY, "").replace(RESET, "");
         assert!(
-            !text.contains('\u{1b}'),
-            "control characters must be stripped, got: {text:?}"
+            !unicode_text.contains('\u{1b}'),
+            "control characters must be stripped, got: {unicode_text:?}"
         );
         assert!(
-            text.contains("‹safe[31mred›"),
-            "visible characters must be preserved, got: {text:?}"
+            unicode_text.contains("‹safe[31mred›"),
+            "visible characters must be preserved, got: {unicode_text:?}"
+        );
+
+        let nerd = format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT, true);
+        let nerd_text = nerd.replace(DIM_GRAY, "").replace(RESET, "");
+        assert!(
+            !nerd_text.contains('\u{1b}'),
+            "control characters must be stripped, got: {nerd_text:?}"
+        );
+        assert!(
+            nerd_text.contains(&format!("{KEYWORD_ICON_NERD} safe[31mred")),
+            "visible characters must be preserved, got: {nerd_text:?}"
         );
     }
 
@@ -3120,6 +3179,53 @@ gco = { command = "git switch", description = "Switch branch", keywords = ["vcs"
         assert!(
             without_keywords.iter().all(|line| !line.contains('‹')),
             "Off-mode alias lines must omit keyword suffixes, got: {without_keywords:?}"
+        );
+    }
+
+    #[test]
+    fn alias_groups_with_keywords_should_respect_icon_style() {
+        let config_for = |icons: &str| {
+            let mut config: Config = toml::from_str(
+                r#"
+[aliases.git]
+gco = { command = "git switch", description = "Switch branch", keywords = ["vcs", "branch"] }
+"#,
+            )
+            .expect("Should parse config with alias keywords");
+            // `[ui]` lives in config.toml, which is parsed as `GlobalConfig`
+            // at runtime; mirror that path here.
+            config.settings = toml::from_str(&format!(
+                r#"
+[ui]
+icons = "{icons}"
+"#
+            ))
+            .expect("Should parse ui icon style");
+            config
+        };
+
+        let nerd_lines =
+            format_alias_groups_with_keywords(&config_for("nerd-font"), KEYWORD_DISPLAY_LIMIT);
+        assert!(
+            nerd_lines.iter().any(|line| line.ends_with(&format!(
+                "  {DIM_GRAY}{KEYWORD_ICON_NERD} vcs, branch{RESET}"
+            ))),
+            "nerd-font alias lines must use the tag icon, got: {nerd_lines:?}"
+        );
+
+        let unicode_lines =
+            format_alias_groups_with_keywords(&config_for("unicode"), KEYWORD_DISPLAY_LIMIT);
+        assert!(
+            unicode_lines.iter().any(|line| line.ends_with(&format!(
+                "  {DIM_GRAY}‹vcs, branch›{RESET}"
+            ))),
+            "unicode alias lines must keep the angle brackets, got: {unicode_lines:?}"
+        );
+        assert!(
+            unicode_lines
+                .iter()
+                .all(|line| !line.contains(KEYWORD_ICON_NERD)),
+            "unicode alias lines must not contain Nerd Font glyphs, got: {unicode_lines:?}"
         );
     }
 }

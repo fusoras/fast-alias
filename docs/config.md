@@ -33,6 +33,10 @@ Controls how search-only keyword hints appear in `--search` and `--list`. Values
 ```toml
 # ~/.config/fa/config.toml
 [ui]
+# Icon style: "unicode" (default) or "nerd-font"
+icons = "unicode"
+# Boolean alias for icons = "nerd-font"
+nerd_fonts = false
 # `fa --search` suffix: "off" | "matched" (default) | "all"
 search_keywords = "matched"
 # `fa --list` suffix: "off" | "all" (default)
@@ -51,6 +55,8 @@ Accepted synonyms:
 - `matched` → `matched`
 
 Displayed hints use `‹a, b, c›` and show at most three keywords; hidden ones collapse into `+N` (for example `‹a, b, c, +2›`).
+
+With `icons = "nerd-font"` (or the legacy boolean `nerd_fonts = true`), the `‹ ›` markers become a single tags glyph (`nf-fa-tags`, U+F02B) before the list, keeping the same dim gray tone and `+N` truncation. Unicode mode is unchanged. `KEYWORD_ICON_NERD` in `src/engine.rs` is the single place to change the glyph.
 
 ## Running `fa --new` Without Arguments (Global Pack Configuration)
 

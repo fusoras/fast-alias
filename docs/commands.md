@@ -83,6 +83,14 @@ The command body is never searched. Within each section, results are sorted by s
 
 `fa --list` uses `[ui] list_keywords` with `all` (default) or `off`; `matched` is treated as `off` because there is no query. Hints show at most three keywords; extra ones collapse into `+N`, for example `‹docker, containers, compose, +2›`. See [config.md](config.md#ui-display-ui).
 
+**Nerd Font keywords:** With `[ui] icons = "nerd-font"` (or `[ui] nerd_fonts = true`), the `‹ ›` markers are replaced by a single tags glyph (`nf-fa-tags`, U+F02B) placed before the list, which keeps the same dim gray tone, comma-separated keywords, and `+N` truncation:
+
+```text
+  docker, containers, compose, +2   # preceded by the tags glyph
+```
+
+Unicode mode keeps the `‹a, b›` output unchanged. `KEYWORD_ICON_NERD` in `src/engine.rs` is the single place to change the glyph.
+
 **Argument signatures in listings:**
 Commands declaring `args` (or containing positional `$1`, `$2` variables) automatically display their argument signature alongside their name:
 ```text
