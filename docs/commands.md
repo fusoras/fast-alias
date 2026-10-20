@@ -75,7 +75,7 @@ fa --search docker compose           # every token must match a field
 
 The command body is never searched. Within each section, results are sorted by score and then alphabetically by name.
 
-**Keyword display in results:** Search results can append the declared keywords that matched the query, rendered as `‹a, b, c›` in dim gray. Control it with `[ui] search_keywords`:
+**Keyword display in results:** Search results can append the declared keywords that matched the query, rendered in green as `‹a, b, c›`. Control it with `[ui] search_keywords`:
 
 - `matched` (default): show only keywords that matched the current query.
 - `all`: show every declared keyword.
@@ -83,13 +83,13 @@ The command body is never searched. Within each section, results are sorted by s
 
 `fa --list` uses `[ui] list_keywords` with `all` (default) or `off`; `matched` is treated as `off` because there is no query. Hints show at most three keywords; extra ones collapse into `+N`, for example `‹docker, containers, compose, +2›`. See [config.md](config.md#ui-display-ui).
 
-**Nerd Font keywords:** With `[ui] icons = "nerd-font"` (or `[ui] nerd_fonts = true`), the `‹ ›` markers are replaced by a single tags glyph (`nf-fa-tags`, U+F02B) placed before the list, which keeps the same dim gray tone, comma-separated keywords, and `+N` truncation:
+**Nerd Font keywords:** With `[ui] icons = "nerd-font"` (or `[ui] nerd_fonts = true`), the `‹ ›` markers are replaced by a single tags glyph (`nf-fa-tags`, U+F02B) placed before the list, which keeps the same green tone, comma-separated keywords, and `+N` truncation:
 
 ```text
   docker, containers, compose, +2   # preceded by the tags glyph
 ```
 
-Unicode mode keeps the `‹a, b›` output unchanged. `KEYWORD_ICON_NERD` in `src/engine.rs` is the single place to change the glyph.
+Unicode mode keeps the `‹a, b›` output unchanged. `KEYWORD_ICON_NERD` and `KEYWORD_COLOR` in `src/engine.rs` are the single places to change the glyph and the color.
 
 **Argument signatures in listings:**
 Commands declaring `args` (or containing positional `$1`, `$2` variables) automatically display their argument signature alongside their name:

@@ -17,4 +17,5 @@ pub const RECIPE_NAME: &str = "\x1b[38;2;58;169;159m";
 pub const SECTION_HEADER: &str = "\x1b[38;2;32;94;166m";
 pub const DIM: &str = "\x1b[2m";
 pub const DIM_GRAY: &str = "\x1b[90m";
+pub const GREEN: &str = "\x1b[32m";
 pub const RESET: &str = "\x1b[0m";

@@ -56,7 +56,7 @@ Accepted synonyms:
 
 Displayed hints use `‹a, b, c›` and show at most three keywords; hidden ones collapse into `+N` (for example `‹a, b, c, +2›`).
 
-With `icons = "nerd-font"` (or the legacy boolean `nerd_fonts = true`), the `‹ ›` markers become a single tags glyph (`nf-fa-tags`, U+F02B) before the list, keeping the same dim gray tone and `+N` truncation. Unicode mode is unchanged. `KEYWORD_ICON_NERD` in `src/engine.rs` is the single place to change the glyph.
+With `icons = "nerd-font"` (or the legacy boolean `nerd_fonts = true`), the `‹ ›` markers become a single tags glyph (`nf-fa-tags`, U+F02B) before the list, keeping the same green tone and `+N` truncation. Unicode mode is unchanged. `KEYWORD_ICON_NERD` and `KEYWORD_COLOR` in `src/engine.rs` are the single places to change the glyph and the color.
 
 ## Running `fa --new` Without Arguments (Global Pack Configuration)
 

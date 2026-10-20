@@ -1203,17 +1203,20 @@ pub const KEYWORD_ICON_NERD: &str = "\u{f02b}";
 /// Unicode marker used when Nerd Font icons are disabled.
 pub const KEYWORD_ICON_UNICODE: &str = "‹";
 pub const KEYWORD_SUFFIX_UNICODE: &str = "›";
+/// Color used for the whole keyword hint (icon plus text) in `--search` and
+/// `--list`. Change this constant to recolor every keyword hint at once.
+pub const KEYWORD_COLOR: &str = GREEN;
 
 /// Renders the trailing keyword hint for a listing line. Empty input returns an
 /// empty string, so lines without keywords stay byte-identical. Control
 /// characters are stripped because TOML is free text and must not inject ANSI
 /// sequences. `limit == 0` shows every keyword.
 ///
-/// - Unicode (`nerd_fonts == false`): `  \u{1b}[90m‹rust, cli, +2›\u{1b}[0m`.
-/// - Nerd Font (`nerd_fonts == true`): `  \u{1b}[90m<tags> rust, cli, +2\u{1b}[0m`.
+/// - Unicode (`nerd_fonts == false`): `  \u{1b}[32m‹rust, cli, +2›\u{1b}[0m`.
+/// - Nerd Font (`nerd_fonts == true`): `  \u{1b}[32m<tags> rust, cli, +2\u{1b}[0m`.
 ///
 /// The Nerd Font glyph comes from [`KEYWORD_ICON_NERD`], the single place to
-/// change it.
+/// change it; [`KEYWORD_COLOR`] is the single place to change the color.
 pub fn format_keyword_suffix(keywords: &[String], limit: usize, nerd_fonts: bool) -> String {
     if keywords.is_empty() {
         return String::new();
@@ -1234,9 +1237,9 @@ pub fn format_keyword_suffix(keywords: &[String], limit: usize, nerd_fonts: bool
         text.push_str(&format!(", +{}", keywords.len() - shown));
     }
     if nerd_fonts {
-        format!("  {DIM_GRAY}{KEYWORD_ICON_NERD} {text}{RESET}")
+        format!("  {KEYWORD_COLOR}{KEYWORD_ICON_NERD} {text}{RESET}")
     } else {
-        format!("  {DIM_GRAY}{KEYWORD_ICON_UNICODE}{text}{KEYWORD_SUFFIX_UNICODE}{RESET}")
+        format!("  {KEYWORD_COLOR}{KEYWORD_ICON_UNICODE}{text}{KEYWORD_SUFFIX_UNICODE}{RESET}")
     }
 }
 
@@ -3074,11 +3077,11 @@ free = { command = "free -h", description = "Free memory" }
                 KEYWORD_DISPLAY_LIMIT,
                 false
             ),
-            "  \x1b[90m‹a, b›\x1b[0m"
+            "  \x1b[32m‹a, b›\x1b[0m"
         );
         assert_eq!(
             format_keyword_suffix(&["rust".to_string()], KEYWORD_DISPLAY_LIMIT, false),
-            format!("  {DIM_GRAY}‹rust›{RESET}")
+            format!("  \x1b[32m‹rust›{RESET}")
         );
     }
 
@@ -3090,7 +3093,7 @@ free = { command = "free -h", description = "Free memory" }
                 KEYWORD_DISPLAY_LIMIT,
                 true
             ),
-            "  \x1b[90m\u{f02b} a, b\x1b[0m"
+            "  \x1b[32m\u{f02b} a, b\x1b[0m"
         );
         assert_eq!(
             KEYWORD_ICON_NERD, "\u{f02b}",
@@ -3106,11 +3109,11 @@ free = { command = "free -h", description = "Free memory" }
             .collect();
         assert_eq!(
             format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT, false),
-            format!("  {DIM_GRAY}‹a, b, c, +2›{RESET}")
+            format!("  \x1b[32m‹a, b, c, +2›{RESET}")
         );
         assert_eq!(
             format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT, true),
-            "  \x1b[90m\u{f02b} a, b, c, +2\x1b[0m"
+            "  \x1b[32m\u{f02b} a, b, c, +2\x1b[0m"
         );
     }
 
@@ -3122,11 +3125,11 @@ free = { command = "free -h", description = "Free memory" }
             .collect();
         assert_eq!(
             format_keyword_suffix(&keywords, 0, false),
-            format!("  {DIM_GRAY}‹a, b, c, d, e›{RESET}")
+            format!("  \x1b[32m‹a, b, c, d, e›{RESET}")
         );
         assert_eq!(
             format_keyword_suffix(&keywords, 0, true),
-            "  \x1b[90m\u{f02b} a, b, c, d, e\x1b[0m"
+            "  \x1b[32m\u{f02b} a, b, c, d, e\x1b[0m"
         );
     }
 
@@ -3135,7 +3138,7 @@ free = { command = "free -h", description = "Free memory" }
         let keywords = vec!["safe\u{1b}[31mred".to_string()];
 
         let unicode = format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT, false);
-        let unicode_text = unicode.replace(DIM_GRAY, "").replace(RESET, "");
+        let unicode_text = unicode.replace("\x1b[32m", "").replace(RESET, "");
         assert!(
             !unicode_text.contains('\u{1b}'),
             "control characters must be stripped, got: {unicode_text:?}"
@@ -3146,7 +3149,7 @@ free = { command = "free -h", description = "Free memory" }
         );
 
         let nerd = format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT, true);
-        let nerd_text = nerd.replace(DIM_GRAY, "").replace(RESET, "");
+        let nerd_text = nerd.replace("\x1b[32m", "").replace(RESET, "");
         assert!(
             !nerd_text.contains('\u{1b}'),
             "control characters must be stripped, got: {nerd_text:?}"
@@ -3170,7 +3173,7 @@ gco = { command = "git switch", description = "Switch branch", keywords = ["vcs"
         let with_keywords = format_alias_groups_with_keywords(&config, KEYWORD_DISPLAY_LIMIT);
         assert!(
             with_keywords.iter().any(|line| line.contains(&format!(
-                "  {DIM_GRAY}‹vcs, branch›{RESET}"
+                "  \x1b[32m‹vcs, branch›{RESET}"
             ))),
             "All-mode alias lines must include the keyword suffix, got: {with_keywords:?}"
         );
@@ -3208,7 +3211,7 @@ icons = "{icons}"
             format_alias_groups_with_keywords(&config_for("nerd-font"), KEYWORD_DISPLAY_LIMIT);
         assert!(
             nerd_lines.iter().any(|line| line.ends_with(&format!(
-                "  {DIM_GRAY}{KEYWORD_ICON_NERD} vcs, branch{RESET}"
+                "  \x1b[32m{KEYWORD_ICON_NERD} vcs, branch{RESET}"
             ))),
             "nerd-font alias lines must use the tag icon, got: {nerd_lines:?}"
         );
@@ -3217,7 +3220,7 @@ icons = "{icons}"
             format_alias_groups_with_keywords(&config_for("unicode"), KEYWORD_DISPLAY_LIMIT);
         assert!(
             unicode_lines.iter().any(|line| line.ends_with(&format!(
-                "  {DIM_GRAY}‹vcs, branch›{RESET}"
+                "  \x1b[32m‹vcs, branch›{RESET}"
             ))),
             "unicode alias lines must keep the angle brackets, got: {unicode_lines:?}"
         );
