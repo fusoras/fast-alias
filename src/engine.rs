@@ -1192,6 +1192,37 @@ fn platform_matches(label: &str) -> anyhow::Result<bool> {
     })
 }
 
+/// Maximum number of keywords displayed per listing line. Easy to change:
+/// increase it to show more hints, or set it to `0` in a call to show all.
+pub const KEYWORD_DISPLAY_LIMIT: usize = 3;
+
+/// Renders the trailing keyword hint for a listing line, e.g.
+/// `  \u{1b}[90m‹rust, cli, +2›\u{1b}[0m`. Empty input returns an empty string,
+/// so lines without keywords stay byte-identical. Control characters are
+/// stripped because TOML is free text and must not inject ANSI sequences.
+/// `limit == 0` shows every keyword.
+pub fn format_keyword_suffix(keywords: &[String], limit: usize) -> String {
+    if keywords.is_empty() {
+        return String::new();
+    }
+
+    let shown = if limit == 0 {
+        keywords.len()
+    } else {
+        limit.min(keywords.len())
+    };
+    let displayed: Vec<String> = keywords
+        .iter()
+        .take(shown)
+        .map(|keyword| keyword.chars().filter(|c| !c.is_control()).collect())
+        .collect();
+    let mut text = displayed.join(", ");
+    if shown < keywords.len() {
+        text.push_str(&format!(", +{}", keywords.len() - shown));
+    }
+    format!("  {DIM_GRAY}‹{text}›{RESET}")
+}
+
 /// Formats a single-line list entry for `fa --list` / `fa --search`.
 /// Name (teal accent) followed by a dimmed description to keep the line readable.
 pub fn format_list_line(recipe_key: &str, recipe: &Recipe) -> String {
@@ -1315,6 +1346,17 @@ pub fn format_section_header(section: &str) -> String {
 /// Iteration follows `BTreeMap` order, so output is deterministic. Recipes are
 /// intentionally untouched.
 pub fn format_alias_groups(config: &Config) -> Vec<String> {
+    format_alias_groups_inner(config, None)
+}
+
+/// Like [`format_alias_groups`], but appends the keyword hint
+/// ([`format_keyword_suffix`]) to every command line. Used by `--list` when
+/// `[ui] list_keywords = "all"`.
+pub fn format_alias_groups_with_keywords(config: &Config, limit: usize) -> Vec<String> {
+    format_alias_groups_inner(config, Some(limit))
+}
+
+fn format_alias_groups_inner(config: &Config, keyword_limit: Option<usize>) -> Vec<String> {
     let mut lines = Vec::new();
     for (section, commands) in &config.aliases {
         if commands.is_empty() {
@@ -1325,7 +1367,11 @@ pub fn format_alias_groups(config: &Config) -> Vec<String> {
         }
         lines.push(format_section_header(section));
         for (command_key, command) in commands {
-            lines.push(format!("    {}", format_command_line(command_key, command)));
+            let mut line = format!("    {}", format_command_line(command_key, command));
+            if let Some(limit) = keyword_limit {
+                line.push_str(&format_keyword_suffix(&command.keywords, limit));
+            }
+            lines.push(line);
         }
     }
     lines
@@ -2991,5 +3037,89 @@ free = { command = "free -h", description = "Free memory" }
         } else {
             unsafe { std::env::remove_var(FA_CALL_STACK_ENV); }
         }
+    }
+
+    #[test]
+    fn format_keyword_suffix_should_be_empty_without_keywords() {
+        assert_eq!(format_keyword_suffix(&[], KEYWORD_DISPLAY_LIMIT), "");
+    }
+
+    #[test]
+    fn format_keyword_suffix_should_render_dim_gray_angle_brackets() {
+        assert_eq!(
+            format_keyword_suffix(&["rust".to_string()], KEYWORD_DISPLAY_LIMIT),
+            format!("  {DIM_GRAY}‹rust›{RESET}")
+        );
+        assert_eq!(
+            format_keyword_suffix(
+                &["rust".to_string(), "cli".to_string()],
+                KEYWORD_DISPLAY_LIMIT
+            ),
+            format!("  {DIM_GRAY}‹rust, cli›{RESET}")
+        );
+    }
+
+    #[test]
+    fn format_keyword_suffix_should_truncate_and_report_hidden_count() {
+        let keywords: Vec<String> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect();
+        assert_eq!(
+            format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT),
+            format!("  {DIM_GRAY}‹a, b, c, +2›{RESET}")
+        );
+    }
+
+    #[test]
+    fn format_keyword_suffix_zero_limit_should_show_all_keywords() {
+        let keywords: Vec<String> = ["a", "b", "c", "d", "e"]
+            .iter()
+            .map(|value| value.to_string())
+            .collect();
+        assert_eq!(
+            format_keyword_suffix(&keywords, 0),
+            format!("  {DIM_GRAY}‹a, b, c, d, e›{RESET}")
+        );
+    }
+
+    #[test]
+    fn format_keyword_suffix_should_strip_control_characters() {
+        let keywords = vec!["safe\u{1b}[31mred".to_string()];
+        let rendered = format_keyword_suffix(&keywords, KEYWORD_DISPLAY_LIMIT);
+        let text = rendered.replace(DIM_GRAY, "").replace(RESET, "");
+        assert!(
+            !text.contains('\u{1b}'),
+            "control characters must be stripped, got: {text:?}"
+        );
+        assert!(
+            text.contains("‹safe[31mred›"),
+            "visible characters must be preserved, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn alias_groups_with_keywords_should_append_suffixes_and_plain_groups_should_not() {
+        let config: Config = toml::from_str(
+            r#"
+[aliases.git]
+gco = { command = "git switch", description = "Switch branch", keywords = ["vcs", "branch"] }
+"#,
+        )
+        .expect("Should parse config with alias keywords");
+
+        let with_keywords = format_alias_groups_with_keywords(&config, KEYWORD_DISPLAY_LIMIT);
+        assert!(
+            with_keywords.iter().any(|line| line.contains(&format!(
+                "  {DIM_GRAY}‹vcs, branch›{RESET}"
+            ))),
+            "All-mode alias lines must include the keyword suffix, got: {with_keywords:?}"
+        );
+
+        let without_keywords = format_alias_groups(&config);
+        assert!(
+            without_keywords.iter().all(|line| !line.contains('‹')),
+            "Off-mode alias lines must omit keyword suffixes, got: {without_keywords:?}"
+        );
     }
 }

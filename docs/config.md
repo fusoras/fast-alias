@@ -26,6 +26,32 @@ ac  = "!git add -A && git commit -m"
 
 Invoking `fa rn my-app` expands to `fa --recipe new my-app`. Invoking `fa ac "feat: init"` executes the shell command with appended arguments.
 
+## UI Display (`[ui]`)
+
+Controls how search-only keyword hints appear in `--search` and `--list`. Values are case-insensitive and unknown values fall back to the field default instead of breaking config loading.
+
+```toml
+# ~/.config/fa/config.toml
+[ui]
+# `fa --search` suffix: "off" | "matched" (default) | "all"
+search_keywords = "matched"
+# `fa --list` suffix: "off" | "all" (default)
+list_keywords = "all"
+```
+
+| Key | Default | `off` | `matched` | `all` |
+| --- | ------- | ----- | --------- | ----- |
+| `search_keywords` | `"matched"` | No keyword suffix | Only keywords that matched the query | Every declared keyword |
+| `list_keywords` | `"all"` | No keyword suffix | Treated as `off` (no query) | Every declared keyword |
+
+Accepted synonyms:
+
+- `on`, `true`, `yes`, `1`, `all` → `all`
+- `off`, `false`, `no`, `0` → `off`
+- `matched` → `matched`
+
+Displayed hints use `‹a, b, c›` and show at most three keywords; hidden ones collapse into `+N` (for example `‹a, b, c, +2›`).
+
 ## Running `fa --new` Without Arguments (Global Pack Configuration)
 
 You can configure what happens when you run `fa --new <recipe>` without specifying a pack or component in `~/.config/fa/config.toml`:
@@ -70,6 +96,32 @@ overflow = "overwrite"
 2. **Alias-Level Setting**: `overflow = "rotate"` declared inside the command table in TOML.
 3. **Global Setting**: `[autoincrement] overflow = "..."` in `~/.config/fa/config.toml`.
 4. **Builtin Default**: `"overwrite"`.
+
+## Search Keywords (`keywords`, `_keywords`)
+
+Recipes and aliases can declare `keywords` as search-only metadata for `fa --search` / `fa -se`. Keywords never change execution; they only improve discoverability. Both forms are accepted and normalized at load time (trimmed, lowercased, deduplicated):
+
+```toml
+# Array form
+[aliases.git]
+gco = { command = "git switch", description = "Switch branch", keywords = ["vcs", "branch"] }
+
+# Comma/space-separated string form
+[aliases.docker]
+up = { command = "docker compose up -d", description = "Start containers", keywords = "compose, containers" }
+
+# Section-level keywords: merged into every command in the section
+[aliases.":skills"]
+_keywords = ["agent", "tooling"]
+ls = { command = "bunx tabernaculo list", description = "List installed skills" }
+
+# Top-level `_keywords` applies to flat aliases under [aliases] / [alias]
+[aliases]
+_keywords = "flat, root"
+single = { command = "echo single" }
+```
+
+Section-level `_keywords` accepts the same array or string forms as per-command `keywords`. They are merged with command keywords preserving the first occurrence. Keywords also support `{{var}}` substitution from `[vars]` and the section's `_vars`.
 
 ## Related Documentation
 

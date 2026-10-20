@@ -4,6 +4,13 @@
   "description": "Configuration schema for fast-alias (fa) recipe and alias files.",
   "type": "object",
   "properties": {
+    "vars": {
+      "type": "object",
+      "description": "Global template variables substituted via {{KEY}} across command strings, descriptions, and environment variables.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
     "recipes": {
       "type": "object",
       "description": "Map of recipe definitions, keyed by recipe name.",
@@ -21,6 +28,57 @@
           },
           {
             "type": "object",
+            "properties": {
+              "_vars": {
+                "type": "object",
+                "description": "Namespace template variables substituted via {{KEY}} within this section.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "_keywords": {
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "description": "Search-only keywords merged into every command in this section."
+              },
+              "_env": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "description": "Shared fallback environment variables for all commands in this namespace."
+              },
+              "_env_force": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "description": "Shared forced environment variables for all commands in this namespace."
+              }
+            },
             "additionalProperties": {
               "$ref": "#/definitions/Alias"
             }
@@ -38,6 +96,57 @@
           },
           {
             "type": "object",
+            "properties": {
+              "_vars": {
+                "type": "object",
+                "description": "Namespace template variables substituted via {{KEY}} within this section.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "_keywords": {
+                "oneOf": [
+                  {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "description": "Search-only keywords merged into every command in this section."
+              },
+              "_env": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "description": "Shared fallback environment variables for all commands in this namespace."
+              },
+              "_env_force": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "string"
+                    }
+                  },
+                  {
+                    "type": "string"
+                  }
+                ],
+                "description": "Shared forced environment variables for all commands in this namespace."
+              }
+            },
             "additionalProperties": {
               "$ref": "#/definitions/Alias"
             }
@@ -49,7 +158,10 @@
   "definitions": {
     "Recipe": {
       "type": "object",
-      "required": ["name", "description"],
+      "required": [
+        "name",
+        "description"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -65,8 +177,24 @@
         },
         "variants": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Optional list of variants supported by this recipe."
+        },
+        "keywords": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Search-only metadata keywords (array or comma/space separated string)."
         },
         "templates_dir": {
           "type": "string",
@@ -108,12 +236,16 @@
         },
         "tools": {
           "type": "array",
-          "items": { "$ref": "#/definitions/Tool" },
+          "items": {
+            "$ref": "#/definitions/Tool"
+          },
           "description": "Tooling scripts (linter, formatter, typechecker)."
         },
         "steps": {
           "type": "array",
-          "items": { "$ref": "#/definitions/Step" },
+          "items": {
+            "$ref": "#/definitions/Step"
+          },
           "description": "Ordered post-scaffold shell commands or create steps."
         },
         "variables": {
@@ -136,47 +268,93 @@
     },
     "Alias": {
       "type": "object",
-      "required": ["command"],
+      "required": [
+        "command"
+      ],
       "properties": {
-        "command": { "type": "string", "description": "Shell command to execute." },
-        "description": { "type": "string", "description": "Description of the alias." },
+        "command": {
+          "type": "string",
+          "description": "Shell command to execute."
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of the alias."
+        },
         "env": {
           "oneOf": [
-            { "type": "object", "additionalProperties": { "type": "string" } },
-            { "type": "string" }
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string"
+            }
           ],
           "description": "Fallback environment variables (applied only if not set in system)."
         },
         "env_force": {
           "oneOf": [
-            { "type": "object", "additionalProperties": { "type": "string" } },
-            { "type": "string" }
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string"
+            }
           ],
           "description": "Forced environment variables (always overrides system environment)."
         },
         "aliases": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Optional short alias names for this command."
+        },
+        "keywords": {
+          "oneOf": [
+            {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Search-only metadata keywords (array or comma/space separated string)."
         },
         "args": {
           "oneOf": [
             {
               "type": "array",
-              "items": { "type": "string" },
+              "items": {
+                "type": "string"
+              },
               "description": "List of positional argument signatures (e.g. ['<input>', '[output]'])."
             },
             {
               "type": "array",
-              "items": { "$ref": "#/definitions/CommandArg" },
+              "items": {
+                "$ref": "#/definitions/CommandArg"
+              },
               "description": "List of documented argument objects."
             },
             {
               "type": "object",
               "additionalProperties": {
                 "oneOf": [
-                  { "$ref": "#/definitions/CommandArg" },
-                  { "type": "string" }
+                  {
+                    "$ref": "#/definitions/CommandArg"
+                  },
+                  {
+                    "type": "string"
+                  }
                 ]
               },
               "description": "Map of documented arguments keyed by position number or name."
@@ -207,12 +385,19 @@
     },
     "PackDefinition": {
       "type": "object",
-      "required": ["components"],
+      "required": [
+        "components"
+      ],
       "properties": {
-        "description": { "type": "string", "description": "Description of the pack bundle." },
+        "description": {
+          "type": "string",
+          "description": "Description of the pack bundle."
+        },
         "components": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "List of component folder names included in this pack."
         }
       },
@@ -221,76 +406,155 @@
     "Create": {
       "type": "object",
       "properties": {
-        "command": { "type": "string", "description": "External command to scaffold the project (e.g. 'cargo new {{name}}')." },
-        "template_dir": { "type": "string", "description": "Template directory to copy recursively." }
+        "command": {
+          "type": "string",
+          "description": "External command to scaffold the project (e.g. 'cargo new {{name}}')."
+        },
+        "template_dir": {
+          "type": "string",
+          "description": "Template directory to copy recursively."
+        }
       },
       "additionalProperties": false
     },
     "FileSpec": {
       "type": "object",
       "properties": {
-        "from": { "type": "string", "description": "Path to a static source file under templates/." },
-        "inline": { "type": "string", "description": "Verbatim file contents (max 40 lines)." },
-        "template": { "type": "string", "description": "Path to a template file with {{placeholder}} substitution." },
-        "skip_if_exists": { "type": "boolean", "description": "Whether to skip if target file already exists." }
+        "from": {
+          "type": "string",
+          "description": "Path to a static source file under templates/."
+        },
+        "inline": {
+          "type": "string",
+          "description": "Verbatim file contents (max 40 lines)."
+        },
+        "template": {
+          "type": "string",
+          "description": "Path to a template file with {{placeholder}} substitution."
+        },
+        "skip_if_exists": {
+          "type": "boolean",
+          "description": "Whether to skip if target file already exists."
+        }
       },
       "additionalProperties": false
     },
     "Pm": {
       "type": "object",
       "properties": {
-        "install": { "type": "object", "additionalProperties": { "type": "string" } },
-        "dev_install": { "type": "object", "additionalProperties": { "type": "string" } }
+        "install": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "dev_install": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
       },
       "additionalProperties": false
     },
     "Tool": {
       "type": "object",
-      "required": ["tool"],
+      "required": [
+        "tool"
+      ],
       "properties": {
-        "tool": { "type": "string", "description": "Tool command name (e.g. eslint, prettier, cargo-clippy)." },
-        "script": { "type": "string", "description": "Custom script to run for this tool." }
+        "tool": {
+          "type": "string",
+          "description": "Tool command name (e.g. eslint, prettier, cargo-clippy)."
+        },
+        "script": {
+          "type": "string",
+          "description": "Custom script to run for this tool."
+        }
       },
       "additionalProperties": false
     },
     "Step": {
       "type": "object",
       "properties": {
-        "command": { "type": "string", "description": "Shell command to run." },
-        "description": { "type": "string", "description": "Description of this step." },
-        "dir": { "type": "string", "description": "Working directory relative to project root." },
+        "command": {
+          "type": "string",
+          "description": "Shell command to run."
+        },
+        "description": {
+          "type": "string",
+          "description": "Description of this step."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Working directory relative to project root."
+        },
         "create": {
           "type": "object",
-          "required": ["from", "to"],
+          "required": [
+            "from",
+            "to"
+          ],
           "properties": {
-            "from": { "type": "string" },
-            "to": { "type": "string" }
+            "from": {
+              "type": "string"
+            },
+            "to": {
+              "type": "string"
+            }
           },
           "additionalProperties": false
         },
-        "platform": { "type": "string", "description": "Platform gate (e.g. 'debian' or 'termux')." },
-        "script": { "type": "string", "description": "Optional inline script." },
-        "install": { "type": "boolean", "description": "Whether this step installs dependencies (skipped with --no-install and triggers version pinning)." }
+        "platform": {
+          "type": "string",
+          "description": "Platform gate (e.g. 'debian' or 'termux')."
+        },
+        "script": {
+          "type": "string",
+          "description": "Optional inline script."
+        },
+        "install": {
+          "type": "boolean",
+          "description": "Whether this step installs dependencies (skipped with --no-install and triggers version pinning)."
+        }
       },
       "additionalProperties": false
     },
     "Variable": {
       "type": "object",
       "properties": {
-        "description": { "type": "string", "description": "Prompt message shown to user." },
-        "default": { "type": "string", "description": "Default value if user presses Enter." },
+        "description": {
+          "type": "string",
+          "description": "Prompt message shown to user."
+        },
+        "default": {
+          "type": "string",
+          "description": "Default value if user presses Enter."
+        },
         "type": {
           "type": "string",
-          "enum": ["string", "integer", "boolean"],
+          "enum": [
+            "string",
+            "integer",
+            "boolean"
+          ],
           "description": "Validation type for input."
         },
         "choices": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "description": "Allowed choice values."
         },
-        "pattern": { "type": "string", "description": "Regex pattern the input must match." },
-        "required": { "type": "boolean", "description": "Whether non-empty input is mandatory." }
+        "pattern": {
+          "type": "string",
+          "description": "Regex pattern the input must match."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether non-empty input is mandatory."
+        }
       },
       "additionalProperties": false
     }

@@ -34,6 +34,10 @@ default_behavior = "list"
 [ui]
 # Icon style for CLI and TUI: "unicode" (default) | "nerd-font"
 icons = "unicode"
+# Keyword display in `fa --search`: "off" | "matched" (default) | "all"
+search_keywords = "matched"
+# Keyword display in `fa --list`: "off" | "all" (default)
+list_keywords = "all"
 
 [autoincrement]
 # Overflow behavior when auto-increment file pattern limit is reached:
@@ -272,6 +276,8 @@ pub struct Command {
     pub aliases: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_args")]
     pub args: Vec<CommandArg>,
+    #[serde(default, deserialize_with = "deserialize_keywords")]
+    pub keywords: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
     #[serde(default)]
@@ -312,6 +318,8 @@ pub struct Recipe {
     pub language: Option<String>,
     #[serde(default)]
     pub aliases: Vec<String>,
+    #[serde(default, deserialize_with = "deserialize_keywords")]
+    pub keywords: Vec<String>,
     #[serde(default)]
     pub variants: Vec<String>,
     pub create: Option<Create>,
@@ -383,6 +391,33 @@ fn default_icon_style() -> String {
     "unicode".to_string()
 }
 
+fn default_search_keyword_view() -> String {
+    "matched".to_string()
+}
+
+fn default_list_keyword_view() -> String {
+    "all".to_string()
+}
+
+/// How search-only keywords are rendered in `--search` and `--list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeywordView {
+    Off,
+    Matched,
+    All,
+}
+
+/// Parses a keyword-display value case-insensitively. Unknown values fall back
+/// to the per-field default so a typo never breaks configuration loading.
+fn parse_keyword_view(raw: &str, fallback: KeywordView) -> KeywordView {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "on" | "true" | "yes" | "1" | "all" => KeywordView::All,
+        "off" | "false" | "no" | "0" => KeywordView::Off,
+        "matched" => KeywordView::Matched,
+        _ => fallback,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct UiSettings {
     /// Icon style for CLI and TUI: "unicode" (default) or "nerd-font"
@@ -391,6 +426,12 @@ pub struct UiSettings {
     /// Boolean flag for backward compatibility
     #[serde(default)]
     pub nerd_fonts: bool,
+    /// Keyword display for `--search`: "off" | "matched" (default) | "all"
+    #[serde(default = "default_search_keyword_view")]
+    pub search_keywords: String,
+    /// Keyword display for `--list`: "off" | "all" (default)
+    #[serde(default = "default_list_keyword_view")]
+    pub list_keywords: String,
 }
 
 impl Default for UiSettings {
@@ -398,6 +439,8 @@ impl Default for UiSettings {
         Self {
             icons: default_icon_style(),
             nerd_fonts: false,
+            search_keywords: default_search_keyword_view(),
+            list_keywords: default_list_keyword_view(),
         }
     }
 }
@@ -408,6 +451,20 @@ impl UiSettings {
             || self.icons == "nerd-font"
             || self.icons == "nerd-fonts"
             || self.icons == "nerdfont"
+    }
+
+    /// Keyword display mode for `--search`.
+    pub fn search_keyword_view(&self) -> KeywordView {
+        parse_keyword_view(&self.search_keywords, KeywordView::Matched)
+    }
+
+    /// Keyword display mode for `--list`. `matched` is meaningless without a
+    /// query, so it is treated as `off`.
+    pub fn list_keyword_view(&self) -> KeywordView {
+        match parse_keyword_view(&self.list_keywords, KeywordView::All) {
+            KeywordView::Matched => KeywordView::Off,
+            view => view,
+        }
     }
 }
 
@@ -641,6 +698,44 @@ impl EnvSpec {
     }
 }
 
+/// Flexible specification for search-only keywords: either a list of strings
+/// or a single string split on commas and whitespace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum KeywordSpec {
+    List(Vec<String>),
+    String(String),
+}
+
+/// Normalizes keywords: trims, lowercases, drops empty entries and dedupes
+/// while preserving the first occurrence order.
+pub fn normalize_keywords<I, S>(items: I) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        let keyword = item.as_ref().trim().to_lowercase();
+        if keyword.is_empty() || out.iter().any(|existing| existing == &keyword) {
+            continue;
+        }
+        out.push(keyword);
+    }
+    out
+}
+
+impl KeywordSpec {
+    pub fn into_keywords(self) -> Vec<String> {
+        match self {
+            KeywordSpec::List(list) => normalize_keywords(list),
+            KeywordSpec::String(s) => {
+                normalize_keywords(s.split(|c: char| c == ',' || c.is_whitespace()))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum ArgsSpec {
@@ -773,6 +868,14 @@ where
     }
 }
 
+fn deserialize_keywords<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::<KeywordSpec>::deserialize(deserializer)?;
+    Ok(opt.map(KeywordSpec::into_keywords).unwrap_or_default())
+}
+
 #[derive(Deserialize)]
 struct RawCommand {
     command: Option<String>,
@@ -783,6 +886,8 @@ struct RawCommand {
     aliases: Vec<String>,
     #[serde(default, deserialize_with = "deserialize_args")]
     args: Vec<CommandArg>,
+    #[serde(default, deserialize_with = "deserialize_keywords")]
+    keywords: Vec<String>,
     #[serde(default)]
     env: Option<EnvSpec>,
     #[serde(default)]
@@ -812,6 +917,7 @@ fn parse_command_from_value<E: serde::de::Error>(val: toml::Value) -> Result<Com
         overflow: raw_cmd.overflow,
         aliases: raw_cmd.aliases,
         args: raw_cmd.args,
+        keywords: raw_cmd.keywords,
         env: raw_cmd.env.map(|e| e.into_map()).unwrap_or_default(),
         env_force: raw_cmd.env_force.map(|e| e.into_map()).unwrap_or_default(),
         source_file: None,
@@ -835,6 +941,7 @@ impl<'de> Deserialize<'de> for Config {
         };
 
         let mut section_vars: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+        let mut section_keywords: BTreeMap<String, Vec<String>> = BTreeMap::new();
 
         let mut raw_alias_tables = raw.aliases;
         for (k, v) in raw.alias {
@@ -871,6 +978,12 @@ impl<'de> Deserialize<'de> for Config {
                     .entry(Config::UNKNOWN_ALIAS_SECTION.to_string())
                     .or_default()
                     .extend(vars_map);
+            } else if key == "_keywords" {
+                let spec: KeywordSpec = val.try_into().map_err(serde::de::Error::custom)?;
+                section_keywords
+                    .entry(Config::UNKNOWN_ALIAS_SECTION.to_string())
+                    .or_default()
+                    .extend(spec.into_keywords());
             } else if val.is_table()
                 && val.get("command").and_then(|c| c.as_str()).is_some()
             {
@@ -906,6 +1019,15 @@ impl<'de> Deserialize<'de> for Config {
                             .entry(section.clone())
                             .or_default()
                             .extend(vars_map);
+                    } else if sub_key == "_keywords" {
+                        let spec: KeywordSpec = sub_val
+                            .clone()
+                            .try_into()
+                            .map_err(serde::de::Error::custom)?;
+                        section_keywords
+                            .entry(section.clone())
+                            .or_default()
+                            .extend(spec.into_keywords());
                     } else {
                         let cmd = parse_command_from_value(sub_val.clone())?;
                         config
@@ -914,6 +1036,17 @@ impl<'de> Deserialize<'de> for Config {
                             .or_default()
                             .insert(sub_key.clone(), cmd);
                     }
+                }
+            }
+        }
+
+        // Merge section-level `_keywords` into every command of that section.
+        for (section, keywords) in &section_keywords {
+            if let Some(commands) = config.aliases.get_mut(section) {
+                for cmd in commands.values_mut() {
+                    let mut merged = keywords.clone();
+                    merged.extend(cmd.keywords.iter().cloned());
+                    cmd.keywords = normalize_keywords(merged);
                 }
             }
         }
@@ -965,7 +1098,13 @@ impl<'de> Deserialize<'de> for Config {
                             *env_force_val = env_force_val.replace(&placeholder, v);
                         }
                     }
+                    for keyword in &mut cmd.keywords {
+                        if keyword.contains(&placeholder) {
+                            *keyword = keyword.replace(&placeholder, v);
+                        }
+                    }
                 }
+                cmd.keywords = normalize_keywords(std::mem::take(&mut cmd.keywords));
             }
         }
 
@@ -3099,6 +3238,170 @@ single = { command = "echo single" }
         assert_eq!(sec["hi"].command, "echo hi");
         assert_eq!(sec["hi"].description.as_deref(), Some("Say hi"));
         assert_eq!(sec["single"].command, "echo single");
+    }
+
+    #[test]
+    fn keywords_array_form_should_parse_for_aliases_and_recipes() {
+        let toml_str = r#"
+[recipes.demo]
+name = "Demo"
+description = "Demo recipe"
+keywords = ["SQLite", " Database ", ""]
+
+[aliases.demo]
+hello = { command = "echo hi", keywords = ["Greeting", "  hello "] }
+"#;
+        let config: Config = toml::from_str(toml_str).expect("keywords arrays should parse");
+        assert_eq!(config.recipes["demo"].keywords, vec!["sqlite", "database"]);
+        assert_eq!(
+            config.aliases["demo"]["hello"].keywords,
+            vec!["greeting", "hello"]
+        );
+    }
+
+    #[test]
+    fn keywords_string_form_should_split_normalize_and_dedupe() {
+        let toml_str = r#"
+[recipes.demo]
+name = "Demo"
+description = "Demo recipe"
+keywords = "Docker, Compose   containers, DOCKER"
+
+[aliases.demo]
+hello = { command = "echo hi", keywords = " Alpha,beta  alpha  Gamma " }
+"#;
+        let config: Config = toml::from_str(toml_str).expect("keyword strings should parse");
+        assert_eq!(
+            config.recipes["demo"].keywords,
+            vec!["docker", "compose", "containers"]
+        );
+        assert_eq!(
+            config.aliases["demo"]["hello"].keywords,
+            vec!["alpha", "beta", "gamma"]
+        );
+    }
+
+    #[test]
+    fn section_keywords_should_merge_into_every_command() {
+        let toml_str = r#"
+[aliases.git]
+_keywords = ["VCS", "commit"]
+gco = { command = "git switch", keywords = ["Branch", "vcs"] }
+status = { command = "git status" }
+
+[aliases]
+_keywords = "flat, root"
+single = { command = "echo single" }
+"#;
+        let config: Config = toml::from_str(toml_str).expect("section keywords should parse");
+        assert_eq!(
+            config.aliases["git"]["gco"].keywords,
+            vec!["vcs", "commit", "branch"]
+        );
+        assert_eq!(
+            config.aliases["git"]["status"].keywords,
+            vec!["vcs", "commit"]
+        );
+        assert_eq!(
+            config.aliases["unknown"]["single"].keywords,
+            vec!["flat", "root"]
+        );
+    }
+
+    #[test]
+    fn keywords_should_support_template_variable_substitution() {
+        let toml_str = r#"
+[vars]
+tool = "docker"
+
+[aliases.demo]
+up = { command = "x", keywords = ["{{tool}}-compose", "{{tool}}"] }
+"#;
+        let config: Config = toml::from_str(toml_str).expect("keywords should substitute vars");
+        assert_eq!(
+            config.aliases["demo"]["up"].keywords,
+            vec!["docker-compose", "docker"]
+        );
+    }
+
+    #[test]
+    fn ui_settings_should_default_keyword_views() {
+        let ui = UiSettings::default();
+        assert_eq!(ui.search_keywords, "matched");
+        assert_eq!(ui.list_keywords, "all");
+        assert_eq!(ui.search_keyword_view(), KeywordView::Matched);
+        assert_eq!(ui.list_keyword_view(), KeywordView::All);
+    }
+
+    #[test]
+    fn example_global_config_should_document_keyword_views() {
+        let config: GlobalConfig =
+            toml::from_str(EXAMPLE_GLOBAL_CONFIG).expect("example global config should parse");
+        assert!(EXAMPLE_GLOBAL_CONFIG.contains("search_keywords"));
+        assert!(EXAMPLE_GLOBAL_CONFIG.contains("list_keywords"));
+        assert_eq!(config.ui.search_keyword_view(), KeywordView::Matched);
+        assert_eq!(config.ui.list_keyword_view(), KeywordView::All);
+    }
+
+    #[test]
+    fn ui_settings_keyword_views_should_accept_synonyms_case_insensitively() {
+        let mut ui = UiSettings::default();
+
+        for value in ["on", "true", "yes", "1", "all", "ALL", "On"] {
+            ui.search_keywords = value.to_string();
+            assert_eq!(
+                ui.search_keyword_view(),
+                KeywordView::All,
+                "search_keywords={value:?} should map to All"
+            );
+        }
+        for value in ["off", "false", "no", "0", "OFF", "False"] {
+            ui.search_keywords = value.to_string();
+            assert_eq!(
+                ui.search_keyword_view(),
+                KeywordView::Off,
+                "search_keywords={value:?} should map to Off"
+            );
+        }
+        ui.search_keywords = "MATCHED".to_string();
+        assert_eq!(ui.search_keyword_view(), KeywordView::Matched);
+
+        let config: GlobalConfig = toml::from_str(
+            r#"
+[ui]
+search_keywords = "ON"
+list_keywords = "TRUE"
+"#,
+        )
+        .expect("ui settings should parse");
+        assert_eq!(config.ui.search_keyword_view(), KeywordView::All);
+        assert_eq!(config.ui.list_keyword_view(), KeywordView::All);
+    }
+
+    #[test]
+    fn ui_settings_keyword_views_should_fall_back_to_field_defaults_on_unknown_values() {
+        let ui = UiSettings {
+            search_keywords: "bogus".to_string(),
+            list_keywords: "bogus".to_string(),
+            ..UiSettings::default()
+        };
+        assert_eq!(ui.search_keyword_view(), KeywordView::Matched);
+        assert_eq!(ui.list_keyword_view(), KeywordView::All);
+    }
+
+    #[test]
+    fn ui_settings_list_keyword_view_should_map_matched_to_off() {
+        let mut ui = UiSettings {
+            list_keywords: "matched".to_string(),
+            ..UiSettings::default()
+        };
+        assert_eq!(ui.list_keyword_view(), KeywordView::Off);
+        ui.list_keywords = "MATCHED".to_string();
+        assert_eq!(ui.list_keyword_view(), KeywordView::Off);
+        ui.list_keywords = "off".to_string();
+        assert_eq!(ui.list_keyword_view(), KeywordView::Off);
+        ui.list_keywords = "all".to_string();
+        assert_eq!(ui.list_keyword_view(), KeywordView::All);
     }
 }
 

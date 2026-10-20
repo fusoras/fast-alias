@@ -56,7 +56,32 @@ fa --list -s                         # or: fa -l -s
 
 # Search recipes and aliases by keyword:
 fa --search typescript               # or: fa -se typescript
+
+# Multi-token AND search (no quotes needed):
+fa --search docker compose           # every token must match a field
 ```
+
+**Search keywords and ranking:** Recipes and aliases may declare `keywords` (search-only metadata) in their TOML definitions. The query is split on whitespace and every token must match at least one field (AND semantics). Matches are ranked by relevance, strongest first:
+
+| Weight | Match |
+| ------ | ----- |
+| 100 | Exact recipe/command key, recipe name, or declared alias |
+| 80 | Prefix of a name, or a word inside it |
+| 70 | Exact keyword |
+| 55 | Keyword prefix |
+| 45 | Exact section name (with or without leading `:`) or exact recipe language |
+| 30 | Keyword substring, description substring, or recipe variant substring |
+| 15 | Argument name/description substring |
+
+The command body is never searched. Within each section, results are sorted by score and then alphabetically by name.
+
+**Keyword display in results:** Search results can append the declared keywords that matched the query, rendered as `‹a, b, c›` in dim gray. Control it with `[ui] search_keywords`:
+
+- `matched` (default): show only keywords that matched the current query.
+- `all`: show every declared keyword.
+- `off`: show no keyword suffix.
+
+`fa --list` uses `[ui] list_keywords` with `all` (default) or `off`; `matched` is treated as `off` because there is no query. Hints show at most three keywords; extra ones collapse into `+N`, for example `‹docker, containers, compose, +2›`. See [config.md](config.md#ui-display-ui).
 
 **Argument signatures in listings:**
 Commands declaring `args` (or containing positional `$1`, `$2` variables) automatically display their argument signature alongside their name:

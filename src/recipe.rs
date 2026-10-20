@@ -414,6 +414,7 @@ const KNOWN_RECIPE_FIELDS: &[&str] = &[
     "description",
     "language",
     "aliases",
+    "keywords",
     "variants",
     "files",
     "pm",
@@ -1315,6 +1316,23 @@ install = true
         let (issues, has_errors) = recipe_diagnostics(&dir, None).unwrap();
         let msgs = issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
         assert!(!has_errors, "install = true in step must be valid, but got errors:\n{msgs}");
+        assert!(issues.is_empty(), "Should have no validation issues, but got:\n{msgs}");
+    }
+
+    #[test]
+    fn test_recipe_validate_accepts_keywords_field() {
+        let dir = temp_dir("val-keywords");
+        fs::write(
+            dir.join("recipes.toml"),
+            r#"[recipes.my-rec]
+name = "My Rec"
+description = "Valid"
+keywords = ["sqlite", "database"]
+"#,
+        ).unwrap();
+        let (issues, has_errors) = recipe_diagnostics(&dir, None).unwrap();
+        let msgs = issues.iter().map(|i| i.to_string()).collect::<Vec<_>>().join("\n");
+        assert!(!has_errors, "keywords must be a known recipe field, but got errors:\n{msgs}");
         assert!(issues.is_empty(), "Should have no validation issues, but got:\n{msgs}");
     }
 

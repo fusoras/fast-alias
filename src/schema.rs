@@ -40,6 +40,13 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
                 "description": "Namespace template variables substituted via {{KEY}} within this section.",
                 "additionalProperties": { "type": "string" }
               },
+              "_keywords": {
+                "oneOf": [
+                  { "type": "array", "items": { "type": "string" } },
+                  { "type": "string" }
+                ],
+                "description": "Search-only keywords merged into every command in this section."
+              },
               "_env": {
                 "oneOf": [
                   { "type": "object", "additionalProperties": { "type": "string" } },
@@ -77,6 +84,13 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
                 "type": "object",
                 "description": "Namespace template variables substituted via {{KEY}} within this section.",
                 "additionalProperties": { "type": "string" }
+              },
+              "_keywords": {
+                "oneOf": [
+                  { "type": "array", "items": { "type": "string" } },
+                  { "type": "string" }
+                ],
+                "description": "Search-only keywords merged into every command in this section."
               },
               "_env": {
                 "oneOf": [
@@ -122,6 +136,13 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
           "type": "array",
           "items": { "type": "string" },
           "description": "Optional list of variants supported by this recipe."
+        },
+        "keywords": {
+          "oneOf": [
+            { "type": "array", "items": { "type": "string" } },
+            { "type": "string" }
+          ],
+          "description": "Search-only metadata keywords (array or comma/space separated string)."
         },
         "templates_dir": {
           "type": "string",
@@ -213,6 +234,13 @@ pub const RECIPE_SCHEMA_JSON: &str = r##"{
           "type": "array",
           "items": { "type": "string" },
           "description": "Optional short alias names for this command."
+        },
+        "keywords": {
+          "oneOf": [
+            { "type": "array", "items": { "type": "string" } },
+            { "type": "string" }
+          ],
+          "description": "Search-only metadata keywords (array or comma/space separated string)."
         },
         "args": {
           "oneOf": [
@@ -376,4 +404,38 @@ pub fn ensure_schema_file(state_dir: &Path) -> anyhow::Result<PathBuf> {
     }
 
     Ok(schema_path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_should_parse_and_declare_keyword_properties() {
+        let schema: serde_json::Value =
+            serde_json::from_str(RECIPE_SCHEMA_JSON).expect("schema must be valid JSON");
+
+        for definition in ["Recipe", "Alias"] {
+            let keywords = &schema["definitions"][definition]["properties"]["keywords"];
+            assert!(
+                keywords.is_object(),
+                "{definition} must declare a keywords property"
+            );
+            let options = keywords["oneOf"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{definition} keywords must use oneOf"));
+            let types: Vec<&str> = options
+                .iter()
+                .filter_map(|option| option["type"].as_str())
+                .collect();
+            assert!(
+                types.contains(&"array"),
+                "{definition} keywords must accept an array, got {types:?}"
+            );
+            assert!(
+                types.contains(&"string"),
+                "{definition} keywords must accept a string, got {types:?}"
+            );
+        }
+    }
 }

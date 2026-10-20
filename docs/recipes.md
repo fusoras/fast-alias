@@ -97,6 +97,7 @@ Comprehensive recipe reference illustrating all available directives:
 name        = "My Recipe"
 description = "A stack bootstrap with tooling"
 aliases     = ["mr"]
+keywords    = ["typescript", "frontend"]              # search-only metadata (array or comma/space string)
 language    = "web · typescript"
 variants    = ["pnpm", "bun", "npm"]
 pin_versions = true                                  # strip ^/~ from package.json after installs (default: false)
@@ -201,6 +202,22 @@ Recipes can declare ordered shell commands executed after files are written and 
 ## Variants
 
 Each recipe can declare `variants` (e.g. `pnpm`, `bun`, `npm`). Variants select the matching `[pm]` command set and may override `[tooling]` and `[files]`. The user selects a variant with `-v`/`--variant`, defaulting to the first declared variant. Variants are NOT aliases: aliases are short names for the recipe itself.
+
+## Search Keywords (`keywords`)
+
+Recipes may declare `keywords` as search-only metadata. They are matched by `fa --search` / `fa -se` but never executed or shown in project scaffolding. Both an array and a comma/space-separated string are accepted; entries are trimmed, lowercased and deduplicated at load time:
+
+```toml
+[recipes.compose-stack]
+name     = "Compose Stack"
+keywords = ["containers", "orchestration"]
+
+[recipes.rust-cli]
+name     = "Rust CLI"
+keywords = "cargo, cli, terminal"
+```
+
+See [CLI Reference](commands.md) for multi-token AND search and ranking weights.
 
 ## Version Pinning (`pin_versions`)
 

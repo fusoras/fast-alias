@@ -17,11 +17,12 @@ use std::path::Path;
 use clap::{CommandFactory, Parser, Subcommand};
 
 use crate::colors::*;
-use crate::config::{Command, Config};
+use crate::config::{Command, Config, KeywordView};
 use crate::engine::{
-    check_circular_recursion, check_self_recursion, format_alias_groups, format_command_line,
+    check_circular_recursion, check_self_recursion, format_alias_groups,
+    format_alias_groups_with_keywords, format_command_line, format_keyword_suffix,
     format_list_line, format_section_header, is_supported, preflight, run_new, run_shell_with_env,
-    NewOptions, FA_CALL_STACK_ENV,
+    NewOptions, FA_CALL_STACK_ENV, KEYWORD_DISPLAY_LIMIT,
 };
 use crate::platform::Platform;
 use crate::state::State;
@@ -357,51 +358,215 @@ fn is_scaffold_recipe(recipe: &crate::config::Recipe) -> bool {
     recipe.create.is_some() || !recipe.files.is_empty() || !recipe.steps.is_empty()
 }
 
+/// Splits a search query into lowercase, deduplicated whitespace tokens.
+fn search_tokens(query: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    for raw in query.split_whitespace() {
+        let token = raw.to_lowercase();
+        if !token.is_empty() && !tokens.iter().any(|existing| existing == &token) {
+            tokens.push(token);
+        }
+    }
+    tokens
+}
+
+/// True when `field` is exactly `token` (case-insensitive).
+fn field_exact(field: &str, token: &str) -> bool {
+    field.trim().eq_ignore_ascii_case(token)
+}
+
+/// True when `field` starts with `token` or a word inside it does.
+fn field_prefix(field: &str, token: &str) -> bool {
+    let lower = field.to_lowercase();
+    lower.starts_with(token)
+        || lower
+            .split(|c: char| !c.is_alphanumeric())
+            .any(|word| !word.is_empty() && word.starts_with(token))
+}
+
+fn keep_best(best: &mut Option<i32>, weight: i32) {
+    *best = Some(best.map_or(weight, |current| current.max(weight)));
+}
+
+/// Result of a successful search: relevance plus the declared keywords that
+/// actually matched any query token. `keywords` is empty when the result only
+/// matched by name, section, description, or another non-keyword field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SearchMatch {
+    pub score: i32,
+    pub keywords: Vec<String>,
+}
+
+/// True when a lowercased declared keyword matches a query token using the same
+/// exact, word-prefix, or substring rules used for scoring.
+fn keyword_matches_token(keyword_lower: &str, token: &str) -> bool {
+    keyword_lower == token || field_prefix(keyword_lower, token) || keyword_lower.contains(token)
+}
+
+/// Collects declared keywords (stored form, config order, deduped) that matched
+/// at least one query token.
+fn matched_declared_keywords(declared: &[String], tokens: &[String]) -> Vec<String> {
+    let mut matched: Vec<String> = Vec::new();
+    for keyword in declared {
+        let lower = keyword.to_lowercase();
+        if !tokens
+            .iter()
+            .any(|token| keyword_matches_token(&lower, token))
+        {
+            continue;
+        }
+        if matched
+            .iter()
+            .any(|existing| existing.eq_ignore_ascii_case(keyword))
+        {
+            continue;
+        }
+        matched.push(keyword.clone());
+    }
+    matched
+}
+
+/// Scored match for a recipe: `None` when any query token fails to match.
+/// Higher scores indicate stronger relevance.
+pub(crate) fn recipe_search_score(
+    key: &str,
+    recipe: &crate::config::Recipe,
+    query: &str,
+) -> Option<SearchMatch> {
+    let tokens = search_tokens(query);
+    if tokens.is_empty() {
+        return Some(SearchMatch {
+            score: 0,
+            keywords: Vec::new(),
+        });
+    }
+
+    let mut names: Vec<String> = vec![key.to_string(), recipe.name.clone()];
+    names.extend(recipe.aliases.iter().cloned());
+    let keywords: Vec<String> = recipe.keywords.iter().map(|k| k.to_lowercase()).collect();
+    let language = recipe.language.as_deref().unwrap_or("").to_lowercase();
+    let variants: Vec<String> = recipe.variants.iter().map(|v| v.to_lowercase()).collect();
+    let description = recipe.description.to_lowercase();
+
+    let mut total = 0;
+    for token in &tokens {
+        let mut best: Option<i32> = None;
+        if names.iter().any(|name| field_exact(name, token)) {
+            keep_best(&mut best, 100);
+        }
+        if names.iter().any(|name| field_prefix(name, token)) {
+            keep_best(&mut best, 80);
+        }
+        if keywords.iter().any(|keyword| keyword == token) {
+            keep_best(&mut best, 70);
+        }
+        if keywords.iter().any(|keyword| field_prefix(keyword, token)) {
+            keep_best(&mut best, 55);
+        }
+        if !language.is_empty() && language == *token {
+            keep_best(&mut best, 45);
+        }
+        if keywords.iter().any(|keyword| keyword.contains(token)) {
+            keep_best(&mut best, 30);
+        }
+        if variants.iter().any(|variant| variant.contains(token)) {
+            keep_best(&mut best, 30);
+        }
+        if description.contains(token) {
+            keep_best(&mut best, 30);
+        }
+        let weight = best?;
+        total += weight;
+    }
+    Some(SearchMatch {
+        score: total,
+        keywords: matched_declared_keywords(&recipe.keywords, &tokens),
+    })
+}
+
+/// Scored match for a command alias: `None` when any query token fails to
+/// match. The command body is intentionally never searched.
+pub(crate) fn command_search_score(
+    section: &str,
+    key: &str,
+    cmd: &crate::config::Command,
+    query: &str,
+) -> Option<SearchMatch> {
+    let tokens = search_tokens(query);
+    if tokens.is_empty() {
+        return Some(SearchMatch {
+            score: 0,
+            keywords: Vec::new(),
+        });
+    }
+
+    let mut names: Vec<String> = vec![key.to_string()];
+    names.extend(cmd.aliases.iter().cloned());
+    let keywords: Vec<String> = cmd.keywords.iter().map(|k| k.to_lowercase()).collect();
+    let description = cmd.description.as_deref().unwrap_or("").to_lowercase();
+    let section_plain = section.trim_start_matches(':');
+    let section_display = crate::config::Config::display_section(section);
+
+    let mut total = 0;
+    for token in &tokens {
+        let mut best: Option<i32> = None;
+        if names.iter().any(|name| field_exact(name, token)) {
+            keep_best(&mut best, 100);
+        }
+        if names.iter().any(|name| field_prefix(name, token)) {
+            keep_best(&mut best, 80);
+        }
+        if keywords.iter().any(|keyword| keyword == token) {
+            keep_best(&mut best, 70);
+        }
+        if keywords.iter().any(|keyword| field_prefix(keyword, token)) {
+            keep_best(&mut best, 55);
+        }
+        if section_plain.eq_ignore_ascii_case(token) || section_display.eq_ignore_ascii_case(token)
+        {
+            keep_best(&mut best, 45);
+        }
+        if keywords.iter().any(|keyword| keyword.contains(token)) {
+            keep_best(&mut best, 30);
+        }
+        if description.contains(token) {
+            keep_best(&mut best, 30);
+        }
+        if cmd.args.iter().any(|arg| {
+            arg.name.to_lowercase().contains(token)
+                || arg
+                    .description
+                    .as_deref()
+                    .is_some_and(|desc| desc.to_lowercase().contains(token))
+        }) {
+            keep_best(&mut best, 15);
+        }
+        let weight = best?;
+        total += weight;
+    }
+    Some(SearchMatch {
+        score: total,
+        keywords: matched_declared_keywords(&cmd.keywords, &tokens),
+    })
+}
+
+#[cfg(test)]
 pub(crate) fn recipe_matches_search(
     key: &str,
     recipe: &crate::config::Recipe,
     query: &str,
 ) -> bool {
-    let q = query.to_lowercase();
-    let mut haystack = format!("{key} {}", recipe.name.to_lowercase());
-    haystack.push(' ');
-    haystack.push_str(&recipe.aliases.join(" "));
-    if let Some(lang) = &recipe.language {
-        haystack.push(' ');
-        haystack.push_str(&lang.to_lowercase());
-    }
-    haystack.push(' ');
-    haystack.push_str(&recipe.variants.join(" "));
-    haystack.push(' ');
-    haystack.push_str(&recipe.description.to_lowercase());
-    haystack.contains(&q)
+    recipe_search_score(key, recipe, query).is_some()
 }
 
+#[cfg(test)]
 pub(crate) fn command_matches_search(
     section: &str,
     key: &str,
     cmd: &crate::config::Command,
     query: &str,
 ) -> bool {
-    let q = query.to_lowercase();
-    let sec_clean = section.trim_start_matches(':');
-    let display_sec = crate::config::Config::display_section(section);
-    let mut haystack = format!("{key} {section} {sec_clean} {display_sec}");
-    haystack.push(' ');
-    haystack.push_str(&cmd.aliases.join(" "));
-    if let Some(desc) = &cmd.description {
-        haystack.push(' ');
-        haystack.push_str(desc);
-    }
-    for arg in &cmd.args {
-        haystack.push(' ');
-        haystack.push_str(&arg.name);
-        if let Some(desc) = &arg.description {
-            haystack.push(' ');
-            haystack.push_str(desc);
-        }
-    }
-    haystack.to_lowercase().contains(&q)
+    command_search_score(section, key, cmd, query).is_some()
 }
 
 
@@ -883,6 +1048,7 @@ fn run_cli() -> anyhow::Result<()> {
             let mut show_recipes = recipes;
             let mut show_aliases = aliases;
             let mut show_packs = packs;
+            let list_keyword_view = config.settings.ui.list_keyword_view();
 
             if let Some(f) = &filter_lower {
                 match f.as_str() {
@@ -912,7 +1078,14 @@ fn run_cli() -> anyhow::Result<()> {
                     if !is_scaffold_recipe(recipe) {
                         continue;
                     }
-                    recipe_lines.push(format_list_line(key, recipe));
+                    let mut line = format_list_line(key, recipe);
+                    if list_keyword_view == KeywordView::All {
+                        line.push_str(&format_keyword_suffix(
+                            &recipe.keywords,
+                            KEYWORD_DISPLAY_LIMIT,
+                        ));
+                    }
+                    recipe_lines.push(line);
                 }
                 if !recipe_lines.is_empty() {
                     println!("{SECTION_HEADER}Recipes:{RESET}");
@@ -957,7 +1130,11 @@ fn run_cli() -> anyhow::Result<()> {
             }
 
             if show_aliases {
-                let commands = format_alias_groups(&config);
+                let commands = if list_keyword_view == KeywordView::All {
+                    format_alias_groups_with_keywords(&config, KEYWORD_DISPLAY_LIMIT)
+                } else {
+                    format_alias_groups(&config)
+                };
                 if !commands.is_empty() {
                     if show_recipes || show_packs {
                         println!();
@@ -972,29 +1149,65 @@ fn run_cli() -> anyhow::Result<()> {
             }
         }
         Commands::Search { query } => {
-            let mut recipes = Vec::new();
+            let search_keyword_view = config.settings.ui.search_keyword_view();
+            let mut recipes: Vec<(i32, String, String)> = Vec::new();
             for (key, recipe) in &config.recipes {
                 if !is_scaffold_recipe(recipe) {
                     continue;
                 }
-                if recipe_matches_search(key, recipe, &query) {
-                    recipes.push(format_list_line(key, recipe));
+                if let Some(search_match) = recipe_search_score(key, recipe, &query) {
+                    let mut line = format_list_line(key, recipe);
+                    match search_keyword_view {
+                        KeywordView::All => line.push_str(&format_keyword_suffix(
+                            &recipe.keywords,
+                            KEYWORD_DISPLAY_LIMIT,
+                        )),
+                        KeywordView::Matched => line.push_str(&format_keyword_suffix(
+                            &search_match.keywords,
+                            KEYWORD_DISPLAY_LIMIT,
+                        )),
+                        KeywordView::Off => {}
+                    }
+                    recipes.push((search_match.score, key.clone(), line));
                 }
             }
+            recipes.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+            let recipes: Vec<String> = recipes.into_iter().map(|(_, _, line)| line).collect();
+
             let mut commands = Vec::new();
             for (section, commands_map) in &config.aliases {
-                let mut matched_in_section = Vec::new();
+                let mut matched_in_section: Vec<(i32, String, String)> = Vec::new();
                 for (command_key, command) in commands_map {
-                    if command_matches_search(section, command_key, command, &query) {
-                        matched_in_section.push(format!("    {}", format_command_line(command_key, command)));
+                    if let Some(search_match) =
+                        command_search_score(section, command_key, command, &query)
+                    {
+                        let mut line =
+                            format!("    {}", format_command_line(command_key, command));
+                        match search_keyword_view {
+                            KeywordView::All => line.push_str(&format_keyword_suffix(
+                                &command.keywords,
+                                KEYWORD_DISPLAY_LIMIT,
+                            )),
+                            KeywordView::Matched => line.push_str(&format_keyword_suffix(
+                                &search_match.keywords,
+                                KEYWORD_DISPLAY_LIMIT,
+                            )),
+                            KeywordView::Off => {}
+                        }
+                        matched_in_section.push((
+                            search_match.score,
+                            command_key.clone(),
+                            line,
+                        ));
                     }
                 }
                 if !matched_in_section.is_empty() {
+                    matched_in_section.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
                     if !commands.is_empty() {
                         commands.push(String::new());
                     }
                     commands.push(format_section_header(section));
-                    commands.extend(matched_in_section);
+                    commands.extend(matched_in_section.into_iter().map(|(_, _, line)| line));
                 }
             }
             if !recipes.is_empty() {
@@ -1402,6 +1615,12 @@ pub fn format_command_details(cmd: &Command, section: &str, key: &str) -> String
     if !cmd.aliases.is_empty() {
         out.push_str(&format!("Aliases: {DIM_GRAY}{}{RESET}\n", cmd.aliases.join(", ")));
     }
+    if !cmd.keywords.is_empty() {
+        out.push_str(&format!(
+            "Keywords: {DIM_GRAY}{}{RESET}\n",
+            cmd.keywords.join(", ")
+        ));
+    }
     if let Some(sig) = cmd.argument_signature() {
         out.push_str(&format!("Usage: {DIM_GRAY}fa {display_name} {sig}{RESET}\n"));
     }
@@ -1467,6 +1686,12 @@ fn format_recipe_details(recipe: &crate::config::Recipe, key: &str) -> String {
     out.push_str(&format!("Description: {DIM_GRAY}{}{RESET}\n", recipe.description));
     if let Some(lang) = &recipe.language {
         out.push_str(&format!("Language: {DIM_GRAY}{lang}{RESET}\n"));
+    }
+    if !recipe.keywords.is_empty() {
+        out.push_str(&format!(
+            "Keywords: {DIM_GRAY}{}{RESET}\n",
+            recipe.keywords.join(", ")
+        ));
     }
     if !recipe.aliases.is_empty() {
         out.push_str(&format!(
@@ -2502,6 +2727,7 @@ description = "Next.js TS"
             overflow: None,
             aliases: vec![],
             args: vec![],
+            keywords: vec![],
             env: env_map,
             env_force: force_map,
             source_file: Some(PathBuf::from("/home/user/.config/fa/recipes.d/skills.toml")),
@@ -2767,5 +2993,224 @@ description = "Next.js TS"
         assert!(msg.contains("fa -sh wc-ui"));
 
         assert_eq!(recipe_as_action_error("nonexistent", &config), None);
+    }
+
+    #[test]
+    fn test_search_alias_found_by_keyword() {
+        let cmd = crate::config::Command {
+            command: "docker compose up".to_string(),
+            description: Some("Start services".to_string()),
+            keywords: vec!["containers".to_string(), "orchestration".to_string()],
+            ..Default::default()
+        };
+        assert!(
+            command_matches_search("docker", "up", &cmd, "containers"),
+            "expected alias search to match a declared keyword"
+        );
+    }
+
+    #[test]
+    fn test_search_recipe_found_by_keyword() {
+        let recipe = crate::config::Recipe {
+            name: "Compose Stack".to_string(),
+            description: "Multi-service project".to_string(),
+            keywords: vec!["containers".to_string(), "orchestration".to_string()],
+            ..Default::default()
+        };
+        assert!(
+            recipe_matches_search("compose", &recipe, "orchestration"),
+            "expected recipe search to match a declared keyword"
+        );
+    }
+
+    #[test]
+    fn test_search_multi_token_requires_all_tokens() {
+        let cmd = crate::config::Command {
+            command: "docker compose up".to_string(),
+            description: Some("Start services".to_string()),
+            keywords: vec!["containers".to_string()],
+            ..Default::default()
+        };
+        assert!(
+            command_matches_search("docker", "up", &cmd, "docker containers"),
+            "tokens split across name and keyword should both match"
+        );
+        assert!(
+            command_matches_search("docker", "up", &cmd, "docker start"),
+            "tokens split across name and description should both match"
+        );
+        assert!(
+            !command_matches_search("docker", "up", &cmd, "docker missing"),
+            "every token must match at least one field"
+        );
+    }
+
+    #[test]
+    fn test_search_ranking_prefers_exact_name_over_description() {
+        let exact = crate::config::Command {
+            command: "docker ps".to_string(),
+            ..Default::default()
+        };
+        let description_only = crate::config::Command {
+            command: "helper".to_string(),
+            description: Some("docker helper".to_string()),
+            ..Default::default()
+        };
+        let exact_score = command_search_score("media", "docker", &exact, "docker")
+            .expect("exact name should match")
+            .score;
+        let description_score =
+            command_search_score("media", "helper", &description_only, "docker")
+                .expect("description should match")
+                .score;
+        assert!(
+            exact_score > description_score,
+            "exact name score ({exact_score}) must outrank description-only score ({description_score})"
+        );
+    }
+
+    #[test]
+    fn test_search_blank_query_matches_with_zero_score() {
+        let cmd = crate::config::Command {
+            command: "echo hi".to_string(),
+            ..Default::default()
+        };
+        assert_eq!(
+            command_search_score("demo", "hi", &cmd, "   ").map(|m| m.score),
+            Some(0)
+        );
+        assert_eq!(
+            command_search_score("demo", "hi", &cmd, "").map(|m| m.score),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn test_format_command_details_includes_keywords_when_present() {
+        let cmd = crate::config::Command {
+            command: "docker compose up".to_string(),
+            description: Some("Start services".to_string()),
+            keywords: vec!["containers".to_string(), "orchestration".to_string()],
+            ..Default::default()
+        };
+        let out = format_command_details(&cmd, "docker", "up");
+        assert!(
+            out.contains(&format!(
+                "Keywords: {DIM_GRAY}containers, orchestration{RESET}"
+            )),
+            "Keywords line must be dim gray and comma-joined, got:\n{out:?}"
+        );
+
+        let without = crate::config::Command {
+            command: "echo hi".to_string(),
+            ..Default::default()
+        };
+        let out_without = format_command_details(&without, "demo", "hi");
+        assert!(
+            !out_without.contains("Keywords:"),
+            "Keywords line must be omitted when empty, got:\n{out_without:?}"
+        );
+    }
+
+    #[test]
+    fn test_format_recipe_details_includes_keywords_when_present() {
+        let recipe = crate::config::Recipe {
+            name: "Compose Stack".to_string(),
+            description: "Multi-service project".to_string(),
+            language: Some("yaml".to_string()),
+            keywords: vec!["containers".to_string(), "orchestration".to_string()],
+            ..Default::default()
+        };
+        let out = format_recipe_details(&recipe, "compose");
+        assert!(
+            out.contains(&format!(
+                "Keywords: {DIM_GRAY}containers, orchestration{RESET}"
+            )),
+            "Recipe Keywords line must be dim gray and comma-joined, got:\n{out:?}"
+        );
+        let language_pos = out.find("Language:").expect("Language line missing");
+        let keywords_pos = out.find("Keywords:").expect("Keywords line missing");
+        assert!(
+            language_pos < keywords_pos,
+            "Keywords must appear after Language, got:\n{out:?}"
+        );
+    }
+
+    #[test]
+    fn test_command_search_match_reports_only_matched_declared_keywords() {
+        let cmd = crate::config::Command {
+            command: "docker compose up".to_string(),
+            description: Some("Start services".to_string()),
+            keywords: vec![
+                "containers".to_string(),
+                "orchestration".to_string(),
+                "vcs".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        let exact = command_search_score("docker", "up", &cmd, "containers")
+            .expect("exact keyword should match");
+        assert_eq!(exact.score, 70);
+        assert_eq!(exact.keywords, vec!["containers"]);
+
+        let prefix = command_search_score("docker", "up", &cmd, "orchestr")
+            .expect("keyword prefix should match");
+        assert_eq!(prefix.keywords, vec!["orchestration"]);
+
+        let substring = command_search_score("docker", "up", &cmd, "strat")
+            .expect("keyword substring should match");
+        assert_eq!(substring.keywords, vec!["orchestration"]);
+
+        let by_name = command_search_score("docker", "up", &cmd, "docker")
+            .expect("name should match");
+        assert!(
+            by_name.keywords.is_empty(),
+            "name-only matches must not report keywords, got: {:?}",
+            by_name.keywords
+        );
+    }
+
+    #[test]
+    fn test_recipe_search_match_reports_matched_keywords_and_dedupes_them() {
+        let recipe = crate::config::Recipe {
+            name: "Compose Stack".to_string(),
+            description: "Multi-service project".to_string(),
+            keywords: vec![
+                "containers".to_string(),
+                "orchestration".to_string(),
+                "containers".to_string(),
+            ],
+            ..Default::default()
+        };
+
+        let matched = recipe_search_score("compose", &recipe, "containers")
+            .expect("keyword should match");
+        assert_eq!(matched.score, 70);
+        assert_eq!(matched.keywords, vec!["containers"]);
+
+        let by_name =
+            recipe_search_score("compose", &recipe, "compose").expect("name should match");
+        assert!(
+            by_name.keywords.is_empty(),
+            "name-only matches must not report keywords, got: {:?}",
+            by_name.keywords
+        );
+
+        let by_description = recipe_search_score("compose", &recipe, "multi-service")
+            .expect("description should match");
+        assert!(by_description.keywords.is_empty());
+    }
+
+    #[test]
+    fn test_search_match_blank_query_has_zero_score_and_no_keywords() {
+        let cmd = crate::config::Command {
+            command: "echo hi".to_string(),
+            keywords: vec!["containers".to_string()],
+            ..Default::default()
+        };
+        let matched = command_search_score("demo", "hi", &cmd, "   ").expect("blank query matches");
+        assert_eq!(matched.score, 0);
+        assert!(matched.keywords.is_empty());
     }
 }
