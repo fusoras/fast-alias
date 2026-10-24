@@ -6,15 +6,12 @@
 
 # Install
 
-> [!WARNING] Development version
-> This installs the **development build** from the `develop` branch (pre-release, not a stable release).
-
 ### Quick Install (Pre-compiled Binary)
 
 To install `fa` directly on your machine (Debian or Termux) without requiring Rust or Cargo:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/main/install.sh | sh
 ```
 
 > [!NOTE]
@@ -35,7 +32,7 @@ cargo install --path .
 Or install directly from GitHub:
 
 ```bash
-cargo install --git https://github.com/fusoras/fast-alias.git --branch develop
+cargo install --git https://github.com/fusoras/fast-alias.git
 ```
 
 ---
@@ -252,3 +249,7 @@ pin_versions = true    # Strip ^ and ~ from package.json (default: false)
 - [Packs](docs/packs.md) - Modular components and pack bundle installation.
 - [Environment Variables](docs/environment.md) - Fallback and forced environment variable injection (`env`, `env_force`).
 - [Template Variables](docs/variables.md) - Static template variables (`_vars`, `[vars]`).
+
+## License
+
+[MIT](LICENSE)

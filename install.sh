@@ -1,11 +1,11 @@
 #!/bin/sh
 # POSIX-compliant bootstrap installer for fast-alias (`fa`)
-# Usage: curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/develop/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/fusoras/fast-alias/main/install.sh | sh
 
 set -e
 
 # Default version tag (overridden if RELEASE_TAG environment variable is set)
-VERSION="${RELEASE_TAG:-v0.1.0-beta.4}"
+VERSION="${RELEASE_TAG:-v0.1.0}"
 REPO="fusoras/fast-alias"
 
 # Colors for terminal output

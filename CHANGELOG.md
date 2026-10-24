@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-24
+
 ### Added
 
+- Project licensed under the MIT license (`LICENSE`), with crate metadata (`license`, `repository`, `readme`).
 - Interactive configuration editor (`fa --config` / `fa -co`): zero-dependency pure ANSI terminal configuration editor that visualizes and mutates `~/.config/fa/config.toml` in-place with raw terminal management, clean box borders, and preserved scrollback.
 - Cursor navigation and editing in text inputs: full line-editing support in `prompt_line_raw` with arrow navigation (`←` / `→`), `Home` / `Ctrl+A` and `End` / `Ctrl+E` shortcuts, in-place character insertion, and positional `Backspace` / `Delete` removal; enables visible ANSI cursor (`\x1b[?25h`) during prompt entry and exits cleanly on `Ctrl+C` with standard Unix status code 130 (`SIGINT`).
 - Inline Tab cycling: cycle `packs.default_behavior` (`list`, `default`, `error`) and `ui.icons` (`unicode`, `nerd-font`) directly on the main menu using `Tab` / `Shift-Tab` without opening submenus, showing pending indicators (`(pending)` in Universal mode or `( pending)` in Nerd Font mode) and confirming with `Enter`.
@@ -50,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - CLI help column alignment: dynamically calculates maximum command name width in `format_help_with_inline_aliases` with guaranteed 2-space padding, fixing an issue where command flags and descriptions were rendered without spacing.
 - CLI help: `fa <command> --help` / `fa help <command>` now render that command's own help instead of always falling back to the top-level help (`render_cli_help` preserves subcommand context, e.g. `fa --recipe --help`, `fa help --recipe new`); top-level help keeps inline aliases.
 
-## [v0.1.0-beta.4] - 2026-09-21
+## [0.1.0-beta.4] - 2026-09-21
 
 ### Added
 

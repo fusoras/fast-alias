@@ -342,6 +342,22 @@ mod tests {
     }
 
     #[test]
+    fn newer_version_should_return_true_for_stable_over_beta() {
+        assert!(
+            is_newer_version("v0.1.0", "0.1.0-beta.4"),
+            "Stable v0.1.0 must be detected as newer than 0.1.0-beta.4 (self-update path)"
+        );
+    }
+
+    #[test]
+    fn newer_version_should_return_false_for_beta_over_stable() {
+        assert!(
+            !is_newer_version("v0.1.0-beta.4", "0.1.0"),
+            "0.1.0-beta.4 must never downgrade a stable 0.1.0 install"
+        );
+    }
+
+    #[test]
     fn newer_version_should_return_false_for_same_version() {
         assert!(!is_newer_version("v0.1.0-beta.1", "0.1.0-beta.1"));
     }

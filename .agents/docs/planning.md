@@ -1,6 +1,6 @@
 # Planning & Roadmap — fa
 
-`fa` (fast-alias) `v0.1.0-beta.4`: recipe-player project scaffolder — bootstraps projects, installs dependencies, applies tooling (linter, formatter, typechecker) and config files on **Debian** and **Termux**. All stack knowledge lives in user TOML (`~/.config/fa/recipes.toml` + `recipes.d/*.toml` + `templates/`); the engine stays dumb. Docs split: `docs/` is user-only (`commands.md`, `recipes.md`); `.agents/docs/` is agent-internal (5 files).
+`fa` (fast-alias) `v0.1.0`: recipe-player project scaffolder — bootstraps projects, installs dependencies, applies tooling (linter, formatter, typechecker) and config files on **Debian** and **Termux**. All stack knowledge lives in user TOML (`~/.config/fa/recipes.toml` + `recipes.d/*.toml` + `templates/`); the engine stays dumb. Docs split: `docs/` is user-only (`commands.md`, `recipes.md`); `.agents/docs/` is agent-internal (5 files).
 
 ## Implemented commands
 

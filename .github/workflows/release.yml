@@ -57,5 +57,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: fa-${{ matrix.target }}.tar.gz
+          # Force the stable release to become GitHub's "latest" so existing
+          # pre-release installs (e.g. v0.1.0-beta.4) detect and self-update.
+          make_latest: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
